@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   TEMA DE MARCA  ·  Tailwind v4 (sin tailwind.config.js)
+   Cambia SOLO estos valores para vestir el visor con la identidad de THIQA.
+   Cada token genera utilidades automáticamente: bg-brand-500, text-ink-100, etc.
+--------------------------------------------------------------------------- */
+@theme {
+  /* Acento principal (botones activos, aro del joystick, hotspots) */
+  --color-brand-300: oklch(0.84 0.11 82);
+  --color-brand-400: oklch(0.79 0.14 78);
+  --color-brand-500: oklch(0.72 0.16 72);
+  --color-brand-600: oklch(0.62 0.15 68);
+
+  /* Grises del HUD (vidrio oscuro sobre la foto) */
+  --color-ink-50:  oklch(0.98 0 0);
+  --color-ink-200: oklch(0.87 0.005 260);
+  --color-ink-700: oklch(0.32 0.012 260);
+  --color-ink-900: oklch(0.17 0.015 260);
+
+  /* Radio y sombra del "vidrio" del HUD */
+  --radius-hud: 1.25rem;
+}
+
+/* ---------------------------------------------------------------------------
+   BASE
+--------------------------------------------------------------------------- */
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: #000;
+    color: var(--color-ink-50);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+
+    /* Móvil: nada de rebote, scroll ni menús contextuales encima del visor */
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  canvas {
+    display: block;
+    /* CRÍTICO en móvil: sin esto el navegador se roba el gesto para hacer scroll
+       y el arrastre para mirar alrededor se siente roto. */
+    touch-action: none;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   UTILIDADES
+--------------------------------------------------------------------------- */
+@utility hud-glass {
+  background-color: color-mix(in oklab, var(--color-ink-900) 55%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  border: 1px solid color-mix(in oklab, white 14%, transparent);
+  box-shadow:
+    0 8px 32px color-mix(in oklab, black 45%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
+}
