@@ -58,8 +58,29 @@ import { GuiaCaptura } from './GuiaCaptura'
 
 /** A cuántos grados del punto guía se considera que ya estás apuntando ahí. */
 const TOLERANCIA_DEG = 11
-/** Debajo de esta velocidad angular se considera que el teléfono está quieto. */
-const QUIETO_DEG_S = 14
+/**
+ * Debajo de esta velocidad angular se considera que el teléfono está quieto.
+ *
+ * Iba en 14 °/s, y era demasiado permisivo: a esa velocidad la cámara de un
+ * celular todavía arrastra la imagen. Con el tiempo de exposición de un cuarto
+ * con luz de casa —de 1/30 a 1/15 s— catorce grados por segundo son medio grado
+ * de barrido dentro de una sola foto, y eso ya se ve como una toma movida.
+ */
+const QUIETO_DEG_S = 6
+/**
+ * Cuánto hay que sostener la mira quieta sobre el punto antes de disparar.
+ *
+ * Antes no había ninguna espera: bastaba con que en UN cuadro el punto quedara
+ * dentro de la tolerancia y la velocidad bajara del umbral. Girando a pulso eso
+ * pasa mientras el teléfono todavía va pasando por encima del punto —el
+ * giroscopio marca un valle de velocidad en cuanto la mano frena un poco— así
+ * que la foto salía movida y la costura la pegaba borrosa.
+ *
+ * Sostener la mira dos segundos arregla las dos mitades del problema: la mano
+ * termina de asentarse, y de paso la cámara alcanza a cerrar su enfoque y su
+ * exposición, que es lo que de verdad tarda dentro de una casa.
+ */
+const ASENTAR_MS = 2000
 /** Descanso mínimo entre disparos. */
 const ESPERA_MS = 450
 /** Tamaño de las miniaturas en gris con las que se calibra el campo de visión. */
@@ -134,6 +155,10 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const tomas = useRef<Toma[]>([])
   const hechos = useRef(new Set<string>())
   const objetivo = useRef<string | null>(null)
+  /** Desde cuándo la mira lleva quieta sobre el objetivo. 0 = todavía no. */
+  const asentadoDesde = useRef(0)
+  /** 0…1 de la espera de asentamiento. Lo lee GuiaCaptura en cada cuadro. */
+  const asentado = useRef(0)
   const planRef = useRef<PuntoGuia[]>([])
   const baseYaw = useRef(0)
   const ultimaToma = useRef(0)
@@ -294,15 +319,36 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       const relativo = wrap180(yaw - baseYaw.current)
 
       const cercano = puntoMasCercano(planRef.current, hechos.current, relativo, pitch)
+      const anterior = objetivo.current
       objetivo.current = cercano?.punto.id ?? null
-      if (!cercano) return
+      if (!cercano) {
+        asentadoDesde.current = 0
+        asentado.current = 0
+        return
+      }
 
-      const listo =
-        cercano.distancia < TOLERANCIA_DEG &&
-        speed < QUIETO_DEG_S &&
-        performance.now() - ultimaToma.current > ESPERA_MS
+      const ahora = performance.now()
+      const enLaMira = cercano.distancia < TOLERANCIA_DEG && speed < QUIETO_DEG_S
 
-      if (listo) tomarFoto(cercano.punto.id, quaternion, yaw, pitch)
+      /* La cuenta se reinicia en cuanto la mira se sale o la mano se mueve, y
+         también al cambiar de punto: si no, el tiempo que se estuvo quieto
+         apuntando al punto anterior le contaría al siguiente y volveríamos a
+         disparar de pasada, que es justo lo que se quiere evitar. */
+      if (!enLaMira) {
+        asentadoDesde.current = 0
+      } else if (asentadoDesde.current === 0 || cercano.punto.id !== anterior) {
+        asentadoDesde.current = ahora
+      }
+
+      const sostenido = asentadoDesde.current === 0 ? 0 : ahora - asentadoDesde.current
+      asentado.current = Math.min(1, sostenido / ASENTAR_MS)
+
+      const listo = sostenido >= ASENTAR_MS && ahora - ultimaToma.current > ESPERA_MS
+
+      if (listo && tomarFoto(cercano.punto.id, quaternion, yaw, pitch)) {
+        asentadoDesde.current = 0
+        asentado.current = 0
+      }
     }
 
     frame = requestAnimationFrame(tick)
@@ -755,7 +801,11 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             <ol className="ml-4 list-decimal space-y-1.5">
               <li>Párate en el centro del cuarto y no te muevas de ahí.</li>
               <li>Van a aparecer unos círculos. Apunta la cámara a cada uno.</li>
-              <li>Cuando el círculo quede en la mira y el teléfono esté quieto, la foto se toma sola.</li>
+              <li>
+                Deténte sobre el círculo y aguanta quieto un par de segundos: el aro se va
+                cerrando y, al completarse, la foto se toma sola. Si te mueves, la cuenta
+                vuelve a empezar.
+              </li>
               <li>Al terminar, el visor une todas las fotos en una sola de 360°.</li>
             </ol>
           </Aviso>
@@ -871,6 +921,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           lectura={seguidor.reading}
           fovPantalla={fovPantalla}
           objetivo={objetivo}
+          asentado={asentado}
         />
       )}
 
@@ -952,7 +1003,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             {manual
               ? `Toma ${pasoManual + 1} de ${puntos.length}. Gira hasta empatar con la imagen de fondo.`
               : pendientes > 0
-                ? 'Apunta al círculo naranja y espera un segundo sin moverte.'
+                ? 'Apunta al círculo naranja y sostén el teléfono quieto hasta que el aro se cierre.'
                 : '¡Listo! Ya cubriste todo. Toca Terminar.'}
           </p>
 

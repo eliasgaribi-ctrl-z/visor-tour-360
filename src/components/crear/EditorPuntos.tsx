@@ -241,7 +241,9 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
         <div
           ref={capa}
           onPointerUp={alTocarFoto}
-          className={`absolute inset-0 z-20 ${modoTocar ? 'cursor-crosshair' : 'pointer-events-none'}`}
+          className={`absolute inset-0 z-20 ${
+            modoTocar ? 'cursor-crosshair touch-none' : 'pointer-events-none'
+          }`}
         />
 
         {/* Sombra de abajo: sin ella, los botones sobre una pared blanca

@@ -14,6 +14,8 @@ export type GuiaCapturaProps = {
   fovPantalla: number
   /** Id del punto al que hay que apuntar ahora. Se lee en cada cuadro. */
   objetivo: React.RefObject<string | null>
+  /** 0…1 de la espera antes de disparar. Se lee en cada cuadro. */
+  asentado: React.RefObject<number>
 }
 
 const COLOR_PENDIENTE = 'rgba(255,255,255,0.55)'
@@ -37,7 +39,14 @@ const COLOR_OBJETIVO = '#f0a52e'
  * una flecha en la orilla. Sin eso, el usuario que se pasó de vuelta no tiene
  * forma de saber para dónde regresar y termina girando en círculos.
  */
-export function GuiaCaptura({ puntos, hechos, lectura, fovPantalla, objetivo }: GuiaCapturaProps) {
+export function GuiaCaptura({
+  puntos,
+  hechos,
+  lectura,
+  fovPantalla,
+  objetivo,
+  asentado,
+}: GuiaCapturaProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
 
   useEffect(() => {
@@ -117,13 +126,35 @@ export function GuiaCaptura({ puntos, hechos, lectura, fovPantalla, objetivo }: 
           ctx.lineWidth = esObjetivo ? 3 : 2
           ctx.stroke()
           if (esObjetivo) {
-            // Un anillo que late para que se distinga del resto de un vistazo.
-            const pulso = 1 + 0.18 * Math.sin(performance.now() / 260)
-            ctx.beginPath()
-            ctx.arc(posicion.x, posicion.y, radio * pulso + 6, 0, Math.PI * 2)
-            ctx.strokeStyle = 'rgba(240,165,46,0.35)'
-            ctx.lineWidth = 2
-            ctx.stroke()
+            const progreso = asentado.current
+
+            /* Mientras se sostiene la mira, el anillo deja de latir y se
+               convierte en una cuenta que se cierra: la espera tiene que
+               VERSE, o dos segundos sin que pase nada se leen como que la app
+               se trabó y la persona se mueve justo antes del disparo. */
+            if (progreso > 0) {
+              ctx.beginPath()
+              ctx.arc(
+                posicion.x,
+                posicion.y,
+                radio + 8,
+                -Math.PI / 2,
+                -Math.PI / 2 + progreso * Math.PI * 2,
+              )
+              ctx.strokeStyle = COLOR_OBJETIVO
+              ctx.lineWidth = 4
+              ctx.lineCap = 'round'
+              ctx.stroke()
+              ctx.lineCap = 'butt'
+            } else {
+              // Un anillo que late para que se distinga del resto de un vistazo.
+              const pulso = 1 + 0.18 * Math.sin(performance.now() / 260)
+              ctx.beginPath()
+              ctx.arc(posicion.x, posicion.y, radio * pulso + 6, 0, Math.PI * 2)
+              ctx.strokeStyle = 'rgba(240,165,46,0.35)'
+              ctx.lineWidth = 2
+              ctx.stroke()
+            }
           }
         }
       }
@@ -186,7 +217,7 @@ export function GuiaCaptura({ puntos, hechos, lectura, fovPantalla, objetivo }: 
 
     frame = requestAnimationFrame(dibujar)
     return () => cancelAnimationFrame(frame)
-  }, [puntos, hechos, lectura, fovPantalla, objetivo])
+  }, [puntos, hechos, lectura, fovPantalla, objetivo, asentado])
 
   return <canvas ref={canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" />
 }

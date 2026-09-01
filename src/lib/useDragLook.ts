@@ -67,8 +67,27 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
     // pero por si acaso alguien mete un control dentro del canvas.
     if ((event.target as HTMLElement).closest?.('[data-no-drag]')) return
 
+    /* ------------------------------------------------- DEDOS FANTASMA
+     * No todo `pointerdown` recibe su `pointerup`. En iOS se pierde cada vez
+     * que el sistema se queda con el gesto a medias: el deslizado desde el
+     * borde, el centro de control, una llamada, o volver a la app con el dedo
+     * todavía apoyado. Ese puntero se queda apuntado para siempre.
+     *
+     * Y no es un detalle cosmético: con un fantasma en la lista, `size` ya
+     * vale 2 y CUALQUIER arrastre de un dedo se interpreta como pellizco. La
+     * cámara deja de girar, la foto se queda fija y no se recupera sola — hay
+     * que recargar la página.
+     *
+     * Un puntero primario es, por definición, el primer dedo de un gesto
+     * nuevo: si al llegar todavía queda alguien apuntado, es basura. */
+    if (event.isPrimary) pointers.current.clear()
+
     pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
-    event.currentTarget.setPointerCapture?.(event.pointerId)
+    try {
+      event.currentTarget.setPointerCapture?.(event.pointerId)
+    } catch {
+      // Safari lanza si el puntero ya no está activo. Se sigue sin captura.
+    }
 
     if (pointers.current.size === 1) {
       dragging.current = true
@@ -126,10 +145,32 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
 
   const endPointer = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     pointers.current.delete(event.pointerId)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    /* Soltar la captura va en try: si el puntero ya murió por su cuenta,
+       `releasePointerCapture` lanza, y una excepción aquí dejaría `dragging` en
+       true y la lista sin limpiar — otra vez la cámara trabada. */
+    try {
+      event.currentTarget.releasePointerCapture?.(event.pointerId)
+    } catch {
+      // Ya no estaba capturado: no hay nada que soltar.
+    }
     if (pointers.current.size < 2) pinchDistance.current = 0
     if (pointers.current.size === 0) dragging.current = false
   }, [])
+
+  /**
+   * `pointerleave` NO cierra un gesto capturado.
+   *
+   * Con `setPointerCapture` el dedo puede salirse del elemento sin que el gesto
+   * termine —es justo para lo que sirve la captura— y Safari dispara el evento
+   * de todas formas. Tratarlo como un final corta el arrastre a media pantalla.
+   */
+  const onPointerLeave = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) return
+      endPointer(event)
+    },
+    [endPointer],
+  )
 
   const onWheel = useWheelZoom(engine, wheelZoomStep)
 
@@ -138,7 +179,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
     onPointerMove,
     onPointerUp: endPointer,
     onPointerCancel: endPointer,
-    onPointerLeave: endPointer,
+    onPointerLeave,
     onWheel,
   }
 }

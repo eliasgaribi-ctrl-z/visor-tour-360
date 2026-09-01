@@ -86,7 +86,13 @@ export function Escena360({
 
   return (
     <div
-      className="absolute inset-0 z-0"
+      /* touch-none aquí y no solo en el <canvas> (src/index.css): los gestos
+         se escuchan en ESTE div, y `touch-action` lo decide el elemento donde
+         cae el dedo. Un toque que aterrice en el borde del contenedor —o en
+         cualquier hueco del canvas— dejaba que el navegador se quedara con el
+         gesto, y un gesto que el navegador se queda es un dedo que nunca
+         entrega su `pointerup`. Ver la nota de dedos fantasma en useDragLook. */
+      className="absolute inset-0 z-0 touch-none"
       onPointerDownCapture={onPointerDownCapture}
       {...dragHandlers}
     >
