@@ -12,9 +12,13 @@ Es un link normal: no hay que instalar nada ni crear cuenta.
    la flecha hacia arriba, abajo en la barra) → **Agregar a pantalla de
    inicio**. Queda un ícono que abre el visor a pantalla completa, sin la
    barra de direcciones de Safari.
-3. Para **crear** un recorrido nuevo desde el teléfono (usar la cámara) hace
-   falta ese mismo link https — la URL de red que imprime `npm run dev` no
-   sirve para eso. Ver la sección 5.
+3. Lo primero que se ve es un **recorrido de ejemplo** (panorámicas con
+   rejilla, para probar que todo funciona) — no tu casa. Para **crear el
+   tuyo con la cámara del teléfono**, toca el botón naranja **"Crear el
+   mío"** que aparece arriba, en la barra superior: te manda a *Mis
+   recorridos* → **Nuevo recorrido** → **Tomarla con la cámara**. Hace falta
+   ese mismo link https para que la cámara abra — la URL de red que imprime
+   `npm run dev` no sirve para eso. Ver la sección 5.
 
 > **¿El link de arriba no carga (404 o página en blanco)?** Es que GitHub
 > Pages todavía no está activado en este repositorio — el sitio compilado ya

@@ -25,6 +25,8 @@ export type TourViewerProps = {
   debug?: boolean
   /** Botón extra en la barra superior (volver, menú, editar…). */
   accion?: ReactNode
+  /** Pista que aparece los primeros segundos, debajo de los controles. */
+  pista?: string
 }
 
 /**
@@ -42,7 +44,12 @@ export type TourViewerProps = {
  * El estado de React solo cambia con cosas "grandes" (habitación, carga, panel
  * abierto). El movimiento de la cámara viaja por el objeto mutable del engine.
  */
-export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourViewerProps) {
+export function TourViewer({
+  tour,
+  debug = import.meta.env.DEV,
+  accion,
+  pista = 'Arrastra la foto o usa el joystick para mirar alrededor',
+}: TourViewerProps) {
   const engine = useCreateTourEngine()
   /* La rueda también sobre el HUD: ver useWheelZoom en src/lib/useDragLook.ts */
   const zoomRueda = useWheelZoom(engine)
@@ -181,7 +188,10 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
                           pt-[calc(env(safe-area-inset-top)+0.75rem)]">
             <div className="hud-glass pointer-events-auto min-w-0 rounded-hud px-4 py-2.5">
               <p className="truncate text-sm font-semibold text-ink-50">{tour.title}</p>
-              <p className="truncate text-xs text-ink-200">{scene.name}</p>
+              <p className="truncate text-xs text-ink-200">
+                {scene.name}
+                {tour.subtitle ? ` · ${tour.subtitle}` : ''}
+              </p>
             </div>
             <div className="flex shrink-0 items-start gap-2">
               {accion}
@@ -226,7 +236,7 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
                         }`}
           >
             <p className="hud-glass rounded-full px-4 py-2 text-center text-xs text-ink-200">
-              Arrastra la foto o usa el joystick para mirar alrededor
+              {pista}
             </p>
           </div>
 
