@@ -77,6 +77,22 @@ export function useEquirectTexture(url: string | null): TextureState {
   return state
 }
 
+/**
+ * Saca una textura del caché y libera su memoria de video.
+ *
+ * Hace falta porque el caché está indexado por URL y las URLs `blob:` de los
+ * recorridos guardados en el teléfono mueren cuando se revoca el blob. Sin
+ * esto quedan dos fugas al mismo tiempo: la textura vieja se queda para siempre
+ * ocupando memoria de la GPU, y si alguien vuelve a pedir esa URL recibe una
+ * textura que apunta a un blob que ya no existe.
+ */
+export function olvidarEquirect(url: string) {
+  const texture = cache.get(url)
+  if (!texture) return
+  texture.dispose()
+  cache.delete(url)
+}
+
 /** Precarga en segundo plano (p.ej. las habitaciones vecinas del hotspot). */
 export function preloadEquirect(url: string) {
   if (cache.has(url)) return

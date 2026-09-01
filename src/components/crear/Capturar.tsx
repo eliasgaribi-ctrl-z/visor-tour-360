@@ -1,0 +1,757 @@
+/* oxlint-disable react/set-state-in-effect, react/immutability -- Los efectos
+   sincronizan con la cámara y los sensores, que son sistemas externos, y las
+   estructuras mutables son el canal sin renders hacia el dibujo por cuadro
+   (misma idea que src/lib/tourEngine.ts). */
+import { useCallback, useEffect, useRef, useState } from 'react'
+import * as THREE from 'three'
+
+import type { Ruta } from '../../lib/useHashRoute'
+import type { StoredTour } from '../../lib/store/types'
+import { getTour, guardarEscenaConFoto, createScene } from '../../lib/store/tours'
+import { slugId, newId } from '../../lib/store/ids'
+import { DEG, wrap180 } from '../../lib/math'
+
+import {
+  abrirCamara,
+  cerrarCamara,
+  contextoSeguro,
+  elegirLentePrincipal,
+  esperarVideo,
+  fijarExposicion,
+  listarCamaras,
+  vigilarCamara,
+  CameraError,
+  type CameraSession,
+} from '../../lib/capture/camera'
+import {
+  OrientationTracker,
+  needsOrientationPermission,
+  requestOrientationPermission,
+  type OrientationState,
+} from '../../lib/capture/orientation'
+import {
+  FOV_LADO_LARGO,
+  anchoUtilizable,
+  brilloDe,
+  capturarFotograma,
+  estimarFovConGiro,
+  fovDe,
+  grisesReducidos,
+  ladoLargoDesdeHorizontal,
+  mediana,
+  miniatura,
+  soltarLienzo,
+} from '../../lib/capture/frames'
+import { planDeCaptura, puntoMasCercano, type PuntoGuia } from '../../lib/capture/plan'
+import { PanoramaStitcher } from '../../lib/capture/stitcher'
+
+import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
+import { GuiaCaptura } from './GuiaCaptura'
+
+/** A cuántos grados del punto guía se considera que ya estás apuntando ahí. */
+const TOLERANCIA_DEG = 11
+/** Debajo de esta velocidad angular se considera que el teléfono está quieto. */
+const QUIETO_DEG_S = 14
+/** Descanso mínimo entre disparos. */
+const ESPERA_MS = 450
+/** Tamaño de las miniaturas en gris que se usan para calibrar el campo de visión. */
+const GRIS = { ancho: 64, alto: 48 }
+
+type Toma = {
+  puntoId: string | null
+  /** JPEG de la toma. Se guarda para poder deshacer y para recoser al final. */
+  blob: Blob
+  orientacion: THREE.Quaternion
+  brillo: number
+  grises: Float32Array
+  ancho: number
+  alto: number
+  yaw: number
+  pitch: number
+}
+
+type Fase =
+  | { nombre: 'permisos' }
+  | { nombre: 'abriendo' }
+  | { nombre: 'capturando' }
+  | { nombre: 'procesando'; mensaje: string }
+  | { nombre: 'nombrar'; foto: Blob; mini: Blob; cobertura: number }
+  | { nombre: 'error'; mensaje: string; consejo?: string }
+
+export type CapturarProps = {
+  tourId: string
+  ir: (ruta: Ruta) => void
+}
+
+const Y = new THREE.Vector3(0, 1, 0)
+
+export function Capturar({ tourId, ir }: CapturarProps) {
+  const [fase, setFase] = useState<Fase>({ nombre: 'permisos' })
+  const [tour, setTour] = useState<StoredTour | null>(null)
+  const [alcance, setAlcance] = useState<'esfera' | 'vuelta'>('esfera')
+  const [puntos, setPuntos] = useState<PuntoGuia[]>([])
+  const [tomadas, setTomadas] = useState(0)
+  const [cobertura, setCobertura] = useState(0)
+  const [estadoSensor, setEstadoSensor] = useState<OrientationState>('inactivo')
+  const [aviso, setAviso] = useState<string | null>(null)
+  const [nombre, setNombre] = useState('')
+  const [fovPantalla, setFovPantalla] = useState(60)
+  const [caja, setCaja] = useState({ ancho: 1, alto: 1 })
+  const [cubiertos, setCubiertos] = useState(0)
+  const [manual, setManual] = useState(false)
+  const [pasoManual, setPasoManual] = useState(0)
+  const [fantasma, setFantasma] = useState<string | null>(null)
+
+  /* El seguidor se crea UNA sola vez y vive lo que viva la pantalla: si se
+     recreara en cada render, el dibujo por cuadro leería un objeto distinto del
+     que está recibiendo los eventos del sensor. */
+  const [seguidor] = useState(() => new OrientationTracker())
+
+  const video = useRef<HTMLVideoElement>(null)
+  const contenedor = useRef<HTMLDivElement>(null)
+  const previa = useRef<HTMLDivElement>(null)
+
+  const sesion = useRef<CameraSession | null>(null)
+  const stitcher = useRef<PanoramaStitcher | null>(null)
+  const tomas = useRef<Toma[]>([])
+  const hechos = useRef(new Set<string>())
+  const objetivo = useRef<string | null>(null)
+  const planRef = useRef<PuntoGuia[]>([])
+  const baseYaw = useRef(0)
+  const ultimaToma = useRef(0)
+  const fovLargo = useRef(FOV_LADO_LARGO)
+  const estimaciones = useRef<number[]>([])
+  const disparando = useRef(false)
+
+  useEffect(() => {
+    void getTour(tourId).then((t) => setTour(t))
+  }, [tourId])
+
+  /* --------------------------------------------------------------- LIMPIEZA */
+  const apagar = useCallback(() => {
+    cerrarCamara(sesion.current)
+    sesion.current = null
+    seguidor.stop()
+    stitcher.current?.dispose()
+    stitcher.current = null
+    tomas.current = []
+    hechos.current.clear()
+  }, [seguidor])
+
+  useEffect(() => apagar, [apagar])
+
+  /* ------------------------------------------------------------- DIMENSIONES
+   * El video se muestra recortado para llenar la pantalla (object-cover), así
+   * que en pantalla se ve MENOS de lo que la foto captura. Los puntos guía se
+   * proyectan con el campo de visión de lo que de verdad se ve; si se usara el
+   * del fotograma completo, quedarían corridos hacia afuera. */
+  const recalcularFov = useCallback(() => {
+    const v = video.current
+    const caja = contenedor.current
+    if (!v || !caja || !v.videoWidth || !caja.clientWidth) return
+
+    const { vfov } = fovDe(v.videoWidth, v.videoHeight, fovLargo.current)
+    const escala = Math.max(caja.clientWidth / v.videoWidth, caja.clientHeight / v.videoHeight)
+    const visible = Math.min(1, caja.clientHeight / (v.videoHeight * escala))
+    setFovPantalla((2 * Math.atan(Math.tan((vfov * DEG) / 2) * visible)) / DEG)
+    setCaja({ ancho: caja.clientWidth, alto: caja.clientHeight })
+  }, [])
+
+  /* ---------------------------------------------------------------- DISPARO */
+  const tomarFoto = useCallback(
+    (puntoId: string | null, orientacion: THREE.Quaternion, yaw: number, pitch: number) => {
+      const v = video.current
+      const st = stitcher.current
+      if (!v || !st || disparando.current) return
+      disparando.current = true
+
+      const lienzo = capturarFotograma(v)
+      const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovLargo.current)
+      const brillo = brilloDe(lienzo)
+      const grises = grisesReducidos(lienzo, GRIS.ancho, GRIS.alto)
+
+      // Al mundo de la panorámica: la primera dirección del plan queda al frente.
+      const corregida = new THREE.Quaternion()
+        .setFromAxisAngle(Y, baseYaw.current * DEG)
+        .multiply(orientacion)
+
+      st.agregar({ fuente: lienzo, orientacion: corregida, hfov, vfov, brillo })
+
+      /* Calibración del campo de visión con el giroscopio: se compara esta toma
+         con la anterior y se mide cuánto se corrió la imagen. Como sabemos
+         cuánto giró el teléfono, de ahí sale la distancia focal real. */
+      const anterior = tomas.current[tomas.current.length - 1]
+      if (anterior) {
+        const estimado = estimarFovConGiro({
+          anterior: anterior.grises,
+          actual: grises,
+          width: GRIS.ancho,
+          height: GRIS.alto,
+          deltaYaw: wrap180(yaw - anterior.yaw),
+          deltaPitch: pitch - anterior.pitch,
+        })
+        if (estimado !== null) {
+          estimaciones.current.push(
+            ladoLargoDesdeHorizontal(estimado, lienzo.width, lienzo.height),
+          )
+        }
+      }
+
+      lienzo.toBlob(
+        (blob) => {
+          if (blob) {
+            tomas.current.push({
+              puntoId,
+              blob,
+              orientacion: orientacion.clone(),
+              brillo,
+              grises,
+              ancho: lienzo.width,
+              alto: lienzo.height,
+              yaw,
+              pitch,
+            })
+            setTomadas(tomas.current.length)
+            if (manual) {
+              setFantasma((anterior) => {
+                if (anterior) URL.revokeObjectURL(anterior)
+                return URL.createObjectURL(blob)
+              })
+            }
+          }
+          soltarLienzo(lienzo)
+          disparando.current = false
+        },
+        'image/jpeg',
+        0.85,
+      )
+
+      if (puntoId) {
+        hechos.current.add(puntoId)
+        setCubiertos(hechos.current.size)
+      }
+      ultimaToma.current = performance.now()
+      setCobertura(st.cobertura())
+    },
+    [manual],
+  )
+
+  /* -------------------------------------------------------- BUCLE AUTOMÁTICO */
+  useEffect(() => {
+    if (fase.nombre !== 'capturando' || manual) return
+    let frame = 0
+
+    const tick = () => {
+      frame = requestAnimationFrame(tick)
+      if (seguidor.state !== 'activo') return
+
+      const { yaw, pitch, speed, quaternion } = seguidor.reading
+      const relativo = wrap180(yaw - baseYaw.current)
+
+      const cercano = puntoMasCercano(planRef.current, hechos.current, relativo, pitch)
+      objetivo.current = cercano?.punto.id ?? null
+      if (!cercano) return
+
+      const listo =
+        cercano.distancia < TOLERANCIA_DEG &&
+        speed < QUIETO_DEG_S &&
+        performance.now() - ultimaToma.current > ESPERA_MS
+
+      if (listo) tomarFoto(cercano.punto.id, quaternion, yaw, pitch)
+    }
+
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [fase.nombre, manual, seguidor, tomarFoto])
+
+  /* ----------------------------------------------------------------- ARRANQUE */
+  const comenzar = useCallback(async () => {
+    setFase({ nombre: 'abriendo' })
+    setAviso(null)
+
+    if (needsOrientationPermission()) {
+      const permiso = await requestOrientationPermission()
+      if (permiso === 'denied') {
+        setAviso(
+          'No diste permiso para los sensores de movimiento. Se puede capturar a mano, pero queda mejor con ellos.',
+        )
+      }
+    }
+
+    try {
+      let abierta = await abrirCamara()
+      /* Con el permiso ya dado, las etiquetas de las cámaras dejan de venir
+         vacías y se puede escoger el lente principal en vez de la gran angular
+         o la "virtual", que cambia de lente sola a media captura. */
+      const preferida = elegirLentePrincipal(await listarCamaras())
+      if (preferida && preferida !== abierta.track.getSettings().deviceId) {
+        try {
+          const mejor = await abrirCamara(preferida)
+          cerrarCamara(abierta)
+          abierta = mejor
+        } catch {
+          // Si el lente elegido no abre, seguimos con el que ya teníamos.
+        }
+      }
+
+      sesion.current = abierta
+      await fijarExposicion(abierta)
+
+      const v = video.current
+      if (!v) throw new CameraError('desconocido', 'No se encontró el visor de la cámara.')
+      v.srcObject = abierta.stream
+      await v.play().catch(() => undefined)
+      await esperarVideo(v)
+
+      vigilarCamara(abierta, (motivo) => {
+        if (motivo === 'interrumpida') setAviso('La cámara se pausó. Vuelve a la app para seguir.')
+        if (motivo === 'terminada') setAviso('La cámara se cerró. Guarda lo que llevas y vuelve a entrar.')
+        if (motivo === 'cambio-de-formato') {
+          setAviso('El teléfono cambió la calidad de la cámara. Termina esta habitación para no mezclar tomas.')
+        }
+      })
+
+      // El lienzo más grande que este teléfono puede armar de verdad.
+      const ancho = anchoUtilizable()
+      stitcher.current = new PanoramaStitcher({ width: ancho, preview: { width: 512, height: 256 } })
+      if (previa.current && !previa.current.contains(stitcher.current.canvas)) {
+        stitcher.current.canvas.className = 'h-full w-full object-cover'
+        previa.current.append(stitcher.current.canvas)
+      }
+
+      seguidor.onStateChange = setEstadoSensor
+      seguidor.start()
+
+      // Se espera un momento a que lleguen lecturas antes de decidir si hay
+      // sensores: preguntar si el evento existe no sirve de nada.
+      await new Promise((resolve) => setTimeout(resolve, 900))
+
+      const hayS = seguidor.state === 'activo'
+      setManual(!hayS)
+      baseYaw.current = hayS ? seguidor.reading.yaw : 0
+
+      const { hfov, vfov } = fovDe(v.videoWidth, v.videoHeight, fovLargo.current)
+      const plan = planDeCaptura({ hfov, vfov, alcance: hayS ? alcance : 'vuelta' })
+      planRef.current = plan
+      /* El plan vive en coordenadas de la PANORÁMICA (el frente es el yaw 0) y
+         el sensor entrega coordenadas del MUNDO. Para dibujarlos encima de la
+         cámara hay que sumarles el rumbo que tenía el teléfono al empezar; si
+         no, los círculos aparecen girados justo esa cantidad. */
+      setPuntos(plan.map((punto) => ({ ...punto, yaw: wrap180(punto.yaw + baseYaw.current) })))
+      recalcularFov()
+      setFase({ nombre: 'capturando' })
+    } catch (error) {
+      const mensaje = error instanceof CameraError ? error.message : 'No se pudo abrir la cámara.'
+      setFase({
+        nombre: 'error',
+        mensaje,
+        consejo: error instanceof CameraError ? error.detail : undefined,
+      })
+    }
+  }, [alcance, recalcularFov, seguidor])
+
+  useEffect(() => {
+    window.addEventListener('resize', recalcularFov)
+    window.addEventListener('orientationchange', recalcularFov)
+    return () => {
+      window.removeEventListener('resize', recalcularFov)
+      window.removeEventListener('orientationchange', recalcularFov)
+    }
+  }, [recalcularFov])
+
+  /* ------------------------------------------------------- DESHACER Y CERRAR */
+  const recoser = useCallback(async (fovFinal: number) => {
+    const st = stitcher.current
+    if (!st) return
+    st.limpiar()
+    const lienzo = document.createElement('canvas')
+    const ctx = lienzo.getContext('2d', { alpha: false })
+
+    for (const toma of tomas.current) {
+      const bitmap = await createImageBitmap(toma.blob)
+      lienzo.width = bitmap.width
+      lienzo.height = bitmap.height
+      ctx?.drawImage(bitmap, 0, 0)
+      bitmap.close()
+
+      const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovFinal)
+      const corregida = new THREE.Quaternion()
+        .setFromAxisAngle(Y, baseYaw.current * DEG)
+        .multiply(toma.orientacion)
+      st.agregar({ fuente: lienzo, orientacion: corregida, hfov, vfov, brillo: toma.brillo })
+    }
+    soltarLienzo(lienzo)
+    setCobertura(st.cobertura())
+  }, [])
+
+  const deshacer = useCallback(async () => {
+    const ultima = tomas.current.pop()
+    if (!ultima) return
+    if (ultima.puntoId) {
+      hechos.current.delete(ultima.puntoId)
+      setCubiertos(hechos.current.size)
+    }
+    setTomadas(tomas.current.length)
+    setFase({
+      nombre: 'procesando',
+      mensaje:
+        tomas.current.length > 8
+          ? 'Quitando la última toma y volviendo a unir las demás. Tarda unos segundos…'
+          : 'Quitando la última toma…',
+    })
+    await recoser(fovLargo.current)
+    setFase({ nombre: 'capturando' })
+  }, [recoser])
+
+  const terminar = useCallback(async () => {
+    const st = stitcher.current
+    if (!st || tomas.current.length === 0) return
+
+    /* Si el giroscopio dio suficientes mediciones del campo de visión, se vuelve
+       a coser TODO con el valor calibrado. Es la diferencia entre una panorámica
+       que cierra y una en la que las paredes no empatan: el valor por defecto de
+       66° puede estar cinco grados lejos del lente real, y ese error se acumula
+       vuelta tras vuelta. */
+    const calibrado = mediana(estimaciones.current)
+    if (calibrado !== null && Math.abs(calibrado - fovLargo.current) > 1.2) {
+      setFase({
+        nombre: 'procesando',
+        mensaje: 'Midiendo el lente y volviendo a unir las fotos. Tarda unos segundos…',
+      })
+      fovLargo.current = calibrado
+      await recoser(calibrado)
+    }
+
+    setFase({ nombre: 'procesando', mensaje: 'Armando la foto 360…' })
+    try {
+      const foto = await st.exportar(0.86)
+      const bitmap = await createImageBitmap(foto)
+      const lienzo = document.createElement('canvas')
+      lienzo.width = bitmap.width
+      lienzo.height = bitmap.height
+      lienzo.getContext('2d', { alpha: false })?.drawImage(bitmap, 0, 0)
+      bitmap.close()
+      const mini = await miniatura(lienzo)
+      soltarLienzo(lienzo)
+
+      setNombre(sugerirNombre(tour))
+      setFase({ nombre: 'nombrar', foto, mini, cobertura: st.cobertura() })
+    } catch (error) {
+      setFase({
+        nombre: 'error',
+        mensaje: 'No se pudo armar la foto 360.',
+        consejo: error instanceof Error ? error.message : undefined,
+      })
+    }
+  }, [recoser, tour])
+
+  const guardar = useCallback(async () => {
+    if (fase.nombre !== 'nombrar' || !tour) return
+    setFase({ nombre: 'procesando', mensaje: 'Guardando…' })
+    try {
+      const scene = createScene({
+        id: slugId(nombre || 'habitacion'),
+        name: nombre.trim() || 'Habitación',
+        imageId: newId('img'),
+        thumbId: newId('img'),
+        origin: 'captura',
+        coverageDeg: Math.round(fase.cobertura * 360),
+      })
+      await guardarEscenaConFoto({ tour, scene, foto: fase.foto, miniatura: fase.mini })
+      apagar()
+      ir({ nombre: 'puntos', tourId: tour.id, sceneId: scene.id })
+    } catch (error) {
+      setFase({
+        nombre: 'error',
+        mensaje: 'No se pudo guardar la habitación.',
+        consejo: error instanceof Error ? error.message : undefined,
+      })
+    }
+  }, [apagar, fase, ir, nombre, tour])
+
+  /* ------------------------------------------------------------- MODO MANUAL */
+  const dispararManual = useCallback(() => {
+    const plan = planRef.current
+    const punto = plan[pasoManual]
+    if (!punto) return
+
+    const usaSensor = seguidor.state === 'activo'
+
+    const orientacion = usaSensor
+      ? seguidor.reading.quaternion
+      : new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(punto.pitch * DEG, -punto.yaw * DEG, 0, 'YXZ'),
+        )
+
+    const yaw = usaSensor ? seguidor.reading.yaw : punto.yaw + baseYaw.current
+    const pitch = usaSensor ? seguidor.reading.pitch : punto.pitch
+
+    tomarFoto(punto.id, orientacion, yaw, pitch)
+    setPasoManual((n) => n + 1)
+  }, [pasoManual, seguidor, tomarFoto])
+
+  /* ------------------------------------------------------------------ VISTAS */
+  if (fase.nombre === 'permisos') {
+    return (
+      <Pantalla titulo="Tomar la foto 360" atras={() => ir({ nombre: 'editar', tourId })}>
+        <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+          {!contextoSeguro() && (
+            <Aviso tono="error" titulo="Aquí no se puede usar la cámara">
+              El navegador solo deja abrir la cámara cuando la página viene por <b>https</b>. Si
+              estás probando desde la computadora con la dirección de la red local, abre en su lugar
+              el visor publicado, o usa <b>Usar una foto que ya tengo</b>.
+            </Aviso>
+          )}
+
+          <Aviso titulo="Cómo va a funcionar">
+            <ol className="ml-4 list-decimal space-y-1.5">
+              <li>Párate en el centro del cuarto y no te muevas de ahí.</li>
+              <li>Van a aparecer unos círculos. Apunta la cámara a cada uno.</li>
+              <li>Cuando el círculo quede en la mira y el teléfono esté quieto, la foto se toma sola.</li>
+              <li>Al terminar, el visor une todas las fotos en una sola de 360°.</li>
+            </ol>
+          </Aviso>
+
+          <div>
+            <p className="mb-2 text-xs font-medium text-ink-200">¿Qué tanto quieres cubrir?</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setAlcance('esfera')}
+                className={`rounded-2xl border p-3 text-left text-sm ${
+                  alcance === 'esfera'
+                    ? 'border-brand-500 bg-brand-500/10'
+                    : 'border-white/10 bg-white/5'
+                }`}
+              >
+                <b className="block">Todo el cuarto</b>
+                <span className="text-xs text-ink-200">Incluye techo y piso. Unas 25 fotos.</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAlcance('vuelta')}
+                className={`rounded-2xl border p-3 text-left text-sm ${
+                  alcance === 'vuelta'
+                    ? 'border-brand-500 bg-brand-500/10'
+                    : 'border-white/10 bg-white/5'
+                }`}
+              >
+                <b className="block">Solo la vuelta</b>
+                <span className="text-xs text-ink-200">Rápido. Techo y piso quedan vacíos.</span>
+              </button>
+            </div>
+          </div>
+
+          <Boton tipo="principal" ancho onClick={() => void comenzar()} disabled={!contextoSeguro()}>
+            Abrir la cámara
+          </Boton>
+          <p className="text-center text-xs text-ink-200">
+            El teléfono va a pedirte permiso para la cámara y para los sensores de movimiento. Las
+            fotos no salen de tu teléfono.
+          </p>
+        </div>
+      </Pantalla>
+    )
+  }
+
+  if (fase.nombre === 'error') {
+    return (
+      <Pantalla titulo="Tomar la foto 360" atras={() => ir({ nombre: 'editar', tourId })}>
+        <div className="mx-auto w-full max-w-md">
+          <Aviso tono="error" titulo="No se pudo">
+            {fase.mensaje}
+            {fase.consejo && (
+              <p className="mt-2 font-mono text-xs opacity-70">{fase.consejo}</p>
+            )}
+          </Aviso>
+          <div className="mt-4">
+            <Boton ancho onClick={() => setFase({ nombre: 'permisos' })}>
+              Volver a intentar
+            </Boton>
+          </div>
+        </div>
+      </Pantalla>
+    )
+  }
+
+  const pendientes = puntos.length - cubiertos
+
+  /* Cuánto hay que correr el fantasma de la toma anterior.
+     Si entre foto y foto se gira `paso` grados y en la pantalla caben `hfov`
+     grados, la imagen anterior se corre esa misma proporción del ancho: lo que
+     queda visible del fantasma es justo el traslape que hay que hacer coincidir. */
+  const hfovPantalla =
+    (2 * Math.atan(Math.tan((fovPantalla * DEG) / 2) * (caja.ancho / caja.alto))) / DEG
+  const pasoPlan = puntos.length > 1 ? 360 / Math.max(1, puntos.filter((p) => p.anillo === 0).length) : 60
+  const corrimientoFantasma = Math.min(95, (pasoPlan / Math.max(20, hfovPantalla)) * 100)
+
+  return (
+    <div ref={contenedor} className="relative h-[100dvh] w-full overflow-hidden bg-black">
+      <video
+        ref={video}
+        playsInline
+        muted
+        autoPlay
+        onLoadedMetadata={recalcularFov}
+        className="absolute inset-0 h-full w-full object-cover"
+      />
+
+      {/* Fantasma de la toma anterior: en modo manual es la única referencia
+          para saber cuánto girar. Se corre para que su orilla derecha caiga
+          donde debe empezar la nueva foto. */}
+      {manual && fantasma && (
+        <img
+          src={fantasma}
+          alt=""
+          aria-hidden
+          className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-35"
+          style={{ transform: `translateX(-${corrimientoFantasma.toFixed(1)}%)` }}
+        />
+      )}
+
+      {fase.nombre === 'capturando' && !manual && (
+        <GuiaCaptura
+          puntos={puntos}
+          hechos={hechos}
+          lectura={seguidor.reading}
+          fovPantalla={fovPantalla}
+          objetivo={objetivo}
+        />
+      )}
+
+      {/* ---------------------------------------------------------- HUD ---- */}
+      <div className="pointer-events-none absolute inset-0 flex flex-col justify-between">
+        <div className="flex items-start gap-2 p-3 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+          <button
+            type="button"
+            onClick={() => {
+              apagar()
+              ir({ nombre: 'editar', tourId })
+            }}
+            className="hud-glass pointer-events-auto grid h-10 w-10 shrink-0 place-items-center rounded-full"
+            aria-label="Salir"
+          >
+            ×
+          </button>
+
+          <div className="hud-glass pointer-events-auto min-w-0 flex-1 rounded-hud px-3 py-2">
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <span className="font-semibold text-ink-50">
+                {tomadas} {tomadas === 1 ? 'foto' : 'fotos'}
+              </span>
+              <span className="text-ink-200">{Math.round(cobertura * 100)} % cubierto</span>
+            </div>
+            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/15">
+              <div
+                className="h-full rounded-full bg-brand-500 transition-[width] duration-300"
+                style={{ width: `${Math.round(cobertura * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Vista previa de la panorámica que se va armando. */}
+          <div
+            ref={previa}
+            className="hud-glass h-14 w-28 shrink-0 overflow-hidden rounded-xl"
+            aria-label="Cómo va quedando"
+          />
+        </div>
+
+        <div className="flex flex-col gap-3 p-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+          {aviso && (
+            <div className="pointer-events-auto">
+              <Aviso tono="alerta">{aviso}</Aviso>
+            </div>
+          )}
+
+          {estadoSensor === 'no-soportado' && (
+            <div className="pointer-events-auto">
+              <Aviso tono="alerta" titulo="Sin sensores de movimiento">
+                Este teléfono no está diciendo hacia dónde apunta, así que la foto se toma a mano:
+                dispara, gira hasta que la imagen de fondo empate con lo que ves, y vuelve a
+                disparar.
+              </Aviso>
+            </div>
+          )}
+
+          <p className="text-center text-xs text-ink-200 drop-shadow">
+            {manual
+              ? `Toma ${pasoManual + 1} de ${puntos.length}. Gira hasta empatar con la imagen de fondo.`
+              : pendientes > 0
+                ? 'Apunta al círculo naranja y espera un segundo sin moverte.'
+                : '¡Listo! Ya cubriste todo. Toca Terminar.'}
+          </p>
+
+          <div className="pointer-events-auto flex items-center justify-between gap-3">
+            <Boton onClick={() => void deshacer()} disabled={tomadas === 0}>
+              Deshacer
+            </Boton>
+
+            <button
+              type="button"
+              onClick={() => (manual ? dispararManual() : dispararLibre())}
+              aria-label="Tomar foto"
+              className="grid h-[72px] w-[72px] shrink-0 place-items-center rounded-full border-4
+                         border-white/80 bg-white/20 transition-transform active:scale-95"
+            >
+              <span className="block h-14 w-14 rounded-full bg-white" />
+            </button>
+
+            <Boton tipo="principal" onClick={() => void terminar()} disabled={tomadas === 0}>
+              Terminar
+            </Boton>
+          </div>
+        </div>
+      </div>
+
+      {fase.nombre === 'procesando' && (
+        <div className="absolute inset-0 z-50 grid place-items-center bg-black/80">
+          <Cargando texto={fase.mensaje} />
+        </div>
+      )}
+
+      {fase.nombre === 'nombrar' && (
+        <Hoja titulo="¿Qué cuarto es?" onCerrar={() => setFase({ nombre: 'capturando' })}>
+          <div className="flex flex-col gap-3">
+            {fase.cobertura < 0.75 && (
+              <Aviso tono="alerta">
+                Quedaron huecos sin fotografiar ({Math.round(fase.cobertura * 100)} % cubierto). Se
+                van a ver como zonas grises. Puedes cerrar esto y seguir tomando fotos.
+              </Aviso>
+            )}
+            <Campo
+              etiqueta="Nombre de la habitación"
+              valor={nombre}
+              onChange={setNombre}
+              placeholder="Sala"
+              maxLength={40}
+            />
+            <Boton tipo="principal" ancho onClick={() => void guardar()}>
+              Guardar habitación
+            </Boton>
+          </div>
+        </Hoja>
+      )}
+    </div>
+  )
+
+  /** Disparo con el botón, usando la orientación de este instante. */
+  function dispararLibre() {
+    if (seguidor.state !== 'activo') return
+    const { yaw, pitch, quaternion } = seguidor.reading
+    const relativo = wrap180(yaw - baseYaw.current)
+    const cercano = puntoMasCercano(planRef.current, hechos.current, relativo, pitch)
+    // Si estás cerca de un punto pendiente, cuenta como ese punto; si no, es una
+    // foto extra que suma cobertura pero no tacha ninguno.
+    const id = cercano && cercano.distancia < TOLERANCIA_DEG * 1.6 ? cercano.punto.id : null
+    tomarFoto(id, quaternion, yaw, pitch)
+  }
+}
+
+function sugerirNombre(tour: StoredTour | null): string {
+  const usados = new Set((tour?.scenes ?? []).map((s) => s.name.toLowerCase()))
+  for (const nombre of ['Sala', 'Cocina', 'Comedor', 'Recámara', 'Baño', 'Patio', 'Cochera']) {
+    if (!usados.has(nombre.toLowerCase())) return nombre
+  }
+  return `Habitación ${(tour?.scenes.length ?? 0) + 1}`
+}

@@ -1,16 +1,12 @@
 /* oxlint-disable react/immutability -- Ver la nota de arquitectura en src/lib/tourEngine.ts */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Canvas } from '@react-three/fiber'
-
+import type { ReactNode } from 'react'
 import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
-import { useDragLook } from '../lib/useDragLook'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 
-import { CameraRig } from './tour/CameraRig'
-import { PanoSphere } from './tour/PanoSphere'
-import { detectWebGL, ViewerBoundary, ViewerFallback } from './tour/ViewerGuard'
+import { BASE_FOV, Escena360, detectWebGL } from './tour/Escena360'
 
 import { Compass } from './ui/Compass'
 import { DebugAngles } from './ui/DebugAngles'
@@ -21,12 +17,12 @@ import { LoadingVeil } from './ui/LoadingVeil'
 import { RoomBar } from './ui/RoomBar'
 import { ZoomControls } from './ui/ZoomControls'
 
-const BASE_FOV = 75
-
 export type TourViewerProps = {
   tour: Tour
   /** Muestra el badge con yaw/pitch/fov. Por defecto solo en desarrollo. */
   debug?: boolean
+  /** Botón extra en la barra superior (volver, menú, editar…). */
+  accion?: ReactNode
 }
 
 /**
@@ -44,7 +40,7 @@ export type TourViewerProps = {
  * El estado de React solo cambia con cosas "grandes" (habitación, carga, panel
  * abierto). El movimiento de la cámara viaja por el objeto mutable del engine.
  */
-export function TourViewer({ tour, debug = import.meta.env.DEV }: TourViewerProps) {
+export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourViewerProps) {
   const engine = useCreateTourEngine()
 
   const [sceneId, setSceneId] = useState(tour.startSceneId)
@@ -64,7 +60,6 @@ export function TourViewer({ tour, debug = import.meta.env.DEV }: TourViewerProp
   )
 
   useKeyboardLook(engine)
-  const dragHandlers = useDragLook(engine)
 
   const dismissHint = useCallback(() => {
     if (hintDismissed.current) return
@@ -130,31 +125,15 @@ export function TourViewer({ tour, debug = import.meta.env.DEV }: TourViewerProp
           y el joystick se queda debajo del borde de la pantalla. */}
       <div className="relative h-[100dvh] w-full overflow-hidden bg-black">
         {/* ───────────────────────────── CAPA 0 · el visor 360 ───────────────────────────── */}
-        <div className="absolute inset-0 z-0" onPointerDownCapture={dismissHint} {...dragHandlers}>
-          {webgl.ok ? (
-            <ViewerBoundary>
-              <Canvas
-                flat
-                dpr={[1, 2]}
-                gl={{ antialias: true, powerPreference: 'high-performance' }}
-                camera={{ fov: BASE_FOV, near: 0.1, far: 1100, position: [0, 0, 0.001] }}
-              >
-                {/* El puente de contexto: <Canvas> monta su propio reconciliador de
-                    React, así que el provider se vuelve a colocar aquí adentro. */}
-                <TourEngineProvider value={engine}>
-                  <CameraRig fov={BASE_FOV} initialYaw={scene.initialYaw ?? 0} />
-                  <PanoSphere
-                    url={scene.image}
-                    onLoadingChange={setLoading}
-                    onError={() => setFailed(true)}
-                  />
-                </TourEngineProvider>
-              </Canvas>
-            </ViewerBoundary>
-          ) : (
-            <ViewerFallback motivo={webgl.motivo} />
-          )}
-        </div>
+        <Escena360
+          engine={engine}
+          url={scene.image}
+          initialYaw={scene.initialYaw ?? 0}
+          webgl={webgl}
+          onLoadingChange={setLoading}
+          onError={() => setFailed(true)}
+          onPointerDownCapture={dismissHint}
+        />
 
         {/* ───────────────────────────── CAPA 1 · HUD ───────────────────────────── */}
         <div className="pointer-events-none absolute inset-0 z-30">
@@ -168,7 +147,10 @@ export function TourViewer({ tour, debug = import.meta.env.DEV }: TourViewerProp
               <p className="truncate text-sm font-semibold text-ink-50">{tour.title}</p>
               <p className="truncate text-xs text-ink-200">{scene.name}</p>
             </div>
-            <Compass className="relative shrink-0" />
+            <div className="flex shrink-0 items-start gap-2">
+              {accion}
+              <Compass className="relative shrink-0" />
+            </div>
           </div>
 
           {/* Selector de habitaciones, arriba: deja todo el borde inferior libre

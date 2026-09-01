@@ -34,6 +34,7 @@
 <table id="t"></table>
 
 <a class="btn" href="./">Abrir el recorrido 360</a>
+<a class="btn" href="./#/inicio" style="background:#2a3348;color:#e8eaf0">Ir a Mis recorridos</a>
 
 <script>
 /* ES5 a propósito: nada de arrow functions, const, let ni template strings.
@@ -77,6 +78,46 @@
       return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'no lo dice';
     }, 'no lo dice'));
   }
+
+  /* ---------------------------------------------------------------------
+     LO QUE HACE FALTA PARA *CREAR* UN RECORRIDO CON LA CÁMARA
+     Estas cuatro filas son las que explican el 90% de los "no me sale":
+     casi siempre es que la página no viene por https.
+     --------------------------------------------------------------------- */
+  var seguro = window.isSecureContext === true ||
+    location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  add('Página segura (https)', seguro
+      ? 'sí — la cámara puede abrir'
+      : 'NO — sin https el navegador NUNCA deja usar la cámara ni los sensores', seguro);
+  add('Dirección de esta página', location.protocol + '//' + location.host);
+
+  var hayCamara = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  add('El navegador tiene cámara web', hayCamara ? 'sí' : 'NO', hayCamara);
+
+  var hayOrientacion = ('DeviceOrientationEvent' in window);
+  var pidePermiso = hayOrientacion &&
+    typeof window.DeviceOrientationEvent.requestPermission === 'function';
+  add('Sensores de movimiento', hayOrientacion
+      ? (pidePermiso ? 'sí, y va a pedir permiso (iPhone)' : 'sí')
+      : 'NO — habría que capturar a mano', hayOrientacion);
+
+  var hayIDB = false;
+  try { hayIDB = !!window.indexedDB; } catch (e) { hayIDB = false; }
+  add('Puede guardar recorridos', hayIDB ? 'sí' : 'NO — ¿estás en navegación privada?', hayIDB);
+
+  /* Un lienzo del tamaño de la panorámica: iOS no avisa cuando no puede, solo
+     entrega la imagen en blanco. Aquí se pinta un píxel y se vuelve a leer. */
+  add('Lienzo de 4096 x 2048', intenta(function () {
+    var cv = document.createElement('canvas');
+    cv.width = 4096; cv.height = 2048;
+    var cx = cv.getContext('2d');
+    if (!cx) return 'no se pudo';
+    cx.fillStyle = '#f00';
+    cx.fillRect(4095, 2047, 1, 1);
+    var d = cx.getImageData(4095, 2047, 1, 1).data;
+    cv.width = 0; cv.height = 0;
+    return d[0] > 200 ? 'sí, aguanta' : 'NO — la panorámica saldría en blanco';
+  }, '?'));
 
   /* ¿Entiende la sintaxis moderna con la que está compilado el visor? */
   var moderno = false;

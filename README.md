@@ -1,8 +1,18 @@
 # Visor de recorridos virtuales 360 · React + TypeScript + Tailwind
 
-Base funcional del visor: panorámica equirectangular a pantalla completa, capa de
-interfaz superpuesta y **joystick virtual** en la esquina inferior izquierda que
-mueve el `yaw` y el `pitch` de la cámara.
+Dos mitades que viven en la misma página estática:
+
+**VER** · panorámica equirectangular a pantalla completa, capa de interfaz
+superpuesta y **joystick virtual** en la esquina inferior izquierda que mueve el
+`yaw` y el `pitch` de la cámara. Es lo que ve quien recibe el link.
+
+**CREAR** · el recorrido se arma **desde el celular**: se abre la cámara, se gira
+sobre el propio eje siguiendo unos puntos guía y el visor cose las fotos en una
+equirectangular; o se sube una foto 360 que ya se tenga. Después se nombran las
+habitaciones, se colocan los puntos tocando la escena y todo queda guardado en el
+teléfono, con un archivo `.tour` para respaldarlo o pasarlo a otro dispositivo.
+
+Sin servidor, sin cuenta y sin instalar nada: sigue siendo un sitio estático.
 
 Diseñado *mobile-first*: el pulgar izquierdo gira, el derecho hace zoom y
 reencuadra, y los cambios de habitación viven arriba para no estorbar.
@@ -25,7 +35,15 @@ Otros comandos:
 npm run build       # tsc + build de producción
 npm run typecheck   # solo tipos
 npm run lint        # oxlint
+npm run build:pages # compila a docs/ para GitHub Pages
 ```
+
+Con el servidor de desarrollo corriendo hay dos páginas de diagnóstico:
+
+| Página                          | Para qué |
+| ------------------------------- | -------- |
+| `/prueba.html`                  | Abrirla **en el celular**: dice si hay https, cámara, sensores, WebGL y espacio |
+| `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 10) |
 
 ---
 
@@ -78,35 +96,56 @@ confunde.
 
 ```
 src/
-├── App.tsx                     Monta <TourViewer tour={demoTour} />
+├── App.tsx                     Enrutador: decide entre VER y CREAR
 ├── index.css                   Tailwind v4 + tema de marca (@theme) + reset móvil
-├── data/tour.ts                Habitaciones y hotspots del recorrido
+├── data/tour.ts                El recorrido de ejemplo
 ├── lib/
 │   ├── types.ts                Tour, TourScene, Hotspot
-│   ├── math.ts                 clamp, damp, wrap, (yaw,pitch) → Vector3
+│   ├── math.ts                 * ángulos, y las proyecciones pantalla <-> escena
 │   ├── tourEngine.ts           * El objeto mutable que conecta UI <-> cámara
 │   ├── useDragLook.ts          Arrastrar para mirar + pellizco para zoom
 │   ├── useKeyboardLook.ts      Flechas / WASD en escritorio
-│   └── useEquirectTexture.ts   Carga y caché de panorámicas
+│   ├── useEquirectTexture.ts   Carga y caché de panorámicas
+│   ├── useHashRoute.ts         Rutas dentro del # (funcionan en GitHub Pages)
+│   ├── capture/                ── armar la panorámica ──
+│   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
+│   │   ├── camera.ts           getUserMedia, lentes, errores en español
+│   │   ├── frames.ts           congelar tomas, brillo, calibrar el FOV
+│   │   ├── plan.ts             a dónde hay que apuntar y en qué orden
+│   │   ├── stitcher.ts         * la costura equirectangular en la GPU
+│   │   └── importar.ts         fotos 360, panorámicas de celular y GPano
+│   └── store/                  ── guardar y compartir ──
+│       ├── idb.ts              IndexedDB a pelo
+│       ├── tours.ts            CRUD, blobs y resolución a Tour de runtime
+│       ├── zip.ts              escritor y lector de ZIP sin dependencias
+│       ├── paquete.ts          el archivo .tour
+│       ├── quota.ts            espacio del navegador
+│       └── ids.ts              identificadores
 └── components/
-    ├── TourViewer.tsx          Composición: canvas + overlay + estados
+    ├── TourViewer.tsx          Composición del visor: escena + overlay + estados
     ├── tour/
+    │   ├── Escena360.tsx       Canvas + rig + esfera (lo comparten visor y editor)
     │   ├── CameraRig.tsx       * Traduce el input a rotación de cámara
-    │   └── PanoSphere.tsx      La esfera 360 y el fundido entre habitaciones
-    └── ui/
-        ├── Joystick.tsx        * Joystick con Pointer Events
-        ├── HotspotLayer.tsx    Marcadores DOM proyectados sobre la escena
-        ├── RoomBar.tsx         Selector de habitaciones
-        ├── Compass.tsx         Brújula
-        ├── ZoomControls.tsx    + / −
-        ├── InfoSheet.tsx       Panel inferior de los hotspots informativos
-        ├── LoadingVeil.tsx     Spinner de carga
-        └── DebugAngles.tsx     Badge con yaw/pitch/fov (solo en dev)
+    │   ├── PanoSphere.tsx      La esfera 360 y el fundido entre habitaciones
+    │   └── ViewerGuard.tsx     Red de seguridad de WebGL
+    ├── ui/                     Joystick, hotspots, brújula, zoom, hojas…
+    └── crear/                  ── las pantallas de creación ──
+        ├── Inicio.tsx          Mis recorridos
+        ├── EditorRecorrido.tsx Habitaciones, orden, exportar
+        ├── Capturar.tsx        * Captura guiada con la cámara
+        ├── GuiaCaptura.tsx     Los puntos guía dibujados sobre el video
+        ├── SubirFoto.tsx       Importar una foto que ya existe
+        ├── EditorPuntos.tsx    Colocar hotspots sobre la escena
+        ├── PuntosEditables.tsx Marcadores arrastrables
+        ├── VisorGuardado.tsx   Abre un recorrido guardado
+        └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
+tools/pruebas/costura.html      Banco de pruebas de la costura (ver sección 9)
+public/prueba.html              Diagnóstico de compatibilidad del teléfono
 ```
 
-Las tres piezas marcadas con `*` son las que importa entender. El resto es
+Las piezas marcadas con `*` son las que importa entender. El resto es
 decoración reemplazable.
 
 ---
@@ -190,7 +229,123 @@ Componente propio con Pointer Events en lugar de una librería:
 
 ---
 
-## 5. Meter tus panorámicas
+## 5. Crear un recorrido desde el celular
+
+Se entra por el botón de la barra de arriba (**Mis recorridos**) o directo a
+`#/inicio`. El flujo completo es:
+
+```
+Mis recorridos → Nuevo recorrido → Agregar habitación
+                                    ├─ Tomarla con la cámara  → captura guiada
+                                    └─ Usar una foto que ya tengo
+                                  → nombrarla → colocar los puntos → Ver
+                                  → Preparar archivo → compartir el .tour
+```
+
+### Requisito que sorprende a todo el mundo: https
+
+`getUserMedia` y los sensores de orientación **solo existen en un contexto
+seguro**. La URL *Network* que imprime `npm run dev`
+(`http://192.168.x.x:5173`) **no lo es**: el visor carga, se ve bien, y la
+cámara simplemente nunca abre.
+
+Tres salidas, de mejor a peor:
+
+1. Publicar en GitHub Pages (sección 11) y abrir ese link en el celular. Es
+   https de verdad y es como lo va a usar la gente.
+2. Abrirlo en `http://localhost` con el cable y el reenvío de puertos del
+   navegador de escritorio (`chrome://inspect` → Port forwarding). `localhost`
+   cuenta como seguro.
+3. Un túnel https (`cloudflared tunnel --url http://localhost:5173`).
+
+Lo demás —subir fotos, editar, colocar puntos, exportar— sí funciona sobre
+http, así que el `npm run dev` sigue sirviendo para el 80 % del trabajo.
+
+`public/prueba.html` (queda publicado como `/prueba.html`) responde esto y lo
+demás de un vistazo: si la página es segura, si hay cámara, si hay sensores, si
+el teléfono aguanta un lienzo de 4096 y si se puede guardar.
+
+### Cómo se arma la panorámica
+
+Entra: una foto de la cámara y la orientación del teléfono al tomarla.
+Sale: una equirectangular 2:1 idéntica en formato a las que ya consumía el visor.
+
+**Los sensores.** `alpha/beta/gamma` se convierten a un cuaternión con la
+referencia clásica de `DeviceOrientationControls`, con dos correcciones que no
+son evidentes: un giro de −90° sobre X (porque la cámara mira por la *espalda*
+del teléfono, no por su punta) y otro por `screen.orientation.angle` (porque al
+girar el teléfono el sistema rota la pantalla pero no los ejes del sensor).
+
+Se sigue el evento **relativo** —giroscopio puro— y no el absoluto, aunque este
+último venga referido al norte: el dato absoluto lleva magnetómetro adentro, y
+un magnetómetro dentro de una casa se brinca varios grados cada vez que pasa
+cerca de un marco de acero o del cableado del muro. Entre dos fotos seguidas eso
+se ve como una pared partida. La brújula se usa una sola vez, al principio, para
+anotar dónde quedó el norte.
+
+**La costura** (`src/lib/capture/stitcher.ts`) proyecta **al revés**. Lo
+intuitivo sería deformar la foto y pegarla sobre el lienzo, pero entonces los
+triángulos que cruzan la costura de 360° se dibujan atravesando toda la imagen y
+cerca de los polos la malla se estira hasta romperse. Aquí se recorre el
+**lienzo** y para cada píxel se pregunta a qué dirección corresponde y si esa
+dirección cae dentro de la foto:
+
+```
+píxel del lienzo → (yaw, pitch) → dirección → espacio de la cámara
+                 → coordenada dentro de la foto → color
+```
+
+Así no existe la costura (yaw y yaw−360 son la misma dirección, y el seno y el
+coseno no notan la diferencia) ni el problema de los polos (no hay malla que
+estirar). Cada toma se dibuja con alfa premultiplicado y desvanecido en los
+bordes; al final se divide el color entre el alfa acumulado, que es lo que evita
+el halo oscuro alrededor de la primera foto.
+
+**El campo de visión se calibra solo.** Ningún navegador dice cuál es el FOV de
+la lente: `getSettings()` da resolución y cuadros por segundo, y nada más. Se
+arranca de 66° (equivalente a 26 mm) y durante la captura se mide: sabemos
+cuánto giró el teléfono entre dos tomas y podemos medir cuánto se corrió la
+imagen por correlación, y de ahí sale la distancia focal real. Al terminar, si
+la medición cambió, **se vuelven a coser todas las fotos** con el valor
+calibrado. Es la diferencia entre una panorámica que cierra y una en la que las
+paredes no empatan: cinco grados de error se acumulan vuelta tras vuelta.
+
+Por eso cada toma se guarda (JPEG chico + su cuaternión): permite recoser, y de
+paso hace que **Deshacer** funcione aunque el lienzo sea acumulativo.
+
+### Subir una foto que ya existe
+
+Tres casos, y el visor propone el correcto:
+
+| Origen | Qué se hace |
+| ------ | ----------- |
+| Foto 360 de una cámara esférica | Ya es 2:1: solo se ajusta de tamaño |
+| Panorámica del modo Panorámica del celular | Se reproyecta de cilíndrica a equirectangular renglón por renglón; un deslizador dice cuánto se giró y se ve el resultado en vivo |
+| Foto normal | Se proyecta como la vería la lente; el resto del cuarto queda vacío |
+
+Si la imagen trae metadatos **GPano** —los escriben Insta360, Ricoh Theta,
+Photo Sphere y Facebook— no hay nada que adivinar: dicen exactamente qué pedazo
+de la esfera es esa imagen y se coloca sola.
+
+### Dónde queda guardado
+
+En **IndexedDB**, con las fotos como Blob en un almacén aparte del JSON del
+recorrido: listar "Mis recorridos" lee unos pocos KB en vez de jalar todas las
+panorámicas a memoria.
+
+El navegador puede borrar eso —Safari en iOS limpia los sitios que pasan siete
+días sin abrirse, y cualquier teléfono lo hace si se queda sin espacio—, así que
+**Preparar archivo** genera un `.tour`: un ZIP normal, sin comprimir, con el
+manifiesto y las fotos adentro. Se puede abrir con cualquier descompresor, se
+manda por WhatsApp y se vuelve a importar en otro teléfono.
+
+El botón va en dos pasos a propósito (*Preparar* y luego *Compartir*): en iOS,
+compartir solo se permite mientras dure la activación que dejó el toque del
+usuario, y armar un ZIP de varios megabytes se la acaba.
+
+---
+
+## 6. Meter tus panorámicas (a mano, sin el editor)
 
 1. Deja los JPG en `public/panoramas/`.
 2. Que sean **equirectangulares 2:1** (6000×3000, 8192×4096…). Para web, el punto
@@ -216,7 +371,7 @@ npm run panoramas:demo      # requiere Python 3 con Pillow
 
 ---
 
-## 6. Vestirlo con tu marca
+## 7. Vestirlo con tu marca
 
 Casi todo sale de `src/index.css`, en el bloque `@theme`:
 
@@ -236,7 +391,7 @@ Para el logo: `TourViewer.tsx`, en la tarjeta de la barra superior.
 
 ---
 
-## 7. Ajustes rápidos
+## 8. Ajustes rápidos
 
 Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
 
@@ -255,7 +410,7 @@ Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
 
 ---
 
-## 8. Notas de móvil que ya están resueltas
+## 9. Notas de móvil que ya están resueltas
 
 - `h-[100dvh]` en vez de `100vh`: `vh` no descuenta la barra del navegador y el
   joystick se queda debajo del borde de la pantalla.
@@ -270,7 +425,9 @@ Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
 
 ---
 
-## 9. Qué se verificó
+## 10. Qué se verificó
+
+### El visor
 
 Automatizado con Playwright sobre Chromium, viewport de celular (390×844, 2x):
 
@@ -292,9 +449,48 @@ Automatizado con Playwright sobre Chromium, viewport de celular (390×844, 2x):
 > El framerate en esa verificación es bajo (~9 fps) porque Chromium corre con
 > renderizado por software. En un dispositivo con GPU va a 60 fps.
 
+### La costura
+
+`tools/pruebas/costura.html` (se abre con `npm run dev`, en
+`/tools/pruebas/costura.html`) es una prueba de extremo a extremo de toda la
+cadena de matemáticas. La idea: si la costura está bien hecha, tiene que poder
+**reconstruir una panorámica que ya conocemos**.
+
+1. Toma una equirectangular real de `public/panoramas/`.
+2. Simula la cámara del teléfono: para cada punto del plan de captura recorta lo
+   que vería una cámara apuntando ahí. Esa proyección "de ida" está escrita a
+   mano y aparte, en JavaScript.
+3. Le da esas tomas al costurero, que hace la proyección "de vuelta" en la GPU.
+4. Compara el resultado contra el original.
+
+Un signo invertido, una costura que no cierra, un polo roto o una imagen
+volteada disparan la diferencia. Resultado con 30 tomas simuladas de una cámara
+vertical de 40° × 66°:
+
+| Medición                                     | Resultado                    |
+| -------------------------------------------- | ---------------------------- |
+| Cobertura de la esfera                       | 100.00 % ✓                   |
+| Diferencia media contra el original          | **1.40 / 255 niveles** ✓     |
+| N / E / S / O y el cenit en su lugar          | Δ ≤ 2 niveles ✓              |
+| Tiempo de costura                            | 19 ms por toma               |
+
+### El resto
+
+| Prueba                                                            | Resultado |
+| ----------------------------------------------------------------- | --------- |
+| Crear recorrido → subir foto → guardar → colocar punto → ver       | ✓         |
+| Punto de enlace entre dos habitaciones                            | ✓         |
+| Exportar `.tour` y volver a importarlo (ida y vuelta completa)     | ✓         |
+| ZIP escrito por el visor, abierto con `unzip` y con `zipfile`      | CRC ✓, nombres UTF-8 ✓ |
+| ZIP hecho por otra herramienta con deflate, leído por el visor     | ✓         |
+| CRC-32 contra el valor de referencia (`"123456789"` → `cbf43926`) | ✓         |
+| Captura guiada con cámara y sensores simulados: disparo automático, cobertura, armado y guardado | ✓ |
+| Conversión sensores → (yaw, pitch): 9 posturas verificadas contra sus valores esperados | ✓ |
+| Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
+
 ---
 
-## 10. Publicarlo en internet (GitHub Pages)
+## 11. Publicarlo en internet (GitHub Pages)
 
 El visor es una página estática: no necesita servidor, base de datos ni nada que
 se quede corriendo. Se compila una vez y el resultado se sube tal cual.
@@ -324,11 +520,15 @@ cualquier hosting.
 
 ---
 
-## 11. Siguientes pasos naturales
+## 12. Siguientes pasos naturales
 
-- Hotspots colocados visualmente en vez de a mano (clic sobre la escena y se
-  guarda el yaw/pitch del badge).
-- Giroscopio (`DeviceOrientationEvent`) para mirar moviendo el teléfono.
-- Modo VR con WebXR (`@react-three/xr`).
+- Reordenar habitaciones arrastrando en vez de con flechas.
 - Planta arquitectónica con la posición de cada escena.
+- Modo VR con WebXR (`@react-three/xr`).
+- Giroscopio también al **ver** el recorrido, para mirar moviendo el teléfono
+  (la conversión de sensores ya está hecha en `src/lib/capture/orientation.ts`).
+- Corrección de nivel: enderezar el horizonte de una panorámica capturada a
+  pulso, ya que el ladeo de cada toma se conoce.
+- Alineación fina entre tomas por correlación, no solo por sensores, para
+  quitar el resto del error de paralaje.
 - Mosaicos multirresolución si vas a usar panorámicas mayores a 8K.
