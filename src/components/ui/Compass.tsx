@@ -4,9 +4,9 @@ import { useTourEngine } from '../../lib/tourEngine'
 /**
  * Brújula del HUD.
  *
- * Lee `engine.readout` en su propio requestAnimationFrame y escribe el
- * transform directo al DOM. Nunca provoca un render de React, aunque se
- * actualice 60 veces por segundo.
+ * Lee `engine.readout` en el pulso compartido del HUD y escribe el transform
+ * directo al DOM. Nunca provoca un render de React, y cuando la cámara está
+ * quieta el pulso se detiene solo: la brújula no gasta nada.
  */
 export function Compass({ className = '' }: { className?: string }) {
   const engine = useTourEngine()
@@ -14,11 +14,9 @@ export function Compass({ className = '' }: { className?: string }) {
   const labelRef = useRef<HTMLSpanElement>(null)
 
   useEffect(() => {
-    let frame = 0
     let lastShown = -1
 
-    const tick = () => {
-      frame = requestAnimationFrame(tick)
+    return engine.suscribirHud(() => {
       const yaw = engine.readout.yaw
       if (dialRef.current) {
         // El disco gira al revés que la cámara: el norte se queda quieto.
@@ -29,10 +27,7 @@ export function Compass({ className = '' }: { className?: string }) {
         lastShown = rounded
         labelRef.current.textContent = `${rounded}°`
       }
-    }
-
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    })
   }, [engine])
 
   return (

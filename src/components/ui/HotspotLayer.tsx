@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
+import { observarTamano } from '../../lib/observarTamano'
 import { DEG, yawPitchToVector3 } from '../../lib/math'
 
 export type HotspotLayerProps = {
@@ -15,8 +16,9 @@ export type HotspotLayerProps = {
  * ============================================================================
  *
  * Los marcadores NO viven dentro del <Canvas>: son <button> normales en la capa
- * de overlay. Un solo requestAnimationFrame proyecta cada dirección (yaw, pitch)
- * a coordenadas de pantalla y les escribe el transform.
+ * de overlay. El pulso compartido del HUD proyecta cada dirección (yaw, pitch)
+ * a coordenadas de pantalla y les escribe el transform. Cuando la cámara se
+ * detiene, el pulso se apaga y los marcadores dejan de recalcularse.
  *
  * Ventajas de hacerlo así en lugar de meterlos al 3D:
  *   · se estilizan con Tailwind como cualquier botón (y así se ven "de app",
@@ -44,19 +46,27 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
     // después de escribir transforms forzaría un reflow por frame.
     let width = container.clientWidth
     let height = container.clientHeight
-    const observer = new ResizeObserver(() => {
+    /* Al cambiar de tamaño hay que TOCAR EL TIMBRE, no solo anotar la medida.
+       El pulso del HUD se duerme cuando la cámara está quieta, y la primera
+       medición llega justo después de montar: sin este aviso, los marcadores se
+       quedaban sin colocar —invisibles en la esquina— hasta que el usuario
+       moviera la cámara. */
+    /* Con `observarTamano` y no con `new ResizeObserver` a secas: en iOS 13.0
+       a 13.3 —dentro del piso que declara vite.config.ts— no existe, y como
+       este componente NO está bajo ninguna frontera de error, el
+       ReferenceError desmontaba la aplicación completa. Ver
+       src/lib/observarTamano.ts. */
+    const soltarMedida = observarTamano(container, () => {
       width = container.clientWidth
       height = container.clientHeight
+      engine.invalidar()
     })
-    observer.observe(container)
 
     const direction = new THREE.Vector3()
     const euler = new THREE.Euler(0, 0, 0, 'YXZ')
     const quaternion = new THREE.Quaternion()
 
-    let frame = 0
-    const tick = () => {
-      frame = requestAnimationFrame(tick)
+    const desuscribir = engine.suscribirHud(() => {
       if (!width || !height) return
 
       const { yaw, pitch, fov } = engine.readout
@@ -91,13 +101,15 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
         node.style.opacity = '1'
         node.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
       }
-    }
+    })
 
-    frame = requestAnimationFrame(tick)
     return () => {
-      cancelAnimationFrame(frame)
-      observer.disconnect()
+      desuscribir()
+      soltarMedida()
     }
+    // `hotspots` en las dependencias no es de adorno: al cambiar de habitación
+    // hay que volver a suscribirse (y eso toca el timbre) para colocar los
+    // marcadores nuevos, que si no se quedarían invisibles.
   }, [engine, hotspots])
 
   return (
@@ -114,7 +126,7 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
           onClick={() => onSelect(hotspot)}
           style={{ visibility: 'hidden', opacity: 0 }}
           className="pointer-events-auto absolute left-0 top-0 flex items-center gap-2 rounded-full
-                     bg-black/45 py-1.5 pl-1.5 pr-3.5 text-sm font-medium text-white
+                     bg-black/45 py-2 pl-2 pr-4 text-sm font-medium text-white
                      ring-1 ring-white/25 backdrop-blur-sm transition-[opacity,background-color]
                      duration-150 will-change-transform hover:bg-black/65 active:scale-95"
         >

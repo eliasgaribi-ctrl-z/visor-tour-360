@@ -8,6 +8,7 @@ export function ZoomControls({ step = 10, className = '' }: { step?: number; cla
   const zoom = (direction: 1 | -1) => {
     // FOV más chico = más zoom, por eso el signo va invertido.
     engine.input.dFov += -direction * step
+    engine.invalidar()
   }
 
   return (

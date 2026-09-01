@@ -15,6 +15,33 @@ export type DragLookOptions = {
 }
 
 /**
+ * Zoom con la rueda, suelto.
+ *
+ * Va aparte de `useDragLook` porque hay que colgarlo en DOS capas. Los
+ * marcadores y el resto del HUD no viven dentro del div del canvas: son su
+ * HERMANO, en una capa encima. Un evento de rueda encima de un marcador sube
+ * por SU rama del árbol y nunca pasa por el manejador del canvas, así que el
+ * zoom simplemente no hacía nada ahí.
+ *
+ * Se notaba poco porque depende de dónde quede la cámara: en el recorrido de
+ * ejemplo pasa cuando el marcador de yaw 168 queda al centro de la pantalla.
+ * Como las dos capas son hermanas, colgarlo en las dos no lo dispara dos veces.
+ *
+ * El arrastre NO se arregla así a propósito: empezar a arrastrar encima de un
+ * marcador sigue sin girar la cámara (`data-no-drag`), porque ahí el gesto es
+ * "voy a tocar este punto".
+ */
+export function useWheelZoom(engine: TourEngine, grados = 4) {
+  return useCallback(
+    (event: ReactWheelEvent<HTMLElement>) => {
+      engine.input.dFov += Math.sign(event.deltaY) * grados
+      engine.invalidar()
+    },
+    [engine, grados],
+  )
+}
+
+/**
  * Arrastrar con el dedo o el mouse para mirar alrededor, con pellizco para zoom.
  *
  * Convención "agarrar la foto": si arrastras a la derecha, la imagen se va a la
@@ -71,6 +98,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
           // Separar los dedos = acercarse = reducir el FOV.
           const ratio = distance / pinchDistance.current
           engine.input.dFov += (1 - ratio) * engine.readout.fov
+          engine.invalidar()
         }
         pinchDistance.current = distance
         return
@@ -91,6 +119,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
 
       engine.input.dragYaw -= (dx / rect.width) * hfov
       engine.input.dragPitch += (dy / rect.height) * fov
+      engine.invalidar()
     },
     [engine, threshold],
   )
@@ -102,12 +131,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
     if (pointers.current.size === 0) dragging.current = false
   }, [])
 
-  const onWheel = useCallback(
-    (event: ReactWheelEvent<HTMLElement>) => {
-      engine.input.dFov += Math.sign(event.deltaY) * wheelZoomStep
-    },
-    [engine, wheelZoomStep],
-  )
+  const onWheel = useWheelZoom(engine, wheelZoomStep)
 
   return {
     onPointerDown,

@@ -1,7 +1,7 @@
 /* oxlint-disable react/immutability -- Mutar engine.input/engine.readout dentro de
    useFrame es justamente el diseño: cero renders de React por frame. */
-import { useFrame } from '@react-three/fiber'
-import { useRef } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
+import { useEffect, useRef } from 'react'
 import type { PerspectiveCamera } from 'three'
 import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
@@ -75,6 +75,15 @@ export function CameraRig({
   invertY = false,
 }: CameraRigProps) {
   const engine = useTourEngine()
+  const invalidate = useThree((s) => s.invalidate)
+
+  /* El canvas dibuja "a pedido" (ver Escena360). Aquí se conecta el timbre:
+     desde este momento, cualquiera que le escriba al input puede pedir cuadro. */
+  useEffect(() => {
+    engine.conectarRender(invalidate)
+    engine.invalidar()
+    return () => engine.conectarRender(null)
+  }, [engine, invalidate])
 
   // Objetivo (a donde el input quiere ir) y valor real (lo que se dibuja).
   const targetYaw = useRef(initialYaw)
@@ -154,6 +163,22 @@ export function CameraRig({
     readout.yaw = wrap360(yaw.current)
     readout.pitch = pitch.current
     readout.fov = currentFov.current
+
+    /* ------------------------------------------------- ¿HACE FALTA OTRO CUADRO?
+     * Mientras el dedo empuje o la cámara siga acomodándose hacia su objetivo,
+     * sí. Cuando todo se detiene, se deja de pedir y el teléfono descansa: el
+     * siguiente cuadro lo pedirá quien vuelva a tocar algo.
+     *
+     * Los umbrales son una décima de grado y de FOV: por debajo de eso el
+     * movimiento ya no se ve, y perseguirlo hasta el cero exacto dejaría la
+     * animación viva para siempre, que es justo lo que se quiere evitar. */
+    const enMovimiento =
+      input.axis.x !== 0 ||
+      input.axis.y !== 0 ||
+      Math.abs(targetYaw.current - yaw.current) > 0.05 ||
+      Math.abs(targetPitch.current - pitch.current) > 0.05 ||
+      Math.abs(targetFov.current - currentFov.current) > 0.05
+    if (enMovimiento) engine.invalidar()
   })
 
   return null

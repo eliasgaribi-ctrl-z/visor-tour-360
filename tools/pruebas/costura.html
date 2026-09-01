@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Prueba de la costura equirectangular</title>
+    <style>
+      body { margin: 0; background: #0b0f16; color: #e8eaee; font: 14px ui-monospace, monospace; padding: 16px; }
+      canvas, img { max-width: 100%; border: 1px solid #2a3444; display: block; margin: 8px 0; }
+      h2 { font-size: 13px; color: #9aa7bd; margin: 18px 0 4px; text-transform: uppercase; letter-spacing: .08em; }
+      .ok { color: #7ee787 } .mal { color: #ff7b72 }
+      pre { white-space: pre-wrap; line-height: 1.5 }
+    </style>
+  </head>
+  <body>
+    <pre id="salida">Corriendo…</pre>
+    <div id="imagenes"></div>
+    <script type="module" src="./costura.ts"></script>
+  </body>
+</html>

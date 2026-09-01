@@ -32,6 +32,7 @@ export function useKeyboardLook(engine: TourEngine) {
       const magnitude = Math.hypot(x, y)
       engine.input.axis.x = magnitude > 1 ? x / magnitude : x
       engine.input.axis.y = magnitude > 1 ? y / magnitude : y
+      engine.invalidar()
     }
 
     const normalize = (key: string) => (key.length === 1 ? key.toLowerCase() : key)

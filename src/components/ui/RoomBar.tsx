@@ -10,6 +10,10 @@ export type RoomBarProps = {
 export function RoomBar({ scenes, activeId, onSelect }: RoomBarProps) {
   return (
     <div
+      /* La barra se desplaza a lo ancho, y el zoom de la rueda ahora también
+         escucha en la capa del HUD: sin esto, rodar la rueda aquí correría la
+         lista Y haría zoom en la foto al mismo tiempo. */
+      onWheel={(evento) => evento.stopPropagation()}
       className="pointer-events-auto flex w-fit max-w-full gap-2 overflow-x-auto rounded-hud p-2
                  [scrollbar-width:none] [&::-webkit-scrollbar]:hidden hud-glass"
     >
@@ -21,8 +25,12 @@ export function RoomBar({ scenes, activeId, onSelect }: RoomBarProps) {
             type="button"
             onClick={() => onSelect(scene.id)}
             aria-current={isActive}
-            className={`relative shrink-0 overflow-hidden rounded-xl px-3.5 py-2 text-sm font-medium
-                        whitespace-nowrap transition-colors ${
+            /* min-h-11 = 44 px: el mínimo cómodo para un pulgar. Es el
+               control que más se toca de todo el visor y estaba en 36. */
+            /* inline-flex + items-center: con `min-h` a secas el texto se
+               quedaría pegado arriba en vez de centrado. */
+            className={`relative inline-flex min-h-11 shrink-0 items-center overflow-hidden rounded-xl
+                        px-4 text-sm font-medium whitespace-nowrap transition-colors ${
                           isActive
                             ? 'bg-brand-500 text-black'
                             : 'bg-white/10 text-ink-50 active:bg-white/20'
