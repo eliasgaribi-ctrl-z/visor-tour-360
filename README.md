@@ -1,5 +1,34 @@
 # Visor de recorridos virtuales 360 · React + TypeScript + Tailwind
 
+## Verlo en tu iPhone ahora mismo
+
+**[Abrir el visor →](https://eliasgaribi-ctrl-z.github.io/visor-tour-360/)**
+
+Es un link normal: no hay que instalar nada ni crear cuenta.
+
+1. Ábrelo en **Safari** (en iOS todos los navegadores usan el motor de Safari
+   por dentro, pero "Agregar a inicio" solo aparece ahí).
+2. Para que se sienta como una app propia: toca **Compartir** (el cuadrado con
+   la flecha hacia arriba, abajo en la barra) → **Agregar a pantalla de
+   inicio**. Queda un ícono que abre el visor a pantalla completa, sin la
+   barra de direcciones de Safari.
+3. Lo primero que se ve es un **recorrido de ejemplo** (panorámicas con
+   rejilla, para probar que todo funciona) — no tu casa. Para **crear el
+   tuyo con la cámara del teléfono**, toca el botón naranja **"Crear el
+   mío"** que aparece arriba, en la barra superior: te manda a *Mis
+   recorridos* → **Nuevo recorrido** → **Tomarla con la cámara**. Hace falta
+   ese mismo link https para que la cámara abra — la URL de red que imprime
+   `npm run dev` no sirve para eso. Ver la sección 5.
+
+> **¿El link de arriba no carga (404 o página en blanco)?** Es que GitHub
+> Pages todavía no está activado en este repositorio — el sitio compilado ya
+> vive en la carpeta `docs/`, solo falta prenderlo. En GitHub:
+> **Settings → Pages → Source: Deploy from a branch → rama `main`, carpeta
+> `/docs` → Save**. En uno o dos minutos el link empieza a funcionar. Más
+> detalles en la sección 13.
+
+---
+
 Dos mitades que viven en la misma página estática:
 
 **VER** · panorámica equirectangular a pantalla completa, capa de interfaz

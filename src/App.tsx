@@ -40,6 +40,8 @@ const SubirFoto = lazy(() =>
   import('./components/crear/SubirFoto').then((m) => ({ default: m.SubirFoto })),
 )
 
+const PISTA_DEMO = 'Es un ejemplo — toca "Crear el mío" arriba para usar tu cámara'
+
 /**
  * ============================================================================
  *  LAS DOS MITADES DE LA APP
@@ -90,17 +92,29 @@ export default function App() {
     setInicial('demo')
   }, [])
 
-  const botonMenu = (
+  /**
+   * Botón de la barra superior en la demo: el mismo destino que el antiguo
+   * ícono de menú ("Mis recorridos"), pero con texto y color de marca. Quien
+   * recibe el link de GitHub Pages cae aquí primero, y sin una salida visible
+   * se queda pensando que esto ES el producto — en vez de un ejemplo con
+   * panorámicas sintéticas, y de que su propio recorrido, con la cámara del
+   * teléfono, está a un toque de distancia.
+   */
+  const botonCrear = (
     <button
       type="button"
       onClick={alMenu}
-      aria-label="Mis recorridos"
-      className="hud-glass pointer-events-auto grid h-16 w-11 place-items-center rounded-hud text-ink-50
-                 active:bg-white/15"
+      className="hud-glass pointer-events-auto flex h-16 shrink-0 items-center gap-2 rounded-hud
+                 bg-brand-500 px-4 text-sm font-semibold text-black active:bg-brand-600"
     >
-      <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path d="M4 7h16M4 12h16M4 17h16" strokeLinecap="round" />
+      <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path
+          d="M4 8.5A1.5 1.5 0 0 1 5.5 7h1.6l.9-1.5A1 1 0 0 1 8.86 5h6.28a1 1 0 0 1 .86.5L16.9 7h1.6A1.5 1.5 0 0 1 20 8.5v9A1.5 1.5 0 0 1 18.5 19h-13A1.5 1.5 0 0 1 4 17.5v-9Z"
+          strokeLinejoin="round"
+        />
+        <circle cx="12" cy="13" r="3.2" />
       </svg>
+      Crear el mío
     </button>
   )
 
@@ -125,12 +139,12 @@ export default function App() {
         return <VisorGuardado tourId={ruta.tourId} ir={ir} />
 
       case 'demo':
-        return <TourViewer tour={demoTour} accion={botonMenu} />
+        return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
 
       case 'visor':
       default:
         if (inicial === null) return <Cargando texto="Abriendo…" />
-        if (inicial === 'demo') return <TourViewer tour={demoTour} accion={botonMenu} />
+        if (inicial === 'demo') return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
         return <VisorGuardado tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
     }
   }
