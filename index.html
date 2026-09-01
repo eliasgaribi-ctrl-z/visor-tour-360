@@ -16,8 +16,80 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Recorrido virtual 360</title>
   </head>
-  <body>
+  <body style="margin: 0; background: #0b0f19">
     <div id="root"></div>
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         RED DE SEGURIDAD DEL ARRANQUE
+
+         Todo lo de abajo es HTML plano y JavaScript de los de antes (nada de
+         const, arrow functions ni módulos), justamente porque tiene que poder
+         ejecutarse en el navegador donde el visor NO arrancó.
+
+         Si React monta bien, esto nunca se ve. Si no monta —sintaxis que el
+         Safari del teléfono no entiende, un error al cargar el bundle, lo que
+         sea— en vez de una pantalla negra sin explicación aparece un mensaje
+         con la causa exacta y con qué teléfono es.
+    ────────────────────────────────────────────────────────────────────── -->
+    <div
+      id="respaldo"
+      style="display: none; position: fixed; inset: 0; overflow: auto; padding: 22px;
+             background: #0b0f19; color: #e8eaf0; font: 15px/1.55 -apple-system,
+             BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+    >
+      <p style="color: #e19100; font-size: 19px; font-weight: 700; margin: 0 0 10px">
+        El visor no pudo arrancar en este navegador
+      </p>
+      <p style="margin: 0 0 18px; color: #d2d4d7">
+        La página sí cargó, pero el motor 3D no. Abajo está el motivo — mándame
+        una foto de esta pantalla y lo arreglo.
+      </p>
+      <div
+        id="respaldo-motivo"
+        style="background: #131a2a; border-radius: 12px; padding: 12px; font-family:
+               ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+               color: #ff9d9d; word-break: break-word; white-space: pre-wrap"
+      ></div>
+      <div
+        id="respaldo-equipo"
+        style="margin-top: 12px; font-family: ui-monospace, Menlo, Consolas, monospace;
+               font-size: 11px; color: #8892a6; word-break: break-word"
+      ></div>
+    </div>
+
+    <script>
+      (function () {
+        var motivos = [];
+
+        function apunta(txt) {
+          if (txt && motivos.length < 4) motivos.push(txt);
+        }
+
+        window.addEventListener('error', function (e) {
+          if (e && e.target && e.target !== window && e.target.src) {
+            apunta('No se pudo cargar el archivo: ' + e.target.src);
+          } else {
+            apunta((e && e.message) || 'error desconocido');
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function (e) {
+          apunta('Promesa rechazada: ' + ((e && e.reason && e.reason.message) || e.reason));
+        });
+
+        setTimeout(function () {
+          var raiz = document.getElementById('root');
+          if (raiz && raiz.children.length > 0) return; // montó bien: nada que hacer
+
+          var caja = document.getElementById('respaldo');
+          document.getElementById('respaldo-motivo').textContent =
+            motivos.length ? motivos.join('\n\n') : 'El bundle no arrojó ningún error: lo más probable es que este navegador no entienda la sintaxis con la que está compilado.';
+          document.getElementById('respaldo-equipo').textContent = navigator.userAgent;
+          caja.style.display = 'block';
+        }, 5000);
+      })();
+    </script>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

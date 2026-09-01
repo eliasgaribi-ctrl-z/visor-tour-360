@@ -155,9 +155,11 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
 
   return (
     <TourEngineProvider value={engine}>
-      {/* 100dvh y no 100vh: en móvil, vh no descuenta la barra del navegador
-          y el joystick se queda debajo del borde de la pantalla. */}
-      <div className="relative h-[100dvh] w-full overflow-hidden bg-black">
+      {/* alto-pantalla, y no la utilidad de dvh a secas: dvh descuenta la barra
+          del navegador (por eso la queremos) pero no existe antes de iOS 15.4,
+          y una altura inválida deja el contenedor en cero y la pantalla vacía.
+          La utilidad de src/index.css hace la escalera de respaldo. */}
+      <div className="alto-pantalla relative w-full overflow-hidden bg-black">
         {/* ───────────────────────────── CAPA 0 · el visor 360 ───────────────────────────── */}
         <Escena360
           engine={engine}

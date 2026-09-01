@@ -6,17 +6,23 @@
    Cada token genera utilidades automáticamente: bg-brand-500, text-ink-100, etc.
 --------------------------------------------------------------------------- */
 @theme {
+  /* Los valores van en hexadecimal, NO en oklch(), a propósito: oklch() solo
+     existe desde Safari 15.4, y en un iPhone más viejo un color que el navegador
+     no entiende no es "un color feo", es una declaración inválida — el texto y
+     los fondos simplemente no se pintan y la pantalla se ve vacía.
+     Estos hex son la conversión exacta de los oklch originales. */
+
   /* Acento principal (botones activos, aro del joystick, hotspots) */
-  --color-brand-300: oklch(0.84 0.11 82);
-  --color-brand-400: oklch(0.79 0.14 78);
-  --color-brand-500: oklch(0.72 0.16 72);
-  --color-brand-600: oklch(0.62 0.15 68);
+  --color-brand-300: #eec474;
+  --color-brand-400: #ebae42;
+  --color-brand-500: #e19100;
+  --color-brand-600: #c07100;
 
   /* Grises del HUD (vidrio oscuro sobre la foto) */
-  --color-ink-50:  oklch(0.98 0 0);
-  --color-ink-200: oklch(0.87 0.005 260);
-  --color-ink-700: oklch(0.32 0.012 260);
-  --color-ink-900: oklch(0.17 0.015 260);
+  --color-ink-50:  #f8f8f8;
+  --color-ink-200: #d2d4d7;
+  --color-ink-700: #2f3339;
+  --color-ink-900: #0c1016;
 
   /* Radio y sombra del "vidrio" del HUD */
   --radius-hud: 1.25rem;
@@ -58,14 +64,32 @@
 /* ---------------------------------------------------------------------------
    UTILIDADES
 --------------------------------------------------------------------------- */
+/* rgba() en vez de color-mix(): color-mix llegó a Safari en la 16.2 y, igual que
+   con oklch, lo que no se entiende no se pinta. */
 @utility hud-glass {
-  background-color: color-mix(in oklab, var(--color-ink-900) 55%, transparent);
+  background-color: rgba(12, 16, 22, 0.55);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
-  border: 1px solid color-mix(in oklab, white 14%, transparent);
+  border: 1px solid rgba(255, 255, 255, 0.14);
   box-shadow:
-    0 8px 32px color-mix(in oklab, black 45%, transparent),
-    inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
+    0 8px 32px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+/* Alto de la pantalla con escalera de respaldo.
+   100dvh es lo correcto (descuenta la barra de Safari), pero solo existe desde
+   iOS 15.4. Si el navegador no lo entiende se queda con 100vh; y si tampoco
+   entendiera vh, el -webkit-fill-available lo salva. Sin esta escalera, un
+   `height: 100dvh` solo en un iPhone viejo deja el contenedor en altura CERO:
+   la app monta bien, pero no se ve absolutamente nada. */
+@utility alto-pantalla {
+  height: 100vh;
+  height: -webkit-fill-available;
+}
+@supports (height: 100dvh) {
+  .alto-pantalla {
+    height: 100dvh;
+  }
 }
 
 /* ---------------------------------------------------------------------------
