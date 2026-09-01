@@ -43,7 +43,13 @@ Con el servidor de desarrollo corriendo hay dos páginas de diagnóstico:
 | Página                          | Para qué |
 | ------------------------------- | -------- |
 | `/prueba.html`                  | Abrirla **en el celular**: dice si hay https, cámara, sensores, WebGL y espacio |
-| `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 10) |
+| `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 11) |
+
+Y una tercera, que se corre desde la terminal:
+
+```bash
+node tools/pruebas/memoria.mjs http://localhost:5173/   # memoria de video (sección 10)
+```
 
 ---
 
@@ -107,6 +113,8 @@ src/
 │   ├── useKeyboardLook.ts      Flechas / WASD en escritorio
 │   ├── useEquirectTexture.ts   Carga y caché de panorámicas
 │   ├── useHashRoute.ts         Rutas dentro del # (funcionan en GitHub Pages)
+│   ├── dispositivo.ts          * Qué se permite según la memoria del aparato
+│   ├── texturasVivas.ts        Puente que evita que la lista importe three.js
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -141,7 +149,8 @@ src/
         └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
-tools/pruebas/costura.html      Banco de pruebas de la costura (ver sección 9)
+tools/pruebas/costura.html      Banco de pruebas de la costura (sección 11)
+tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 public/prueba.html              Diagnóstico de compatibilidad del teléfono
 ```
 
@@ -480,7 +489,89 @@ Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
 
 ---
 
-## 10. Qué se verificó
+## 10. Memoria de video: lo que de verdad tumba un celular
+
+El error que rompe un recorrido virtual en un teléfono no es el framerate: es la
+memoria de video. Safari en iOS mata la pestaña alrededor de los **384 MB**, y
+lo hace sin avisar — la escena se queda en negro o la página se recarga sola.
+
+Y la trampa es que **un JPEG no ocupa en la tarjeta gráfica lo que pesa en
+disco: se descomprime.** Una equirectangular de 4096×2048 son
+`4096 · 2048 · 4 = 33 MB`, más un tercio de mipmaps: unos 45 MB por habitación.
+Ocho habitaciones cargadas a la vez ya no caben.
+
+### Lo que se hizo, y lo que se midió
+
+`tools/pruebas/memoria.mjs` parchea WebGL **antes** de que corra la app y cuenta
+los objetos de GPU de verdad, atribuyendo cada textura a su contexto: cuando un
+contexto muere, sus texturas mueren con él aunque nadie haya llamado a
+`deleteTexture`. No le cree a nadie, mide.
+
+```bash
+npm run dev                                   # en otra terminal
+npm i -D playwright && npx playwright install chromium
+node tools/pruebas/memoria.mjs http://localhost:5173/
+node tools/pruebas/memoria.mjs http://localhost:5173/ modesto   # finge gama baja
+```
+
+**Encontró una fuga de verdad:** cada montaje del canvas abría un contexto WebGL
+y ninguno se soltaba. Entrar y salir tres veces del editor de puntos dejaba seis
+contextos vivos; un iPhone tolera entre ocho y dieciséis. `renderer.dispose()`
+**no** cierra el contexto — solo suelta lo que three tenía adentro. La única
+forma es `forceContextLoss()`, y ahora se llama al desmontar `Escena360`.
+
+Con eso, y con el tope del caché de texturas, un recorrido de siete habitaciones
+mide así:
+
+| Medición                                   | Aparato normal | Gama baja |
+| ------------------------------------------ | -------------- | --------- |
+| Al abrir la primera habitación             | 32 MB          | 8 MB      |
+| Tras pasar por las 7                       | **160 MB**     | **40 MB** |
+| Tras una segunda vuelta completa           | 160 MB         | 40 MB     |
+| Al salir del visor                         | **0 MB**       | 0 MB      |
+| Contextos WebGL vivos al salir             | **0**          | 0         |
+
+Lo que hace que esos números se queden ahí:
+
+- **El caché de texturas tiene tope** (`src/lib/useEquirectTexture.ts`): guarda
+  las cinco últimas y suelta el resto. Y nunca expulsa la que se está viendo —
+  sin esa protección, precargar a las vecinas podía liberar la textura en
+  pantalla y dejar el cuarto en negro.
+- **En gama baja la foto se sube a 2048 y no a 4096**
+  (`src/lib/dispositivo.ts`): la cuarta parte de memoria. No se nota, porque en
+  esos aparatos además se dibuja a 1x: a 75° de campo de visión se ve como un
+  quinto del ancho de la panorámica, o sea 410 px repartidos en una pantalla de
+  390. No sobra resolución que perder.
+- **`antialias: false`** en el canvas del visor. El suavizado de bordes sirve
+  para las aristas de la geometría, y aquí no hay aristas: toda la pantalla es
+  una esfera con una foto encima. Lo único que hacía era reservar un búfer
+  multimuestreado, de dos a cuatro veces el normal, para no mejorar un píxel.
+- **Solo se precargan una o dos habitaciones vecinas**, no todas. Un cuarto con
+  cinco puertas llenaba el caché de golpe con habitaciones a las que quizá nadie
+  iba a entrar.
+- El costurero de la captura ya soltaba su propio contexto con
+  `forceContextLoss()` desde el principio, y la vista previa de "foto normal"
+  reutiliza uno solo en vez de crear y destruir uno por cada movimiento del
+  deslizador.
+
+### El peso de la descarga
+
+Las pantallas que no dibujan en 3D ya no arrastran el motor gráfico. `App.tsx`
+carga con `lazy()` las cinco pantallas que usan three, y `store/tours.ts` habla
+con el caché de texturas por una indirección (`src/lib/texturasVivas.ts`) en vez
+de importarlo:
+
+| Pantalla                    | JavaScript descargado |
+| --------------------------- | --------------------- |
+| Mis recorridos              | **226 kB**            |
+| El visor                    | 1 109 kB              |
+
+Antes, abrir la lista de recorridos bajaba los 1 109 kB completos para pintar
+unos renglones de texto.
+
+---
+
+## 11. Qué se verificó
 
 ### El visor
 
@@ -557,11 +648,13 @@ valor real.
 | Tocar un punto lo selecciona sin moverlo; arrastrarlo sí lo mueve           | ✓         |
 | Reemplazar la foto de una habitación conservando su nombre y sus puntos     | ✓         |
 | Conversión sensores → (yaw, pitch): 9 posturas verificadas contra sus valores esperados | ✓ |
+| Memoria de video con 7 habitaciones: acotada y liberada al salir            | 160 MB / 0 MB ✓ |
+| Contextos WebGL: se sueltan al desmontar en vez de acumularse               | ✓         |
 | Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
 
 ---
 
-## 11. Publicarlo en internet (GitHub Pages)
+## 12. Publicarlo en internet (GitHub Pages)
 
 El visor es una página estática: no necesita servidor, base de datos ni nada que
 se quede corriendo. Se compila una vez y el resultado se sube tal cual.
@@ -591,7 +684,7 @@ cualquier hosting.
 
 ---
 
-## 12. Siguientes pasos naturales
+## 13. Siguientes pasos naturales
 
 - Reordenar habitaciones arrastrando en vez de con flechas.
 - Planta arquitectónica con la posición de cada escena.
@@ -603,3 +696,29 @@ cualquier hosting.
 - Alineación fina entre tomas por correlación, no solo por sensores, para
   quitar el resto del error de paralaje.
 - Mosaicos multirresolución si vas a usar panorámicas mayores a 8K.
+
+### Lo que se consideró y se dejó fuera, con su razón
+
+- **Texturas comprimidas KTX2/Basis.** La cuenta es correcta: una textura
+  comprimida se queda comprimida en la tarjeta gráfica y ahorraría de dos a
+  ocho veces la memoria. Pero las panorámicas de este visor **las produce el
+  teléfono**, así que habría que codificar Basis en el navegador: un wasm de
+  más de un megabyte y varios segundos por foto, justo en el momento de menos
+  memoria disponible. Y rompería lo mejor del archivo `.tour`, que hoy se
+  descomprime con cualquier herramienta y trae JPEG que se abren en cualquier
+  lado. Bajar la resolución en los aparatos modestos da la misma mejora de 4×
+  sin nada de eso (sección 10). Valdría la pena solo si se pasa a servir
+  recorridos ya procesados desde un servidor.
+- **Gaussian Splatting (`@sparkjsdev/spark`).** Es otro producto, no una
+  mejora de este: un escaneo volumétrico no se puede *crear* con el flujo de
+  cámara que tiene esta app — necesita entrenar el modelo, que hoy se hace en
+  un servidor con GPU o en un servicio de paga. Además el paquete pesa 30 MB y
+  un solo archivo de escena son decenas o cientos de MB, contra el megabyte de
+  una equirectangular. Es una decisión de producto con su propia canalización,
+  y merece su propia rama.
+- **`gltf-transform`.** No hay ni un modelo glTF en el proyecto: es un visor de
+  fotos 360, no de geometría.
+- **`IntersectionObserver` para diferir el canvas.** El visor ocupa la pantalla
+  completa (`h-[100dvh]`); nunca está fuera de la vista mientras está montado.
+  Lo que sí aplicaba de esa idea era no descargar el motor 3D en las pantallas
+  que no lo usan, y eso está hecho con `lazy()` (sección 10).

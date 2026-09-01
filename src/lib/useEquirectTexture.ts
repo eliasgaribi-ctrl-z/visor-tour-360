@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react'
 import { useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { aparato } from './dispositivo'
+import { registrarOlvido } from './texturasVivas'
 
 /**
  * Caché global de texturas. Volver a una habitación ya visitada es instantáneo
@@ -59,6 +61,44 @@ function refrescar(url: string, texture: THREE.Texture) {
  * que se quedaría en el caché, y justamente las habitaciones a las que se llega
  * por un punto son siempre precargadas.
  */
+/**
+ * Baja la foto a lo que este aparato puede permitirse ANTES de subirla.
+ *
+ * Un JPEG no ocupa en la tarjeta gráfica lo que pesa en disco: se descomprime.
+ * Una equirectangular de 4096×2048 son 33 MB de memoria de video, más un tercio
+ * de mipmaps. Redibujarla a 2048 la deja en 8 MB, y en un teléfono modesto —que
+ * además dibuja a 1x— no se nota: a 75° de campo de visión se ve como un quinto
+ * del ancho de la panorámica, o sea 410 px repartidos en una pantalla de 390.
+ *
+ * Se hace aquí, sobre la imagen ya decodificada, y no cambiando el formato del
+ * archivo: el .tour sigue siendo un ZIP con JPEG que se abre en cualquier lado.
+ */
+function encoger(imagen: HTMLImageElement | ImageBitmap, ancho: number): HTMLCanvasElement | null {
+  const w = 'naturalWidth' in imagen ? imagen.naturalWidth : imagen.width
+  const h = 'naturalHeight' in imagen ? imagen.naturalHeight : imagen.height
+  if (!w || w <= ancho) return null
+
+  const alto = Math.max(1, Math.round((h * ancho) / w))
+  const canvas = document.createElement('canvas')
+  canvas.width = ancho
+  canvas.height = alto
+  const ctx = canvas.getContext('2d', { alpha: false })
+  if (!ctx) return null
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(imagen as CanvasImageSource, 0, 0, ancho, alto)
+  return canvas
+}
+
+/** Cambia la imagen de la textura por su versión reducida, si hace falta. */
+function aligerar(texture: THREE.Texture) {
+  const chica = encoger(texture.image as HTMLImageElement, aparato().anchoTextura)
+  if (!chica) return
+  // `Texture.image` está tipado como HTMLImageElement, pero WebGL sube igual
+  // cualquier fuente dibujable; un canvas es una de ellas.
+  texture.image = chica as unknown as HTMLImageElement
+  texture.needsUpdate = true
+}
+
 function configurar(texture: THREE.Texture, gl?: THREE.WebGLRenderer) {
   // sRGB: sin esto la foto se ve lavada / con el color equivocado.
   texture.colorSpace = THREE.SRGBColorSpace
@@ -116,6 +156,7 @@ export function useEquirectTexture(url: string | null): TextureState {
     loader.load(
       url,
       (texture) => {
+        aligerar(texture)
         configurar(texture, gl)
         refrescar(url, texture)
         if (!cancelled) setState({ texture, loading: false, error: false })
@@ -156,7 +197,12 @@ export function olvidarEquirect(url: string) {
 export function preloadEquirect(url: string) {
   if (cache.has(url)) return
   loader.load(url, (texture) => {
+    aligerar(texture)
     configurar(texture)
     refrescar(url, texture)
   })
 }
+
+/* El almacén de recorridos avisa por aquí cuando revoca una URL, sin tener que
+   importar este archivo (y con él, todo three.js). Ver src/lib/texturasVivas.ts */
+registrarOlvido(olvidarEquirect)

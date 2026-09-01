@@ -1,19 +1,42 @@
 /* oxlint-disable react/set-state-in-effect -- El efecto sincroniza con
    IndexedDB, que es un sistema externo. */
-import { useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 
 import { demoTour } from './data/tour'
 import { useHashRoute, recorridoActivo, fijarRecorridoActivo } from './lib/useHashRoute'
 import { getTour } from './lib/store/tours'
 
-import { TourViewer } from './components/TourViewer'
 import { Inicio } from './components/crear/Inicio'
 import { EditorRecorrido } from './components/crear/EditorRecorrido'
-import { EditorPuntos } from './components/crear/EditorPuntos'
-import { Capturar } from './components/crear/Capturar'
-import { SubirFoto } from './components/crear/SubirFoto'
-import { VisorGuardado } from './components/crear/VisorGuardado'
 import { Cargando } from './components/crear/ui'
+
+/**
+ * ── Las pantallas con 3D se bajan aparte ───────────────────────────────────
+ *
+ * three.js y React Three Fiber pesan un megabyte largo, y hay pantallas que no
+ * dibujan ni un píxel en 3D: "Mis recorridos" es una lista, y el editor de un
+ * recorrido son unas tarjetas. Con todo en un solo archivo, abrir la lista de
+ * recorridos obligaba a descargar el motor gráfico entero antes de pintar el
+ * primer renglón — y eso en un celular con datos móviles se siente.
+ *
+ * Con `lazy`, cada una de estas pantallas se descarga la primera vez que se
+ * entra a ella y se queda en caché para las siguientes.
+ */
+const TourViewer = lazy(() =>
+  import('./components/TourViewer').then((m) => ({ default: m.TourViewer })),
+)
+const VisorGuardado = lazy(() =>
+  import('./components/crear/VisorGuardado').then((m) => ({ default: m.VisorGuardado })),
+)
+const EditorPuntos = lazy(() =>
+  import('./components/crear/EditorPuntos').then((m) => ({ default: m.EditorPuntos })),
+)
+const Capturar = lazy(() =>
+  import('./components/crear/Capturar').then((m) => ({ default: m.Capturar })),
+)
+const SubirFoto = lazy(() =>
+  import('./components/crear/SubirFoto').then((m) => ({ default: m.SubirFoto })),
+)
 
 /**
  * ============================================================================
@@ -79,34 +102,36 @@ export default function App() {
     </button>
   )
 
-  switch (ruta.nombre) {
-    case 'inicio':
-      return <Inicio ir={ir} />
+  const pantalla = () => {
+    switch (ruta.nombre) {
+      case 'inicio':
+        return <Inicio ir={ir} />
 
-    case 'editar':
-      return <EditorRecorrido tourId={ruta.tourId} ir={ir} />
+      case 'editar':
+        return <EditorRecorrido tourId={ruta.tourId} ir={ir} />
 
-    case 'capturar':
-      return <Capturar tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
+      case 'capturar':
+        return <Capturar tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
-    case 'foto':
-      return <SubirFoto tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
+      case 'foto':
+        return <SubirFoto tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
-    case 'puntos':
-      return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
+      case 'puntos':
+        return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
-    case 'ver':
-      return <VisorGuardado tourId={ruta.tourId} ir={ir} />
+      case 'ver':
+        return <VisorGuardado tourId={ruta.tourId} ir={ir} />
 
-    case 'demo':
-      return <TourViewer tour={demoTour} accion={botonMenu} />
+      case 'demo':
+        return <TourViewer tour={demoTour} accion={botonMenu} />
 
-    case 'visor':
-    default:
-      if (inicial === null) return <Cargando texto="Abriendo…" />
-      if (inicial === 'demo') return <TourViewer tour={demoTour} accion={botonMenu} />
-      return (
-        <VisorGuardado tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
-      )
+      case 'visor':
+      default:
+        if (inicial === null) return <Cargando texto="Abriendo…" />
+        if (inicial === 'demo') return <TourViewer tour={demoTour} accion={botonMenu} />
+        return <VisorGuardado tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
+    }
   }
+
+  return <Suspense fallback={<Cargando texto="Abriendo…" />}>{pantalla()}</Suspense>
 }

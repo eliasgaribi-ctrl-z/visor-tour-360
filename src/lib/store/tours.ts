@@ -10,7 +10,7 @@ import {
   tx,
 } from './idb'
 import { newId } from './ids'
-import { olvidarEquirect } from '../useEquirectTexture'
+import { olvidarTextura } from '../texturasVivas'
 
 type BlobRecord = { id: string; blob: Blob }
 
@@ -46,7 +46,7 @@ export async function blobUrl(imageId: string): Promise<string | null> {
 export function releaseBlobUrl(imageId: string) {
   const url = urls.get(imageId)
   if (!url) return
-  olvidarEquirect(url)
+  olvidarTextura(url)
   URL.revokeObjectURL(url)
   urls.delete(imageId)
   return url

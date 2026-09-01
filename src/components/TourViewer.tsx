@@ -5,6 +5,7 @@ import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
+import { aparato } from '../lib/dispositivo'
 
 import { BASE_FOV, Escena360, detectWebGL } from './tour/Escena360'
 
@@ -110,12 +111,23 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
     return () => window.clearTimeout(timer)
   }, [dismissHint])
 
-  /** Precarga las habitaciones vecinas: el salto se siente instantáneo. */
+  /**
+   * Precarga las habitaciones vecinas: el salto se siente instantáneo.
+   *
+   * Solo unas cuantas, no todas. Cada panorámica precargada son decenas de
+   * megabytes de memoria de video, y un cuarto con cinco puertas llenaría el
+   * caché de golpe con habitaciones a las que quizá nadie va a entrar. Cuántas
+   * se precargan lo decide el aparato (ver src/lib/dispositivo.ts).
+   */
   useEffect(() => {
+    let quedan = aparato().precargas
     for (const hotspot of scene.hotspots) {
+      if (quedan <= 0) break
       if (hotspot.kind !== 'link') continue
       const target = tour.scenes.find((s) => s.id === hotspot.to)
-      if (target) preloadEquirect(target.image)
+      if (!target) continue
+      preloadEquirect(target.image)
+      quedan--
     }
   }, [scene, tour.scenes])
 
