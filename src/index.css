@@ -92,6 +92,27 @@
   }
 }
 
+/* Tope de alto para las hojas de abajo, con el mismo respaldo.
+   Sin esto, en un Safari sin dvh el `max-height` vuelve a `none`, la hoja crece
+   con su contenido y su propio `overflow-y-auto` NUNCA engancha —no desborda de
+   sí misma—. Como el padre es `fixed inset-0 flex items-end`, lo que se sale es
+   por ARRIBA: el asa, el título, la × de cerrar y el selector de tipo de punto
+   quedan fuera de la pantalla y no hay scroll que los alcance.
+
+   El respaldo es 100% y no 85vh a propósito: en iOS, `vh` mide el viewport
+   GRANDE, sin descontar las barras del navegador, así que 85vh puede ser MÁS
+   alto que lo que de verdad se ve. El porcentaje resuelve contra la caja del
+   padre, que sí está acotada. Y `-webkit-fill-available` aquí no sirve: es para
+   `height`, no para `max-height`. */
+@utility alto-max-hoja {
+  max-height: 100%;
+}
+@supports (height: 100dvh) {
+  .alto-max-hoja {
+    max-height: 85dvh;
+  }
+}
+
 /* ---------------------------------------------------------------------------
    MENOS MOVIMIENTO
    Quien pidió "reducir movimiento" en los ajustes del teléfono no debería ver

@@ -480,14 +480,22 @@ Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
 
 ## 9. Notas de móvil que ya están resueltas
 
-- `h-[100dvh]` en vez de `100vh`: `vh` no descuenta la barra del navegador y el
-  joystick se queda debajo del borde de la pantalla.
+- La utilidad **`alto-pantalla`** de `src/index.css` para el alto de pantalla
+  completa, nunca la unidad `dvh` a secas. `dvh` es lo correcto —descuenta la
+  barra del navegador, y sin eso el joystick se queda debajo del borde— pero no
+  existe antes de iOS 15.4, y un `height` que el navegador no entiende no deja
+  el contenedor "un poco mal": lo deja en altura **cero**, con la app montada y
+  la pantalla vacía. La utilidad hace la escalera: `100vh`,
+  `-webkit-fill-available`, y `dvh` detrás de un `@supports`. Para el tope de
+  las hojas de abajo, `alto-max-hoja`.
 - `viewport-fit=cover` + `env(safe-area-inset-*)`: los controles esquivan el
   notch y la barra de gestos.
 - `user-scalable=no`: sin eso, el pellizco para hacer zoom en la panorámica hace
   zoom en la *página*.
-- `overscroll-behavior: none` y `touch-action: none`: nada de rebote ni scroll
-  accidental sobre el visor.
+- `touch-action: none`: nada de scroll accidental sobre el visor. Va aparte de
+  `overscroll-behavior: none`, que también está puesto pero es de Safari 16: en
+  un iPhone más viejo vuelve el rebote elástico al llegar al borde. Molesta y ya;
+  el scroll de las hojas sigue funcionando.
 - `dpr={[1, 2]}`: se limita el device pixel ratio; renderizar a 3x en un celular
   moderno tira el framerate a la mitad sin que se note la diferencia.
 
@@ -864,7 +872,7 @@ cualquier hosting.
 - **`gltf-transform`.** No hay ni un modelo glTF en el proyecto: es un visor de
   fotos 360, no de geometría.
 - **`IntersectionObserver` para diferir el canvas.** El visor ocupa la pantalla
-  completa (`h-[100dvh]`); nunca está fuera de la vista mientras está montado.
+  completa (`alto-pantalla`); nunca está fuera de la vista mientras está montado.
   Lo que sí aplicaba de esa idea era no descargar el motor 3D en las pantallas
   que no lo usan, y eso está hecho con `lazy()` (sección 10).
 - **Quitar el vidrio esmerilado (`backdrop-filter`) del HUD.** Parecía caro: un

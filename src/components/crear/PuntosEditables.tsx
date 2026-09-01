@@ -6,6 +6,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
+import { observarTamano } from '../../lib/observarTamano'
 import { screenToYawPitch, yawPitchToScreen } from '../../lib/math'
 
 export type PuntosEditablesProps = {
@@ -67,12 +68,21 @@ export function PuntosEditables({
        medición llega justo después de montar: sin este aviso, los marcadores se
        quedaban sin colocar —invisibles en la esquina— hasta que el usuario
        moviera la cámara. */
-    const observador = new ResizeObserver(() => {
+    /* Con `observarTamano` y no con `new ResizeObserver` a secas: en iOS 13.0
+       a 13.3 —dentro del piso que declara vite.config.ts— no existe, y como
+       este componente NO está bajo ninguna frontera de error, el
+       ReferenceError desmontaba la aplicación completa. Ver
+       src/lib/observarTamano.ts.
+
+       Ojo: se guarda SOLO la construcción del observador. Salirse del efecto
+       cuando no existe dejaría sin correr el `suscribirHud` de abajo, que es
+       lo único que coloca los marcadores —nacen con visibility:'hidden'—, y
+       cambiaría una pantalla vacía por marcadores invisibles para siempre. */
+    const soltarMedida = observarTamano(caja, () => {
       ancho = caja.clientWidth
       alto = caja.clientHeight
       engine.invalidar()
     })
-    observador.observe(caja)
 
     const desuscribir = engine.suscribirHud(() => {
       if (!ancho || !alto) return
@@ -93,7 +103,7 @@ export function PuntosEditables({
 
     return () => {
       desuscribir()
-      observador.disconnect()
+      soltarMedida()
     }
   }, [engine])
 

@@ -225,7 +225,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
 
   return (
     <TourEngineProvider value={engine}>
-      <div className="relative h-[100dvh] w-full overflow-hidden bg-black">
+      <div className="alto-pantalla relative w-full overflow-hidden bg-black">
         {url && (
           <Escena360
             engine={engine}

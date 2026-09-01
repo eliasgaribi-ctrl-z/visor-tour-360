@@ -51,6 +51,7 @@ import {
 import { planDeCaptura, puntoMasCercano, type PuntoGuia } from '../../lib/capture/plan'
 import { mantenerPantallaEncendida } from '../../lib/capture/pantalla'
 import { PanoramaStitcher } from '../../lib/capture/stitcher'
+import { detectWebGL } from '../tour/Escena360'
 
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
 import { GuiaCaptura } from './GuiaCaptura'
@@ -202,7 +203,14 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const recalcularFov = useCallback(() => {
     const v = video.current
     const caja = contenedor.current
-    if (!v || !caja || !v.videoWidth || !caja.clientWidth) return
+    /* `clientHeight` también, y no es redundante: cuando el contenedor se
+       queda sin alto (un `height` que el navegador no entiende y descarta), el
+       ancho SÍ es válido —viene de `w-full`— así que la guarda vieja dejaba
+       pasar. Y con alto cero la cuenta se envenena en silencio: `visible` da 0,
+       `fovPantalla` da 0, y más abajo `ancho / 0` es Infinity, que
+       `Math.tan(0) * Infinity` convierte en NaN y termina en un
+       `translateX(-NaN%)`. Un cinturón que no depende de que el CSS cargue. */
+    if (!v || !caja || !v.videoWidth || !caja.clientWidth || !caja.clientHeight) return
 
     const { vfov } = fovDe(v.videoWidth, v.videoHeight, fovLargo.current)
     const escala = Math.max(caja.clientWidth / v.videoWidth, caja.clientHeight / v.videoHeight)
@@ -377,6 +385,27 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     vivo.current = true
     setPermisoNegado(false)
 
+    /* Preguntar por WebGL 2 ANTES de encender la cámara.
+       La costura se arma en la GPU, y three.js pide un contexto `webgl2` y nada
+       más; en un iPhone anterior a iOS 15 eso no existe. Sin esta puerta, el
+       teléfono pedía permiso de cámara, encendía el lente, y reventaba al
+       construir el costurero — y como ese error no es de tipo CameraError, el
+       catch de más abajo lo reportaba como "No se pudo abrir la cámara", que es
+       falso y manda a la persona a revisar permisos que estaban bien. Mejor
+       decirlo en el segundo cero y no encender nada. */
+    const webgl = detectWebGL()
+    if (!webgl.ok) {
+      setFase({
+        nombre: 'error',
+        mensaje: 'Este teléfono no puede armar la panorámica',
+        consejo:
+          webgl.causa === 'sin-webgl2'
+            ? 'La costura se hace en la tarjeta gráfica y necesita WebGL 2; en un iPhone hace falta iOS 15 o más nuevo. Sí puedes subir una foto 360 que ya tengas y ver recorridos.'
+            : 'El navegador no entregó un contexto WebGL. Prueba cerrando pestañas, o apagando el Modo de bajo consumo, y vuelve a entrar.',
+      })
+      return
+    }
+
     if (needsOrientationPermission()) {
       const permiso = await requestOrientationPermission()
       if (permiso === 'denied') setPermisoNegado(true)
@@ -430,7 +459,14 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       stitcher.current?.dispose()
       stitcher.current = new PanoramaStitcher({ width: ancho, preview: { width: 512, height: 256 } })
       if (previa.current) {
-        previa.current.replaceChildren()
+        /* Vaciar a mano y no con replaceChildren(): ese método es de Safari 14
+           y de Chrome 86, o sea que se cae en DOS de los cuatro navegadores del
+           target. Y el TypeError caía en el catch de más abajo, que como no
+           reconoce el tipo del error acusa a la cámara —"No se pudo abrir la
+           cámara"— cuando la cámara ya había abierto y estaba dando imagen.
+           `append` de la línea siguiente sí es viejo (Safari 10), se queda. */
+        const caja = previa.current
+        while (caja.firstChild) caja.removeChild(caja.firstChild)
         stitcher.current.canvas.className = 'h-full w-full object-cover'
         previa.current.append(stitcher.current.canvas)
       }
@@ -805,7 +841,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const corrimientoFantasma = Math.min(95, (pasoPlan / Math.max(20, hfovPantalla)) * 100)
 
   return (
-    <div ref={contenedor} className="relative h-[100dvh] w-full overflow-hidden bg-black">
+    <div ref={contenedor} className="alto-pantalla relative w-full overflow-hidden bg-black">
       <video
         ref={video}
         playsInline

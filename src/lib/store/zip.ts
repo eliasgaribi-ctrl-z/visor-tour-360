@@ -59,6 +59,8 @@ function dosDateTime(date: Date): { time: number; date: number } {
  * `Uint8Array<ArrayBuffer>` y no `Uint8Array` a secas: en TypeScript 6 el tipo
  * genérico incluye SharedArrayBuffer, y un Blob no acepta memoria compartida.
  */
+import { leerBytes } from './bytes'
+
 export type Bytes = Uint8Array<ArrayBuffer>
 
 export type ZipEntry = {
@@ -200,7 +202,8 @@ async function inflateRaw(data: Bytes): Promise<Bytes> {
 }
 
 export async function readZip(blob: Blob): Promise<ZipFile[]> {
-  const bytes = new Uint8Array(await blob.arrayBuffer())
+  // leerBytes y no blob.arrayBuffer(): ese método es de iOS 14 en adelante.
+  const bytes = await leerBytes(blob)
   const view = new DataView(bytes.buffer)
 
   /* El fin del directorio central está al final, pero puede llevar hasta 64 KB

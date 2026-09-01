@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import * as THREE from 'three'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
+import { observarTamano } from '../../lib/observarTamano'
 import { DEG, yawPitchToVector3 } from '../../lib/math'
 
 export type HotspotLayerProps = {
@@ -50,12 +51,16 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
        medición llega justo después de montar: sin este aviso, los marcadores se
        quedaban sin colocar —invisibles en la esquina— hasta que el usuario
        moviera la cámara. */
-    const observer = new ResizeObserver(() => {
+    /* Con `observarTamano` y no con `new ResizeObserver` a secas: en iOS 13.0
+       a 13.3 —dentro del piso que declara vite.config.ts— no existe, y como
+       este componente NO está bajo ninguna frontera de error, el
+       ReferenceError desmontaba la aplicación completa. Ver
+       src/lib/observarTamano.ts. */
+    const soltarMedida = observarTamano(container, () => {
       width = container.clientWidth
       height = container.clientHeight
       engine.invalidar()
     })
-    observer.observe(container)
 
     const direction = new THREE.Vector3()
     const euler = new THREE.Euler(0, 0, 0, 'YXZ')
@@ -100,7 +105,7 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
 
     return () => {
       desuscribir()
-      observer.disconnect()
+      soltarMedida()
     }
     // `hotspots` en las dependencias no es de adorno: al cambiar de habitación
     // hay que volver a suscribirse (y eso toca el timbre) para colocar los

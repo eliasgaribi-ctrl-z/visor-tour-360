@@ -2,6 +2,8 @@
    IndexedDB, que es un sistema externo. */
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 
+import { PantallaBoundary } from './components/PantallaBoundary'
+
 import { demoTour } from './data/tour'
 import { useHashRoute, recorridoActivo, fijarRecorridoActivo } from './lib/useHashRoute'
 import { getTour } from './lib/store/tours'
@@ -133,5 +135,12 @@ export default function App() {
     }
   }
 
-  return <Suspense fallback={<Cargando texto="Abriendo…" />}>{pantalla()}</Suspense>
+  /* La frontera va POR FUERA del Suspense: si el trozo perezoso no se puede
+     descargar, la promesa se rechaza y sin nadie que lo atrape React tira el
+     árbol entero y deja la pantalla en negro. Ver PantallaBoundary. */
+  return (
+    <PantallaBoundary>
+      <Suspense fallback={<Cargando texto="Abriendo…" />}>{pantalla()}</Suspense>
+    </PantallaBoundary>
+  )
 }

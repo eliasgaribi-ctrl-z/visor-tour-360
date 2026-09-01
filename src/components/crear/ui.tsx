@@ -22,7 +22,7 @@ export function Pantalla({
   children: ReactNode
 }) {
   return (
-    <div className="flex h-[100dvh] w-full flex-col bg-ink-900 text-ink-50">
+    <div className="alto-pantalla flex w-full flex-col bg-ink-900 text-ink-50">
       <header
         className="flex shrink-0 items-center gap-3 border-b border-white/10 px-3 py-3
                    pt-[calc(env(safe-area-inset-top)+0.75rem)]"
@@ -177,7 +177,10 @@ export function Aviso({
 
 export function Cargando({ texto = 'Un momento…' }: { texto?: string }) {
   return (
-    <div className="grid place-items-center gap-3 py-16 text-center">
+    /* data-cargando lo lee la red de seguridad de index.html: sin esta marca,
+       "#root tiene hijos" significaba "montó bien", y el velo de espera del
+       Suspense es un hijo, así que la red se auto-descartaba siempre. */
+    <div data-cargando="1" className="grid place-items-center gap-3 py-16 text-center">
       <div className="h-8 w-8 animate-spin rounded-full border-2 border-white/20 border-t-brand-500" />
       <p className="text-sm text-ink-200">{texto}</p>
     </div>
@@ -204,7 +207,7 @@ export function Hoja({
       {/* max-h + scroll: la hoja de editar un punto pasa de 500 px de alto, y
           en un teléfono chico con el teclado abierto no cabe. Sin esto, el
           botón de guardar queda fuera de la pantalla y no hay forma de llegar. */}
-      <div className="hud-glass relative max-h-[85dvh] w-full max-w-md overflow-y-auto
+      <div className="hud-glass alto-max-hoja relative w-full max-w-md overflow-y-auto
                       overscroll-contain rounded-hud p-4">
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/25" />
         <div className="mb-3 flex items-center justify-between gap-3">

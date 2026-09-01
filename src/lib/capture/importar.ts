@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import { DEG } from '../math'
 import { crearLienzo, fovDe } from './frames'
 import { PanoramaStitcher } from './stitcher'
+import { leerBytes } from '../store/bytes'
 
 /**
  * ============================================================================
@@ -46,8 +47,11 @@ export type GPano = {
  */
 export async function leerGPano(file: Blob): Promise<GPano | null> {
   try {
-    const trozo = await file.slice(0, 512 * 1024).arrayBuffer()
-    const texto = new TextDecoder('latin1').decode(new Uint8Array(trozo))
+    // leerBytes y no .arrayBuffer(): ese método es de iOS 14 en adelante, y sin
+    // esto los metadatos GPano se leían como ausentes en un iPhone viejo, o sea
+    // que una foto 360 de verdad entraba como si fuera una foto normal.
+    const trozo = await leerBytes(file.slice(0, 512 * 1024))
+    const texto = new TextDecoder('latin1').decode(trozo)
     if (!texto.includes('GPano:')) return null
 
     const numero = (campo: string): number | null => {

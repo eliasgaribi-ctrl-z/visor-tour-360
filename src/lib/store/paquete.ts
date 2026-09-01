@@ -1,7 +1,8 @@
 import type { Hotspot } from '../types'
 import type { StoredScene, StoredTour } from './types'
 import { FORMAT_VERSION } from './types'
-import { createZip, readZip, type Bytes, type ZipEntry } from './zip'
+import { createZip, readZip, type ZipEntry } from './zip'
+import { leerBytes } from './bytes'
 import { STORE_BLOBS, STORE_TOURS, idbPut, tx } from './idb'
 import { getImage, getTour } from './tours'
 import { newId } from './ids'
@@ -65,7 +66,9 @@ export class PaqueteError extends Error {
   }
 }
 
-const bytes = async (blob: Blob): Promise<Bytes> => new Uint8Array(await blob.arrayBuffer())
+// leerBytes y no blob.arrayBuffer(): ese método es de iOS 14 en adelante, y
+// exportar el .tour es de lo poco que sí puede funcionar en un iPhone viejo.
+const bytes = leerBytes
 
 /** Nombre de archivo sugerido: "casa-en-tlajomulco.tour". */
 export function nombreDeArchivo(tour: { title: string }): string {

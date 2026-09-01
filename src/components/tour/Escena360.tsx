@@ -8,7 +8,7 @@ import { useDragLook } from '../../lib/useDragLook'
 
 import { CameraRig } from './CameraRig'
 import { PanoSphere } from './PanoSphere'
-import { detectWebGL, ViewerBoundary, ViewerFallback } from './ViewerGuard'
+import { detectWebGL, ViewerBoundary, ViewerFallback, type Deteccion } from './ViewerGuard'
 import { aparato } from '../../lib/dispositivo'
 
 export const BASE_FOV = 75
@@ -18,7 +18,7 @@ export type Escena360Props = {
   /** URL de la equirectangular. */
   url: string
   initialYaw?: number
-  webgl: { ok: boolean; motivo?: string }
+  webgl: Deteccion
   onLoadingChange?: (loading: boolean) => void
   onError?: () => void
   onPointerDownCapture?: () => void
@@ -125,7 +125,7 @@ export function Escena360({
           </Canvas>
         </ViewerBoundary>
       ) : (
-        <ViewerFallback motivo={webgl.motivo} />
+        <ViewerFallback motivo={webgl.motivo} causa={webgl.causa} />
       )}
     </div>
   )
