@@ -61,8 +61,10 @@ const TOLERANCIA_DEG = 11
 const QUIETO_DEG_S = 14
 /** Descanso mínimo entre disparos. */
 const ESPERA_MS = 450
-/** Tamaño de las miniaturas en gris que se usan para calibrar el campo de visión. */
-const GRIS = { ancho: 64, alto: 48 }
+/** Tamaño de las miniaturas en gris con las que se calibra el campo de visión. */
+const GRIS = { ancho: 96, alto: 72 }
+/** Cada cuánto se toma una miniatura del video mientras el usuario gira. */
+const MUESTREO_MS = 140
 
 type Toma = {
   puntoId: string | null
@@ -70,12 +72,12 @@ type Toma = {
   blob: Blob
   orientacion: THREE.Quaternion
   brillo: number
-  grises: Float32Array
-  ancho: number
-  alto: number
   yaw: number
   pitch: number
 }
+
+/** Miniatura en gris del video, con la dirección a la que apuntaba. */
+type Muestra = { grises: Float32Array; yaw: number; pitch: number }
 
 type Fase =
   | { nombre: 'permisos' }
@@ -134,6 +136,10 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const ultimaToma = useRef(0)
   const fovLargo = useRef(FOV_LADO_LARGO)
   const estimaciones = useRef<number[]>([])
+  const muestra = useRef<Muestra | null>(null)
+  const ultimaMuestra = useRef(0)
+  /** El lienzo tiene tomas pegadas con distintos campos de visión. */
+  const mezclado = useRef(false)
   const disparando = useRef(false)
 
   useEffect(() => {
@@ -181,7 +187,6 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       const lienzo = capturarFotograma(v)
       const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovLargo.current)
       const brillo = brilloDe(lienzo)
-      const grises = grisesReducidos(lienzo, GRIS.ancho, GRIS.alto)
 
       // Al mundo de la panorámica: la primera dirección del plan queda al frente.
       const corregida = new THREE.Quaternion()
@@ -189,26 +194,6 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
         .multiply(orientacion)
 
       st.agregar({ fuente: lienzo, orientacion: corregida, hfov, vfov, brillo })
-
-      /* Calibración del campo de visión con el giroscopio: se compara esta toma
-         con la anterior y se mide cuánto se corrió la imagen. Como sabemos
-         cuánto giró el teléfono, de ahí sale la distancia focal real. */
-      const anterior = tomas.current[tomas.current.length - 1]
-      if (anterior) {
-        const estimado = estimarFovConGiro({
-          anterior: anterior.grises,
-          actual: grises,
-          width: GRIS.ancho,
-          height: GRIS.alto,
-          deltaYaw: wrap180(yaw - anterior.yaw),
-          deltaPitch: pitch - anterior.pitch,
-        })
-        if (estimado !== null) {
-          estimaciones.current.push(
-            ladoLargoDesdeHorizontal(estimado, lienzo.width, lienzo.height),
-          )
-        }
-      }
 
       lienzo.toBlob(
         (blob) => {
@@ -218,9 +203,6 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
               blob,
               orientacion: orientacion.clone(),
               brillo,
-              grises,
-              ancho: lienzo.width,
-              alto: lienzo.height,
               yaw,
               pitch,
             })
@@ -278,6 +260,75 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
   }, [fase.nombre, girado, manual, seguidor, tomarFoto])
+
+  /* ------------------------------------------------- CALIBRAR MIENTRAS GIRAS
+   * Se toma una miniatura del video cada tanto y se compara con la anterior.
+   * Como se sabe cuánto giró el teléfono entre las dos, del corrimiento de la
+   * imagen sale la distancia focal, y de ahí el campo de visión real del lente.
+   *
+   * Va aquí y no entre foto y foto porque la medición SOLO es confiable con
+   * giros chicos: a más de veinte grados, la perspectiva estira el contenido y
+   * la correlación deja de encontrar el corrimiento. Entre dos fotos del plan
+   * hay más de treinta. Entre dos miniaturas del barrido, unos pocos. */
+  useEffect(() => {
+    if (fase.nombre !== 'capturando' || manual) return
+    let frame = 0
+
+    const tick = () => {
+      frame = requestAnimationFrame(tick)
+      const v = video.current
+      if (!v || !v.videoWidth || seguidor.state !== 'activo') return
+
+      const ahora = performance.now()
+      if (ahora - ultimaMuestra.current < MUESTREO_MS) return
+      ultimaMuestra.current = ahora
+
+      const { yaw, pitch } = seguidor.reading
+      const anterior = muestra.current
+
+      if (anterior) {
+        const deltaYaw = wrap180(yaw - anterior.yaw)
+        const deltaPitch = pitch - anterior.pitch
+        // Todavía no se ha movido lo suficiente: se guarda la referencia.
+        if (Math.abs(deltaYaw) < 3 && Math.abs(deltaPitch) < 3) return
+
+        const grises = grisesReducidos(v, GRIS.ancho, GRIS.alto)
+        const estimado = estimarFovConGiro({
+          anterior: anterior.grises,
+          actual: grises,
+          width: GRIS.ancho,
+          height: GRIS.alto,
+          deltaYaw,
+          deltaPitch,
+        })
+
+        if (estimado !== null) {
+          estimaciones.current.push(
+            ladoLargoDesdeHorizontal(estimado, v.videoWidth, v.videoHeight),
+          )
+          /* La corrección se aplica ENSEGUIDA: con el valor ya medido, las
+             tomas que faltan se pegan en su lugar y los círculos guía caen
+             donde de verdad apunta la cámara. Lo que ya quedó pegado con el
+             valor viejo se arregla al terminar, recosiendo todo. */
+          if (estimaciones.current.length >= 4) {
+            const medido = mediana(estimaciones.current)
+            if (medido !== null && Math.abs(medido - fovLargo.current) > 0.6) {
+              fovLargo.current = medido
+              mezclado.current = true
+              recalcularFov()
+            }
+          }
+        }
+        muestra.current = { grises, yaw, pitch }
+        return
+      }
+
+      muestra.current = { grises: grisesReducidos(v, GRIS.ancho, GRIS.alto), yaw, pitch }
+    }
+
+    frame = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frame)
+  }, [fase.nombre, manual, recalcularFov, seguidor])
 
   /* ----------------------------------------------------------------- ARRANQUE */
   const comenzar = useCallback(async () => {
@@ -351,6 +402,10 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       const { hfov, vfov } = fovDe(v.videoWidth, v.videoHeight, fovLargo.current)
       setAnguloInicial(screenAngle())
       setGirado(false)
+      fovLargo.current = FOV_LADO_LARGO
+      estimaciones.current = []
+      muestra.current = null
+      mezclado.current = false
       const plan = planDeCaptura({ hfov, vfov, alcance: hayS ? alcance : 'vuelta' })
       planRef.current = plan
       /* El plan vive en coordenadas de la PANORÁMICA (el frente es el yaw 0) y
@@ -435,6 +490,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           : 'Quitando la última toma…',
     })
     await recoser(fovLargo.current)
+    mezclado.current = false
     setFase({ nombre: 'capturando' })
   }, [recoser])
 
@@ -454,12 +510,13 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
        66° puede estar cinco grados lejos del lente real, y ese error se acumula
        vuelta tras vuelta. */
     const calibrado = mediana(estimaciones.current)
-    if (calibrado !== null && Math.abs(calibrado - fovLargo.current) > 1.2) {
+    if (calibrado !== null && (mezclado.current || Math.abs(calibrado - fovLargo.current) > 1.2)) {
       setFase({
         nombre: 'procesando',
         mensaje: 'Midiendo el lente y volviendo a unir las fotos. Tarda unos segundos…',
       })
       fovLargo.current = calibrado
+      mezclado.current = false
       await recoser(calibrado)
     }
 

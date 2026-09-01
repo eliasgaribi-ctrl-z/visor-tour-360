@@ -157,7 +157,7 @@ export function grisesReducidos(
 }
 
 export type Desplazamiento = {
-  /** Corrimiento horizontal en píxeles de la imagen reducida. */
+  /** Corrimiento horizontal en píxeles de la imagen reducida, con subpíxel. */
   pixeles: number
   /** Qué tan confiable es (correlación normalizada, −1…1). */
   confianza: number
@@ -170,17 +170,24 @@ export type Desplazamiento = {
  * cada corrimiento y se queda con el que más se parece. La banda central se usa
  * porque el techo y el piso de un cuarto suelen ser lisos y no aportan nada
  * para alinear; la pared del medio sí tiene esquinas, cuadros y muebles.
+ *
+ * El pico se afina con una parábola sobre sus dos vecinos. Sin eso, la
+ * resolución de la medida es de un píxel entero de la imagen reducida, que a
+ * este tamaño vale casi un grado: el error de redondeo solo ya sería más grande
+ * que lo que se está tratando de medir.
  */
 export function desplazamientoHorizontal(
   a: Float32Array,
   b: Float32Array,
   width: number,
   height: number,
-  maximo = Math.floor(width * 0.6),
+  maximo = Math.floor(width * 0.45),
 ): Desplazamiento {
   const filaInicial = Math.floor(height * 0.25)
   const filaFinal = Math.ceil(height * 0.75)
+  const minimoTraslape = width * (filaFinal - filaInicial) * 0.35
 
+  const puntajes = new Float32Array(2 * maximo + 1).fill(-2)
   let mejor = 0
   let mejorPuntaje = -2
 
@@ -208,8 +215,8 @@ export function desplazamientoHorizontal(
       }
     }
 
-    // Con muy poco traslape la correlación se vuelve ruido con puntaje alto.
-    if (n < width * (filaFinal - filaInicial) * 0.25) continue
+    // Con poco traslape la correlación se vuelve ruido con puntaje alto.
+    if (n < minimoTraslape) continue
 
     const mediaA = sumaA / n
     const mediaB = sumaB / n
@@ -219,13 +226,29 @@ export function desplazamientoHorizontal(
     const denominador = Math.sqrt(Math.max(varianzaA, 1e-9) * Math.max(varianzaB, 1e-9))
     const puntaje = covarianza / denominador
 
+    puntajes[corrimiento + maximo] = puntaje
     if (puntaje > mejorPuntaje) {
       mejorPuntaje = puntaje
       mejor = corrimiento
     }
   }
 
-  return { pixeles: mejor, confianza: mejorPuntaje }
+  // Afinado subpíxel: vértice de la parábola que pasa por el pico y sus vecinos.
+  let afinado = mejor
+  const i = mejor + maximo
+  if (i > 0 && i < puntajes.length - 1) {
+    const izquierda = puntajes[i - 1]
+    const derecha = puntajes[i + 1]
+    if (izquierda > -2 && derecha > -2) {
+      const curvatura = izquierda - 2 * mejorPuntaje + derecha
+      if (Math.abs(curvatura) > 1e-6) {
+        const ajuste = (0.5 * (izquierda - derecha)) / curvatura
+        if (Math.abs(ajuste) <= 1) afinado = mejor + ajuste
+      }
+    }
+  }
+
+  return { pixeles: afinado, confianza: mejorPuntaje }
 }
 
 /**
@@ -243,8 +266,18 @@ export function desplazamientoHorizontal(
  * Es la misma calibración que hace una cámara al medir un patrón conocido, solo
  * que aquí el patrón es el propio cuarto y la referencia la pone el giroscopio.
  *
- * Devuelve null si la medición no es confiable: pared lisa, giro demasiado
- * chico o resultado fuera de lo que cualquier teléfono puede tener.
+ * ── Por qué solo sirve con giros CHICOS ────────────────────────────────────
+ *
+ * La correlación supone que la imagen se DESPLAZÓ, y eso solo es cierto de a
+ * poquito: una lente proyecta en perspectiva, así que al girar mucho el
+ * contenido además se estira hacia una orilla y se comprime en la otra.
+ * Medido sobre panorámicas reales: con 15° de giro la correlación baja a 0.5,
+ * con 25° a 0.3 y con 35° ya es ruido. Por eso la medición se toma DURANTE el
+ * barrido, entre lecturas separadas unos pocos grados, y no entre dos fotos del
+ * plan, que van a más de 30° una de otra.
+ *
+ * Devuelve null si la medición no es confiable: pared lisa, giro fuera del
+ * rango útil, o un resultado fuera de lo que cualquier teléfono puede tener.
  */
 export function estimarFovConGiro(params: {
   anterior: Float32Array
@@ -258,21 +291,24 @@ export function estimarFovConGiro(params: {
 }): number | null {
   const { anterior, actual, width, height, deltaYaw, deltaPitch } = params
 
-  // Giro chico: el corrimiento se confunde con el ruido. Giro enorme: casi no
-  // hay traslape. Inclinación: el corrimiento ya no es solo horizontal.
-  if (Math.abs(deltaYaw) < 8 || Math.abs(deltaYaw) > 55) return null
-  if (Math.abs(deltaPitch) > 6) return null
+  // Muy chico: el corrimiento se confunde con el ruido y con el subpíxel.
+  // Muy grande: la perspectiva rompe la suposición de que solo hubo un
+  // desplazamiento. Inclinado: el corrimiento ya no es solo horizontal.
+  if (Math.abs(deltaYaw) < 3 || Math.abs(deltaYaw) > 20) return null
+  if (Math.abs(deltaPitch) > 4) return null
 
   const { pixeles, confianza } = desplazamientoHorizontal(anterior, actual, width, height)
-  if (confianza < 0.55 || pixeles === 0) return null
+  if (confianza < 0.45 || Math.abs(pixeles) < 1) return null
 
   // Un giro a la derecha mueve la imagen a la izquierda: los signos se cancelan.
   const focal = Math.abs(pixeles) / Math.tan(Math.abs(deltaYaw) * DEG)
   const hfov = (2 * Math.atan(width / (2 * focal))) / DEG
 
-  // Ningún teléfono tiene una principal fuera de este rango; si sale de ahí,
-  // la correlación se equivocó.
-  if (hfov < 40 || hfov > 100) return null
+  // Ningún teléfono tiene una cámara fuera de este rango; si la cuenta sale de
+  // ahí, la correlación se equivocó de pico. El rango va holgado a propósito:
+  // recortarlo justo donde empiezan los lentes reales haría que un lente que sí
+  // existe se rechazara por medio grado de error de medición.
+  if (hfov < 34 || hfov > 110) return null
   return hfov
 }
 

@@ -305,14 +305,25 @@ estirar). Cada toma se dibuja con alfa premultiplicado y desvanecido en los
 bordes; al final se divide el color entre el alfa acumulado, que es lo que evita
 el halo oscuro alrededor de la primera foto.
 
-**El campo de visión se calibra solo.** Ningún navegador dice cuál es el FOV de
-la lente: `getSettings()` da resolución y cuadros por segundo, y nada más. Se
-arranca de 66° (equivalente a 26 mm) y durante la captura se mide: sabemos
-cuánto giró el teléfono entre dos tomas y podemos medir cuánto se corrió la
-imagen por correlación, y de ahí sale la distancia focal real. Al terminar, si
-la medición cambió, **se vuelven a coser todas las fotos** con el valor
-calibrado. Es la diferencia entre una panorámica que cierra y una en la que las
-paredes no empatan: cinco grados de error se acumulan vuelta tras vuelta.
+**El campo de visión se calibra solo.** Ningún navegador dice cuál es el campo
+de visión de la lente: `getSettings()` da resolución y cuadros por segundo, y
+nada más. Se arranca de 66° (equivalente a 26 mm) y se mide durante la captura:
+el giroscopio dice cuánto giró el teléfono y la correlación dice cuánto se
+corrió la imagen; de esas dos cosas sale la distancia focal.
+
+La medición se toma **mientras el usuario gira**, no entre foto y foto. La
+razón: la correlación supone que la imagen se DESPLAZÓ, y eso solo es cierto de
+a poquito, porque una lente proyecta en perspectiva y al girar mucho el
+contenido además se estira hacia una orilla. Medido sobre panorámicas reales,
+la correlación vale 0.86 con 5° de giro, 0.5 con 15° y ya es ruido con 35°.
+Entre dos fotos del plan hay más de treinta grados; entre dos miniaturas del
+barrido, unos pocos. Con el pico afinado por interpolación parabólica, doce
+mediciones de prueba salieron todas dentro de 0.7° del valor real.
+
+Al terminar, si la medición cambió, **se vuelven a coser todas las fotos** con
+el valor calibrado. Es la diferencia entre una panorámica que cierra y una en
+la que las paredes no empatan: cinco grados de error se acumulan vuelta tras
+vuelta.
 
 Por eso cada toma se guarda (JPEG chico + su cuaternión): permite recoser, y de
 paso hace que **Deshacer** funcione aunque el lienzo sea acumulativo.
@@ -499,6 +510,16 @@ vertical de 40° × 66°:
 | Diferencia media contra el original          | **1.40 / 255 niveles** ✓     |
 | N / E / S / O y el cenit en su lugar          | Δ ≤ 2 niveles ✓              |
 | Tiempo de costura                            | 19 ms por toma               |
+
+La misma página verifica la **calibración del campo de visión**: simula dos
+tomas con un lente conocido y un giro conocido, y comprueba que el estimador
+recupere el lente sin que nadie se lo diga. Doce combinaciones (lentes de 40°,
+50° y 62°; giros de 5°, 8°, 12° y 16°) salieron todas **dentro de 0.7°** del
+valor real.
+
+> Esta prueba encontró un defecto de verdad: con los giros grandes que hay entre
+> dos fotos del plan, la correlación no alcanzaba el umbral y la calibración
+> nunca llegaba a medir nada. De ahí salió moverla al barrido continuo.
 
 ### El resto
 

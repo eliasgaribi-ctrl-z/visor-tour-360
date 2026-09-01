@@ -21,7 +21,12 @@
 import * as THREE from 'three'
 import { PanoramaStitcher } from '../../src/lib/capture/stitcher'
 import { planDeCaptura } from '../../src/lib/capture/plan'
-import { fovDe } from '../../src/lib/capture/frames'
+import {
+  desplazamientoHorizontal,
+  estimarFovConGiro,
+  fovDe,
+  grisesReducidos,
+} from '../../src/lib/capture/frames'
 import { DEG } from '../../src/lib/math'
 import { asset } from '../../src/lib/assets'
 
@@ -143,6 +148,77 @@ function reescalar(fuente: CanvasImageSource, width: number, height: number): Im
   return ctx.getImageData(0, 0, width, height)
 }
 
+/**
+ * ============================================================================
+ *  PRUEBA 2 · CALIBRAR EL CAMPO DE VISIÓN CON EL GIROSCOPIO
+ * ============================================================================
+ *
+ * Se simulan dos tomas con un campo de visión CONOCIDO y un giro conocido entre
+ * ellas, y se comprueba que el estimador recupere ese campo de visión sin que
+ * nadie se lo diga. Es la medición de la que depende que la panorámica cierre.
+ */
+async function probarCalibracion(fuente: { data: ImageData; width: number; height: number }) {
+  titulo('Calibración del campo de visión')
+  log('\nPRUEBA 2 · el giroscopio mide el lente')
+
+  const ANCHO = 240
+  const ALTO = 426
+  const GRIS = { ancho: 96, alto: 72 }
+
+  let aciertos = 0
+  let intentos = 0
+
+  for (const hfovReal of [40, 50, 62]) {
+    for (const giro of [5, 8, 12, 16] as const) {
+      intentos++
+      const vfovReal = (2 * Math.atan(Math.tan((hfovReal * DEG) / 2) * (ALTO / ANCHO))) / DEG
+
+      const toma = (yaw: number) => {
+        const q = new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(0, -yaw * DEG, 0, 'YXZ'),
+        )
+        return simularToma(fuente, q, hfovReal, vfovReal, ANCHO, ALTO)
+      }
+
+      const a = grisesReducidos(toma(0), GRIS.ancho, GRIS.alto)
+      const b = grisesReducidos(toma(giro), GRIS.ancho, GRIS.alto)
+
+      const estimado = estimarFovConGiro({
+        anterior: a,
+        actual: b,
+        width: GRIS.ancho,
+        height: GRIS.alto,
+        deltaYaw: giro,
+        deltaPitch: 0,
+      })
+
+      if (estimado === null) {
+        const crudo = desplazamientoHorizontal(a, b, GRIS.ancho, GRIS.alto)
+        log(
+          `  hfov real ${hfovReal}° · giro ${giro}°  →  <span class="mal">no midió</span>` +
+            ` (corrimiento ${crudo.pixeles} px, confianza ${crudo.confianza.toFixed(3)})`,
+        )
+        continue
+      }
+
+      /* Con 3° de margen: el punto de la medición es acercarse al lente real
+         desde el valor supuesto de 66°, y una sola lectura no tiene que ser
+         perfecta porque en la app se toma la mediana de muchas. */
+      const error = Math.abs(estimado - hfovReal)
+      const bien = error <= 3
+      if (bien) aciertos++
+      log(
+        `  hfov real ${String(hfovReal).padStart(2)}° · giro ${String(giro).padStart(2)}°  →  ` +
+          `midió <span class="${bien ? 'ok' : 'mal'}">${estimado.toFixed(1)}°</span> (error ${error.toFixed(1)}°)`,
+      )
+    }
+  }
+
+  const bien = aciertos >= intentos - 2
+  log(`  <span class="${bien ? 'ok' : 'mal'}">${aciertos} de ${intentos} dentro de 3°</span>`)
+  return bien
+}
+
 async function correr() {
   const original = await cargarImagen(asset('panoramas/sala.jpg'))
   log(`Panorámica original: ${original.naturalWidth}×${original.naturalHeight}`)
@@ -219,7 +295,9 @@ async function correr() {
   titulo('Una toma simulada')
   imagenes.append(simularToma(fuente, quat, hfov, vfov, ANCHO_TOMA, ALTO_TOMA))
 
-  const todoBien = coberturaOk && geometriaOk
+  const calibracionOk = await probarCalibracion(fuente)
+
+  const todoBien = coberturaOk && geometriaOk && calibracionOk
   log(`\n<span class="${todoBien ? 'ok' : 'mal'}">RESULTADO: ${todoBien ? 'TODO BIEN' : 'HAY ALGO MAL'}</span>`)
   ;(window as unknown as { PRUEBA_LISTA: boolean; PRUEBA_OK: boolean }).PRUEBA_LISTA = true
   ;(window as unknown as { PRUEBA_LISTA: boolean; PRUEBA_OK: boolean }).PRUEBA_OK = todoBien
