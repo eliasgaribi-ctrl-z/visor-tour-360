@@ -87,10 +87,10 @@ export default function App() {
       return <EditorRecorrido tourId={ruta.tourId} ir={ir} />
 
     case 'capturar':
-      return <Capturar tourId={ruta.tourId} ir={ir} />
+      return <Capturar tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
     case 'foto':
-      return <SubirFoto tourId={ruta.tourId} ir={ir} />
+      return <SubirFoto tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
     case 'puntos':
       return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />

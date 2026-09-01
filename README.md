@@ -242,6 +242,10 @@ Mis recorridos → Nuevo recorrido → Agregar habitación
                                   → Preparar archivo → compartir el .tour
 ```
 
+Si una foto salió mal, **Ajustes → Volver a tomarla** (o *Cambiar la foto*)
+reemplaza solo la imagen: el nombre de la habitación, sus puntos y su vista de
+entrada se quedan como estaban.
+
 ### Requisito que sorprende a todo el mundo: https
 
 `getUserMedia` y los sensores de orientación **solo existen en un contexto
@@ -342,6 +346,28 @@ manda por WhatsApp y se vuelve a importar en otro teléfono.
 El botón va en dos pasos a propósito (*Preparar* y luego *Compartir*): en iOS,
 compartir solo se permite mientras dure la activación que dejó el toque del
 usuario, y armar un ZIP de varios megabytes se la acaba.
+
+### Pasarle el recorrido a alguien más
+
+Dos caminos, según a quién:
+
+**A otra persona con el link del visor.** Le mandas el `.tour` (por WhatsApp,
+correo, lo que sea), esa persona abre el visor, entra a *Mis recorridos* y toca
+**Abrir archivo**. Queda guardado en su teléfono igual que en el tuyo.
+
+**Como un link público, para un cliente.** El `.tour` es un ZIP: se descomprime
+y adentro están `recorrido.json` y las fotos.
+
+```bash
+unzip casa-en-tlajomulco.tour -d recorrido
+cp recorrido/fotos/*.jpg public/panoramas/     # las panorámicas
+cat recorrido/recorrido.json                   # nombres, ángulos y puntos
+```
+
+Con eso se llena `src/data/tour.ts` (mismos campos, `image` con `asset(...)`) y
+`npm run build:pages` deja el recorrido publicado en su propio link, sin que el
+cliente tenga que importar nada. El `recorrido.json` ya trae los `hotspots` con
+sus `yaw`/`pitch` en la misma convención, así que es copiar y pegar.
 
 ---
 
@@ -480,6 +506,7 @@ vertical de 40° × 66°:
 | ----------------------------------------------------------------- | --------- |
 | Crear recorrido → subir foto → guardar → colocar punto → ver       | ✓         |
 | Punto de enlace entre dos habitaciones                            | ✓         |
+| Reemplazar la foto de una habitación conservando nombre y puntos  | ✓         |
 | Exportar `.tour` y volver a importarlo (ida y vuelta completa)     | ✓         |
 | ZIP escrito por el visor, abierto con `unzip` y con `zipfile`      | CRC ✓, nombres UTF-8 ✓ |
 | ZIP hecho por otra herramienta con deflate, leído por el visor     | ✓         |

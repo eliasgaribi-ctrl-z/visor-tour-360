@@ -7,7 +7,12 @@ import * as THREE from 'three'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredTour } from '../../lib/store/types'
-import { getTour, guardarEscenaConFoto, createScene } from '../../lib/store/tours'
+import {
+  createScene,
+  getTour,
+  guardarEscenaConFoto,
+  reemplazarFoto,
+} from '../../lib/store/tours'
 import { slugId, newId } from '../../lib/store/ids'
 import { DEG, wrap180 } from '../../lib/math'
 
@@ -27,6 +32,7 @@ import {
   OrientationTracker,
   needsOrientationPermission,
   requestOrientationPermission,
+  screenAngle,
   type OrientationState,
 } from '../../lib/capture/orientation'
 import {
@@ -43,6 +49,7 @@ import {
   soltarLienzo,
 } from '../../lib/capture/frames'
 import { planDeCaptura, puntoMasCercano, type PuntoGuia } from '../../lib/capture/plan'
+import { mantenerPantallaEncendida } from '../../lib/capture/pantalla'
 import { PanoramaStitcher } from '../../lib/capture/stitcher'
 
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
@@ -80,12 +87,15 @@ type Fase =
 
 export type CapturarProps = {
   tourId: string
+  /** Si viene, la panorámica nueva REEMPLAZA la de esa habitación y se le
+      conservan el nombre, los puntos y la vista de entrada. */
+  sceneId?: string
   ir: (ruta: Ruta) => void
 }
 
 const Y = new THREE.Vector3(0, 1, 0)
 
-export function Capturar({ tourId, ir }: CapturarProps) {
+export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const [fase, setFase] = useState<Fase>({ nombre: 'permisos' })
   const [tour, setTour] = useState<StoredTour | null>(null)
   const [alcance, setAlcance] = useState<'esfera' | 'vuelta'>('esfera')
@@ -101,6 +111,9 @@ export function Capturar({ tourId, ir }: CapturarProps) {
   const [manual, setManual] = useState(false)
   const [pasoManual, setPasoManual] = useState(0)
   const [fantasma, setFantasma] = useState<string | null>(null)
+  /** Ángulo de pantalla con el que se calculó el plan. Girar lo invalida. */
+  const [anguloInicial, setAnguloInicial] = useState(0)
+  const [girado, setGirado] = useState(false)
 
   /* El seguidor se crea UNA sola vez y vive lo que viva la pantalla: si se
      recreara en cada render, el dibujo por cuadro leería un objeto distinto del
@@ -244,6 +257,8 @@ export function Capturar({ tourId, ir }: CapturarProps) {
     const tick = () => {
       frame = requestAnimationFrame(tick)
       if (seguidor.state !== 'activo') return
+      // Con el teléfono de lado, el plan no vale: no se dispara nada.
+      if (girado) return
 
       const { yaw, pitch, speed, quaternion } = seguidor.reading
       const relativo = wrap180(yaw - baseYaw.current)
@@ -262,7 +277,7 @@ export function Capturar({ tourId, ir }: CapturarProps) {
 
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [fase.nombre, manual, seguidor, tomarFoto])
+  }, [fase.nombre, girado, manual, seguidor, tomarFoto])
 
   /* ----------------------------------------------------------------- ARRANQUE */
   const comenzar = useCallback(async () => {
@@ -313,8 +328,11 @@ export function Capturar({ tourId, ir }: CapturarProps) {
 
       // El lienzo más grande que este teléfono puede armar de verdad.
       const ancho = anchoUtilizable()
+      // Si esto es un reintento, hay un costurero (y su contexto WebGL) vivo.
+      stitcher.current?.dispose()
       stitcher.current = new PanoramaStitcher({ width: ancho, preview: { width: 512, height: 256 } })
-      if (previa.current && !previa.current.contains(stitcher.current.canvas)) {
+      if (previa.current) {
+        previa.current.replaceChildren()
         stitcher.current.canvas.className = 'h-full w-full object-cover'
         previa.current.append(stitcher.current.canvas)
       }
@@ -331,6 +349,8 @@ export function Capturar({ tourId, ir }: CapturarProps) {
       baseYaw.current = hayS ? seguidor.reading.yaw : 0
 
       const { hfov, vfov } = fovDe(v.videoWidth, v.videoHeight, fovLargo.current)
+      setAnguloInicial(screenAngle())
+      setGirado(false)
       const plan = planDeCaptura({ hfov, vfov, alcance: hayS ? alcance : 'vuelta' })
       planRef.current = plan
       /* El plan vive en coordenadas de la PANORÁMICA (el frente es el yaw 0) y
@@ -351,13 +371,28 @@ export function Capturar({ tourId, ir }: CapturarProps) {
   }, [alcance, recalcularFov, seguidor])
 
   useEffect(() => {
-    window.addEventListener('resize', recalcularFov)
-    window.addEventListener('orientationchange', recalcularFov)
-    return () => {
-      window.removeEventListener('resize', recalcularFov)
-      window.removeEventListener('orientationchange', recalcularFov)
+    const alGirar = () => {
+      recalcularFov()
+      /* El plan de captura se calculó con la forma del encuadre en vertical.
+         Al girar el teléfono, el ancho y el alto se intercambian y los puntos
+         guía dejan de repartirse bien: quedarían huecos. En vez de recalcular
+         el plan a media captura —lo que movería los círculos ya tomados— se
+         pide enderezar el teléfono. */
+      setGirado(screenAngle() !== anguloInicial)
     }
-  }, [recalcularFov])
+    window.addEventListener('resize', alGirar)
+    window.addEventListener('orientationchange', alGirar)
+    return () => {
+      window.removeEventListener('resize', alGirar)
+      window.removeEventListener('orientationchange', alGirar)
+    }
+  }, [anguloInicial, recalcularFov])
+
+  /** La pantalla no se apaga mientras se está capturando. */
+  useEffect(() => {
+    if (fase.nombre !== 'capturando') return
+    return mantenerPantallaEncendida()
+  }, [fase.nombre])
 
   /* ------------------------------------------------------- DESHACER Y CERRAR */
   const recoser = useCallback(async (fovFinal: number) => {
@@ -407,6 +442,12 @@ export function Capturar({ tourId, ir }: CapturarProps) {
     const st = stitcher.current
     if (!st || tomas.current.length === 0) return
 
+    /* La última toma puede estar todavía comprimiéndose a JPEG. Si se recose
+       antes de que entre a la lista, esa foto desaparece de la panorámica. */
+    for (let intento = 0; disparando.current && intento < 40; intento++) {
+      await new Promise((seguir) => setTimeout(seguir, 50))
+    }
+
     /* Si el giroscopio dio suficientes mediciones del campo de visión, se vuelve
        a coser TODO con el valor calibrado. Es la diferencia entre una panorámica
        que cierra y una en la que las paredes no empatan: el valor por defecto de
@@ -434,7 +475,8 @@ export function Capturar({ tourId, ir }: CapturarProps) {
       const mini = await miniatura(lienzo)
       soltarLienzo(lienzo)
 
-      setNombre(sugerirNombre(tour))
+      const existente = sceneId ? tour?.scenes.find((s) => s.id === sceneId) : undefined
+      setNombre(existente?.name ?? sugerirNombre(tour))
       setFase({ nombre: 'nombrar', foto, mini, cobertura: st.cobertura() })
     } catch (error) {
       setFase({
@@ -443,12 +485,26 @@ export function Capturar({ tourId, ir }: CapturarProps) {
         consejo: error instanceof Error ? error.message : undefined,
       })
     }
-  }, [recoser, tour])
+  }, [recoser, sceneId, tour])
 
   const guardar = useCallback(async () => {
     if (fase.nombre !== 'nombrar' || !tour) return
     setFase({ nombre: 'procesando', mensaje: 'Guardando…' })
     try {
+      if (sceneId) {
+        await reemplazarFoto({
+          tour,
+          sceneId,
+          foto: fase.foto,
+          miniatura: fase.mini,
+          origin: 'captura',
+          coverageDeg: Math.round(fase.cobertura * 360),
+        })
+        apagar()
+        ir({ nombre: 'puntos', tourId: tour.id, sceneId })
+        return
+      }
+
       const scene = createScene({
         id: slugId(nombre || 'habitacion'),
         name: nombre.trim() || 'Habitación',
@@ -467,7 +523,7 @@ export function Capturar({ tourId, ir }: CapturarProps) {
         consejo: error instanceof Error ? error.message : undefined,
       })
     }
-  }, [apagar, fase, ir, nombre, tour])
+  }, [apagar, fase, ir, nombre, sceneId, tour])
 
   /* ------------------------------------------------------------- MODO MANUAL */
   const dispararManual = useCallback(() => {
@@ -493,8 +549,17 @@ export function Capturar({ tourId, ir }: CapturarProps) {
   /* ------------------------------------------------------------------ VISTAS */
   if (fase.nombre === 'permisos') {
     return (
-      <Pantalla titulo="Tomar la foto 360" atras={() => ir({ nombre: 'editar', tourId })}>
+      <Pantalla
+        titulo={sceneId ? 'Volver a tomar la foto' : 'Tomar la foto 360'}
+        atras={() => ir({ nombre: 'editar', tourId })}
+      >
         <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+          {sceneId && (
+            <Aviso tono="alerta" titulo="Se va a reemplazar la foto">
+              El nombre de la habitación y sus puntos se conservan tal cual. La foto anterior sí se
+              borra.
+            </Aviso>
+          )}
           {!contextoSeguro() && (
             <Aviso tono="error" titulo="Aquí no se puede usar la cámara">
               El navegador solo deja abrir la cámara cuando la página viene por <b>https</b>. Si
@@ -565,7 +630,14 @@ export function Capturar({ tourId, ir }: CapturarProps) {
             )}
           </Aviso>
           <div className="mt-4">
-            <Boton ancho onClick={() => setFase({ nombre: 'permisos' })}>
+            <Boton
+              ancho
+              onClick={() => {
+                // Sin esto, un reintento deja la cámara anterior encendida.
+                apagar()
+                setFase({ nombre: 'permisos' })
+              }}
+            >
               Volver a intentar
             </Boton>
           </div>
@@ -658,6 +730,15 @@ export function Capturar({ tourId, ir }: CapturarProps) {
         </div>
 
         <div className="flex flex-col gap-3 p-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+          {girado && (
+            <div className="pointer-events-auto">
+              <Aviso tono="alerta" titulo="Endereza el teléfono">
+                Los puntos se calcularon con el teléfono vertical. Regrésalo a como estaba para
+                seguir tomando fotos.
+              </Aviso>
+            </div>
+          )}
+
           {aviso && (
             <div className="pointer-events-auto">
               <Aviso tono="alerta">{aviso}</Aviso>
@@ -711,7 +792,10 @@ export function Capturar({ tourId, ir }: CapturarProps) {
       )}
 
       {fase.nombre === 'nombrar' && (
-        <Hoja titulo="¿Qué cuarto es?" onCerrar={() => setFase({ nombre: 'capturando' })}>
+        <Hoja
+          titulo={sceneId ? '¿Así queda?' : '¿Qué cuarto es?'}
+          onCerrar={() => setFase({ nombre: 'capturando' })}
+        >
           <div className="flex flex-col gap-3">
             {fase.cobertura < 0.75 && (
               <Aviso tono="alerta">
@@ -727,7 +811,7 @@ export function Capturar({ tourId, ir }: CapturarProps) {
               maxLength={40}
             />
             <Boton tipo="principal" ancho onClick={() => void guardar()}>
-              Guardar habitación
+              {sceneId ? 'Reemplazar la foto' : 'Guardar habitación'}
             </Boton>
           </div>
         </Hoja>

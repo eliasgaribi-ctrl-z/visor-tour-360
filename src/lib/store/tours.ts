@@ -201,6 +201,57 @@ export async function guardarEscenaConFoto(params: {
 }
 
 /**
+ * Cambia la foto de una habitación sin tocar su nombre ni sus puntos.
+ *
+ * Se escribe la foto NUEVA junto con el recorrido en una sola transacción y la
+ * vieja se borra DESPUÉS. En ese orden: si se borrara primero y la escritura
+ * fallara por falta de espacio, la habitación se quedaría sin ninguna foto.
+ * Al revés, lo peor que puede pasar es que sobre una imagen huérfana.
+ */
+export async function reemplazarFoto(params: {
+  tour: StoredTour
+  sceneId: string
+  foto: Blob
+  miniatura?: Blob
+  origin?: StoredScene['origin']
+  coverageDeg?: number
+}): Promise<StoredTour> {
+  const { tour, sceneId, foto, miniatura, origin, coverageDeg } = params
+  const anterior = tour.scenes.find((s) => s.id === sceneId)
+  if (!anterior) throw new Error('Esa habitación ya no está en el recorrido.')
+
+  const imageId = newId('img')
+  const thumbId = miniatura ? newId('img') : undefined
+
+  const siguiente: StoredTour = {
+    ...tour,
+    scenes: tour.scenes.map((s) =>
+      s.id === sceneId
+        ? {
+            ...s,
+            imageId,
+            thumbId,
+            origin: origin ?? s.origin,
+            coverageDeg: coverageDeg ?? s.coverageDeg,
+          }
+        : s,
+    ),
+    updatedAt: Date.now(),
+  }
+
+  await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
+    await idbPut(t, STORE_BLOBS, { id: imageId, blob: foto })
+    if (miniatura && thumbId) await idbPut(t, STORE_BLOBS, { id: thumbId, blob: miniatura })
+    await idbPut(t, STORE_TOURS, siguiente)
+  })
+
+  await deleteImage(anterior.imageId)
+  if (anterior.thumbId) await deleteImage(anterior.thumbId)
+
+  return siguiente
+}
+
+/**
  * ¿Se puede escribir en este navegador?
  *
  * En navegación privada IndexedDB existe pero puede fallar al escribir o

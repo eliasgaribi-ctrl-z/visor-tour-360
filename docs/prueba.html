@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Prueba de compatibilidad</title>
+<style>
+  /* Sin variables CSS, sin flex gap, sin nada moderno: esta página tiene que
+     poder pintarse hasta en un Safari viejo. Si esto no se ve, el problema no
+     es el visor: es la red o el link. */
+  body { margin:0; padding:18px; background:#0b0f19; color:#e8eaf0;
+         font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  h1 { font-size:22px; margin:0 0 4px; color:#f5b544; }
+  p.sub { margin:0 0 20px; font-size:14px; color:#9aa3b8; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  td { padding:9px 6px; border-bottom:1px solid #222b3d; vertical-align:top; }
+  td.k { color:#9aa3b8; width:42%; }
+  td.v { color:#e8eaf0; word-break:break-word; }
+  .ok { color:#5fd08a; } .no { color:#ff6b6b; }
+  .caja { background:#131a2a; border-radius:14px; padding:14px; margin-bottom:16px; }
+  a.btn { display:block; text-align:center; background:#f5b544; color:#111; text-decoration:none;
+          padding:14px; border-radius:14px; font-weight:600; font-size:16px; margin-top:18px; }
+  code { font-size:11px; color:#9aa3b8; }
+</style>
+</head>
+<body>
+
+<div class="caja">
+  <h1>&#10003; Esta página sí cargó</h1>
+  <p class="sub">Si estás leyendo esto en el iPhone, el link y la red funcionan.
+     Lo de abajo dice qué puede y qué no puede este teléfono.</p>
+</div>
+
+<table id="t"></table>
+
+<a class="btn" href="./">Abrir el recorrido 360</a>
+<a class="btn" href="./#/inicio" style="background:#2a3348;color:#e8eaf0">Ir a Mis recorridos</a>
+
+<script>
+/* ES5 a propósito: nada de arrow functions, const, let ni template strings.
+   Si el navegador fuera tan viejo que no entiende la sintaxis moderna del
+   visor, esta página igual se pinta y nos lo dice. */
+(function () {
+  var filas = [];
+  function add(k, v, estado) {
+    filas.push('<tr><td class="k">' + k + '</td><td class="v ' +
+      (estado === true ? 'ok' : estado === false ? 'no' : '') + '">' + v + '</td></tr>');
+  }
+  function intenta(fn, sino) {
+    try { var r = fn(); return (r === undefined || r === null) ? sino : r; }
+    catch (e) { return 'error: ' + e.message; }
+  }
+
+  add('Navegador', navigator.userAgent);
+  add('Pantalla', intenta(function () {
+    return screen.width + ' x ' + screen.height + ' px, densidad ' + (window.devicePixelRatio || 1);
+  }, '?'));
+  add('Memoria del dispositivo', intenta(function () {
+    return navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'no lo dice';
+  }, 'no lo dice'));
+
+  /* WebGL: lo que de verdad necesita el visor */
+  var gl = null, motivo = '';
+  try {
+    var c = document.createElement('canvas');
+    gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+  } catch (e) { motivo = e.message; }
+
+  add('WebGL', gl ? 'sí, disponible' : ('NO disponible' + (motivo ? ' (' + motivo + ')' : '')), !!gl);
+
+  if (gl) {
+    add('Versión de WebGL', intenta(function () { return gl.getParameter(gl.VERSION); }, '?'));
+    var maxTex = intenta(function () { return gl.getParameter(gl.MAX_TEXTURE_SIZE); }, 0);
+    add('Textura máxima', maxTex + ' px', maxTex >= 4096);
+    add('¿Aguanta la panorámica de 4096?', maxTex >= 4096 ? 'sí' : 'NO — hay que reducirlas', maxTex >= 4096);
+    add('Tarjeta gráfica', intenta(function () {
+      var d = gl.getExtension('WEBGL_debug_renderer_info');
+      return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'no lo dice';
+    }, 'no lo dice'));
+  }
+
+  /* ---------------------------------------------------------------------
+     LO QUE HACE FALTA PARA *CREAR* UN RECORRIDO CON LA CÁMARA
+     Estas cuatro filas son las que explican el 90% de los "no me sale":
+     casi siempre es que la página no viene por https.
+     --------------------------------------------------------------------- */
+  var seguro = window.isSecureContext === true ||
+    location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+  add('Página segura (https)', seguro
+      ? 'sí — la cámara puede abrir'
+      : 'NO — sin https el navegador NUNCA deja usar la cámara ni los sensores', seguro);
+  add('Dirección de esta página', location.protocol + '//' + location.host);
+
+  var hayCamara = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  add('El navegador tiene cámara web', hayCamara ? 'sí' : 'NO', hayCamara);
+
+  var hayOrientacion = ('DeviceOrientationEvent' in window);
+  var pidePermiso = hayOrientacion &&
+    typeof window.DeviceOrientationEvent.requestPermission === 'function';
+  add('Sensores de movimiento', hayOrientacion
+      ? (pidePermiso ? 'sí, y va a pedir permiso (iPhone)' : 'sí')
+      : 'NO — habría que capturar a mano', hayOrientacion);
+
+  var hayIDB = false;
+  try { hayIDB = !!window.indexedDB; } catch (e) { hayIDB = false; }
+  add('Puede guardar recorridos', hayIDB ? 'sí' : 'NO — ¿estás en navegación privada?', hayIDB);
+
+  /* Un lienzo del tamaño de la panorámica: iOS no avisa cuando no puede, solo
+     entrega la imagen en blanco. Aquí se pinta un píxel y se vuelve a leer. */
+  add('Lienzo de 4096 x 2048', intenta(function () {
+    var cv = document.createElement('canvas');
+    cv.width = 4096; cv.height = 2048;
+    var cx = cv.getContext('2d');
+    if (!cx) return 'no se pudo';
+    cx.fillStyle = '#f00';
+    cx.fillRect(4095, 2047, 1, 1);
+    var d = cx.getImageData(4095, 2047, 1, 1).data;
+    cv.width = 0; cv.height = 0;
+    return d[0] > 200 ? 'sí, aguanta' : 'NO — la panorámica saldría en blanco';
+  }, '?'));
+
+  /* ¿Entiende la sintaxis moderna con la que está compilado el visor? */
+  var moderno = false;
+  try { eval('(()=>{let a=1;class B{#x=2};return `ok${a}`})()'); moderno = true; } catch (e) { moderno = false; }
+  add('Entiende JavaScript moderno', moderno ? 'sí' : 'NO — por eso no abre el visor', moderno);
+
+  /* ¿Soporta módulos ES, que es como se carga el visor? */
+  var modulos = ('noModule' in document.createElement('script'));
+  add('Soporta módulos ES', modulos ? 'sí' : 'NO — por eso no abre el visor', modulos);
+
+  document.getElementById('t').innerHTML = filas.join('');
+
+  /* Prueba de red: ¿puede bajar una de las panorámicas? */
+  var img = new Image();
+  var t0 = new Date().getTime();
+  img.onload = function () {
+    var ms = new Date().getTime() - t0;
+    document.getElementById('t').innerHTML += '<tr><td class="k">Descarga de la panorámica</td>' +
+      '<td class="v ok">sí, ' + img.width + 'x' + img.height + ' en ' + ms + ' ms</td></tr>';
+  };
+  img.onerror = function () {
+    document.getElementById('t').innerHTML += '<tr><td class="k">Descarga de la panorámica</td>' +
+      '<td class="v no">NO se pudo bajar</td></tr>';
+  };
+  img.src = './panoramas/sala.jpg?t=' + t0;
+})();
+</script>
+
+</body>
+</html>

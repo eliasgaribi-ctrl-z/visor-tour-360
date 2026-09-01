@@ -4,7 +4,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredTour } from '../../lib/store/types'
-import { createScene, getTour, guardarEscenaConFoto } from '../../lib/store/tours'
+import {
+  createScene,
+  getTour,
+  guardarEscenaConFoto,
+  reemplazarFoto,
+} from '../../lib/store/tours'
 import { newId, slugId } from '../../lib/store/ids'
 import { anchoUtilizable, miniatura, soltarLienzo } from '../../lib/capture/frames'
 import {
@@ -14,6 +19,7 @@ import {
   aJpeg,
   leerGPano,
   leerImagen,
+  liberarProyector,
   type GPano,
   type TipoDeFoto,
 } from '../../lib/capture/importar'
@@ -21,6 +27,8 @@ import { Aviso, Boton, Campo, Cargando, Pantalla, Tarjeta } from './ui'
 
 export type SubirFotoProps = {
   tourId: string
+  /** Si viene, la foto REEMPLAZA la de esa habitación conservando sus puntos. */
+  sceneId?: string
   ir: (ruta: Ruta) => void
 }
 
@@ -41,7 +49,7 @@ const DESCRIPCIONES: Record<TipoDeFoto, { titulo: string; texto: string }> = {
   },
 }
 
-export function SubirFoto({ tourId, ir }: SubirFotoProps) {
+export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
   const [tour, setTour] = useState<StoredTour | null>(null)
   const [origen, setOrigen] = useState<HTMLCanvasElement | null>(null)
   const [gpano, setGpano] = useState<GPano | null>(null)
@@ -61,9 +69,12 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
     void getTour(tourId).then(setTour)
   }, [tourId])
 
+  /* Al salir de la pantalla se sueltan las dos cosas caras: la URL de la vista
+     previa y el contexto WebGL que usa la proyección de una foto normal. */
   useEffect(
     () => () => {
       if (urlPrevia.current) URL.revokeObjectURL(urlPrevia.current)
+      liberarProyector()
     },
     [],
   )
@@ -82,7 +93,10 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
         // alto; se arranca de ahí y el usuario ajusta viendo el resultado.
         setCobertura(Math.min(360, Math.round((lienzo.width / lienzo.height) * 55)))
       }
-      setNombre(sugerirNombre(tour))
+      setNombre(
+        (sceneId ? tour?.scenes.find((s) => s.id === sceneId)?.name : undefined) ??
+          sugerirNombre(tour),
+      )
     } catch (e) {
       setError(
         e instanceof ImportError
@@ -116,9 +130,12 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
 
   useEffect(() => {
     if (!origen) return
-    const timer = window.setTimeout(() => void construirPrevia(), 120)
+    // Una foto normal pasa por la GPU; las otras dos son un drawImage. Se le da
+    // más aire al deslizador para no rearmar la proyección en cada píxel.
+    const espera = tipo === 'foto' ? 320 : 120
+    const timer = window.setTimeout(() => void construirPrevia(), espera)
     return () => window.clearTimeout(timer)
-  }, [construirPrevia, origen])
+  }, [construirPrevia, origen, tipo])
 
   const guardar = async () => {
     if (!origen || !tour) return
@@ -136,13 +153,29 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
       const mini = await miniatura(lienzo)
       soltarLienzo(lienzo)
 
+      const grados =
+        tipo === 'esfera' ? 360 : tipo === 'panoramica' ? cobertura : Math.round(fov)
+
+      if (sceneId) {
+        await reemplazarFoto({
+          tour,
+          sceneId,
+          foto,
+          miniatura: mini,
+          origin: 'foto',
+          coverageDeg: grados,
+        })
+        ir({ nombre: 'puntos', tourId: tour.id, sceneId })
+        return
+      }
+
       const scene = createScene({
         id: slugId(nombre || 'habitacion'),
         name: nombre.trim() || 'Habitación',
         imageId: newId('img'),
         thumbId: newId('img'),
         origin: 'foto',
-        coverageDeg: tipo === 'esfera' ? 360 : tipo === 'panoramica' ? cobertura : Math.round(fov),
+        coverageDeg: grados,
       })
       await guardarEscenaConFoto({ tour, scene, foto, miniatura: mini })
       ir({ nombre: 'puntos', tourId: tour.id, sceneId: scene.id })
@@ -155,11 +188,17 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
 
   return (
     <Pantalla
-      titulo="Usar una foto"
+      titulo={sceneId ? 'Cambiar la foto' : 'Usar una foto'}
       subtitulo={tour?.title}
       atras={() => ir({ nombre: 'editar', tourId })}
     >
       <div className="mx-auto flex w-full max-w-md flex-col gap-4">
+        {sceneId && !origen && (
+          <Aviso tono="alerta" titulo="Se va a reemplazar la foto">
+            El nombre de la habitación y sus puntos se conservan tal cual. La foto anterior sí se
+            borra.
+          </Aviso>
+        )}
         {error && (
           <Aviso tono="error" titulo="No se pudo abrir">
             {error.mensaje}
@@ -288,13 +327,15 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
               </label>
             )}
 
-            <Campo
-              etiqueta="Nombre de la habitación"
-              valor={nombre}
-              onChange={setNombre}
-              placeholder="Sala"
-              maxLength={40}
-            />
+            {!sceneId && (
+              <Campo
+                etiqueta="Nombre de la habitación"
+                valor={nombre}
+                onChange={setNombre}
+                placeholder="Sala"
+                maxLength={40}
+              />
+            )}
 
             <div className="flex gap-2">
               <Boton
@@ -308,7 +349,7 @@ export function SubirFoto({ tourId, ir }: SubirFotoProps) {
                 Otra foto
               </Boton>
               <Boton tipo="principal" ancho onClick={() => void guardar()} disabled={trabajando}>
-                {trabajando ? 'Guardando…' : 'Guardar habitación'}
+                {trabajando ? 'Guardando…' : sceneId ? 'Reemplazar la foto' : 'Guardar habitación'}
               </Boton>
             </div>
           </>

@@ -272,6 +272,23 @@ function colocarCilindrica(
   }
 }
 
+/**
+ * El proyector se REUTILIZA entre llamadas.
+ *
+ * La vista previa se rearma cada vez que el usuario mueve el deslizador del
+ * campo de visión. Crear y destruir un contexto WebGL en cada movimiento es de
+ * las pocas cosas que de verdad tumban un navegador de celular: los contextos
+ * son caros de crear y hay un tope de cuántos pueden vivir a la vez; al pasarse,
+ * el navegador empieza a matar los más viejos, incluido el del visor.
+ */
+let proyector: { stitcher: PanoramaStitcher; ancho: number } | null = null
+
+/** Suelta el proyector compartido. Llamar al salir de la pantalla de importar. */
+export function liberarProyector() {
+  proyector?.stitcher.dispose()
+  proyector = null
+}
+
 /** Una foto normal, proyectada como la vería la lente desde el centro del cuarto. */
 async function proyectarFotoNormal(
   fuente: HTMLCanvasElement,
@@ -280,30 +297,35 @@ async function proyectarFotoNormal(
 ): Promise<HTMLCanvasElement> {
   const { hfov, vfov } = fovDe(fuente.width, fuente.height, opciones.fovDeg ?? 66)
 
-  const stitcher = new PanoramaStitcher({
-    width: anchoDestino,
-    preview: { width: 64, height: 32 },
-    colorVacio: new THREE.Color(opciones.colorVacio ?? VACIO_POR_DEFECTO).getHex(),
-    // Una sola foto: sin desvanecido, para no perder el borde con un degradado
-    // hacia el vacío. Cuando hay una sola toma no hay nada con qué mezclar.
-    difuminado: 0.02,
-  })
-
-  try {
-    const orientacion = new THREE.Quaternion().setFromEuler(
-      new THREE.Euler((opciones.pitch ?? 0) * DEG, -(opciones.yaw ?? 0) * DEG, 0, 'YXZ'),
-    )
-    stitcher.agregar({ fuente, orientacion, hfov, vfov })
-
-    const blob = await stitcher.exportar(0.95)
-    const bitmap = await createImageBitmap(blob)
-    const canvas = crearLienzo(bitmap.width, bitmap.height)
-    canvas.getContext('2d', { alpha: false })?.drawImage(bitmap, 0, 0)
-    bitmap.close()
-    return canvas
-  } finally {
-    stitcher.dispose()
+  if (proyector && proyector.ancho !== anchoDestino) liberarProyector()
+  if (!proyector) {
+    proyector = {
+      ancho: anchoDestino,
+      stitcher: new PanoramaStitcher({
+        width: anchoDestino,
+        preview: { width: 64, height: 32 },
+        colorVacio: new THREE.Color(opciones.colorVacio ?? VACIO_POR_DEFECTO).getHex(),
+        // Una sola foto: casi sin desvanecido, para no perder el borde con un
+        // degradado hacia el vacío. No hay nada con qué mezclar.
+        difuminado: 0.02,
+      }),
+    }
   }
+
+  const { stitcher } = proyector
+  stitcher.limpiar()
+
+  const orientacion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler((opciones.pitch ?? 0) * DEG, -(opciones.yaw ?? 0) * DEG, 0, 'YXZ'),
+  )
+  stitcher.agregar({ fuente, orientacion, hfov, vfov })
+
+  const blob = await stitcher.exportar(0.95)
+  const bitmap = await createImageBitmap(blob)
+  const canvas = crearLienzo(bitmap.width, bitmap.height)
+  canvas.getContext('2d', { alpha: false })?.drawImage(bitmap, 0, 0)
+  bitmap.close()
+  return canvas
 }
 
 /** Guarda el lienzo como JPEG. */

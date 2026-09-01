@@ -28,8 +28,9 @@ export type Ruta =
   | { nombre: 'demo' }
   | { nombre: 'ver'; tourId: string }
   | { nombre: 'editar'; tourId: string }
-  | { nombre: 'capturar'; tourId: string }
-  | { nombre: 'foto'; tourId: string }
+  /** Con `sceneId`, la foto nueva REEMPLAZA la de esa habitación. */
+  | { nombre: 'capturar'; tourId: string; sceneId?: string }
+  | { nombre: 'foto'; tourId: string; sceneId?: string }
   | { nombre: 'puntos'; tourId: string; sceneId: string }
 
 export function leerRuta(hash: string): Ruta {
@@ -48,9 +49,13 @@ export function leerRuta(hash: string): Ruta {
     case 'editar':
       return partes[1] ? { nombre: 'editar', tourId: partes[1] } : { nombre: 'inicio' }
     case 'capturar':
-      return partes[1] ? { nombre: 'capturar', tourId: partes[1] } : { nombre: 'inicio' }
+      return partes[1]
+        ? { nombre: 'capturar', tourId: partes[1], sceneId: partes[2] }
+        : { nombre: 'inicio' }
     case 'foto':
-      return partes[1] ? { nombre: 'foto', tourId: partes[1] } : { nombre: 'inicio' }
+      return partes[1]
+        ? { nombre: 'foto', tourId: partes[1], sceneId: partes[2] }
+        : { nombre: 'inicio' }
     case 'puntos':
       return partes[1] && partes[2]
         ? { nombre: 'puntos', tourId: partes[1], sceneId: partes[2] }
@@ -73,9 +78,15 @@ export function rutaAHash(ruta: Ruta): string {
     case 'editar':
       return `#/editar/${encodeURIComponent(ruta.tourId)}`
     case 'capturar':
-      return `#/capturar/${encodeURIComponent(ruta.tourId)}`
+      return (
+        `#/capturar/${encodeURIComponent(ruta.tourId)}` +
+        (ruta.sceneId ? `/${encodeURIComponent(ruta.sceneId)}` : '')
+      )
     case 'foto':
-      return `#/foto/${encodeURIComponent(ruta.tourId)}`
+      return (
+        `#/foto/${encodeURIComponent(ruta.tourId)}` +
+        (ruta.sceneId ? `/${encodeURIComponent(ruta.sceneId)}` : '')
+      )
     case 'puntos':
       return `#/puntos/${encodeURIComponent(ruta.tourId)}/${encodeURIComponent(ruta.sceneId)}`
   }

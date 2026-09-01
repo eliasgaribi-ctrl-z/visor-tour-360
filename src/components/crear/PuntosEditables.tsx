@@ -77,7 +77,15 @@ export function PuntosEditables({
     }
   }, [engine, hotspots])
 
-  const alMover = (event: ReactPointerEvent<HTMLElement>, id: string) => {
+  /**
+   * Convierte la posición del dedo a (yaw, pitch) y lo reporta.
+   *
+   * `final` viaja hasta aquí en vez de resolverse arriba porque al soltar hay
+   * que guardar LA POSICIÓN DE ESTE EVENTO. Leer el hotspot del render sería
+   * guardar la penúltima: el `setState` del último movimiento todavía no se
+   * refleja en el closure que corre en el mismo tick.
+   */
+  const alMover = (event: ReactPointerEvent<HTMLElement>, id: string, final: boolean) => {
     if (arrastrando.current !== id) return
     const caja = contenedor.current
     if (!caja) return
@@ -89,7 +97,7 @@ export function PuntosEditables({
       rect.height,
       engine.readout,
     )
-    onMover(id, yaw, pitch, false)
+    onMover(id, yaw, pitch, final)
   }
 
   return (
@@ -111,12 +119,11 @@ export function PuntosEditables({
               event.currentTarget.setPointerCapture(event.pointerId)
               onSeleccionar(hotspot.id)
             }}
-            onPointerMove={(event) => alMover(event, hotspot.id)}
+            onPointerMove={(event) => alMover(event, hotspot.id, false)}
             onPointerUp={(event) => {
               if (arrastrando.current !== hotspot.id) return
-              alMover(event, hotspot.id)
+              alMover(event, hotspot.id, true)
               arrastrando.current = null
-              onMover(hotspot.id, hotspot.yaw, hotspot.pitch, true)
             }}
             onPointerCancel={() => {
               arrastrando.current = null

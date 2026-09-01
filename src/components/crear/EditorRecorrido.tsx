@@ -307,6 +307,25 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             >
               Guardar
             </Boton>
+            <div className="flex gap-2">
+              <Boton
+                ancho
+                onClick={() => ir({ nombre: 'capturar', tourId: tour.id, sceneId: editando.id })}
+                disabled={!contextoSeguro()}
+              >
+                Volver a tomarla
+              </Boton>
+              <Boton
+                ancho
+                onClick={() => ir({ nombre: 'foto', tourId: tour.id, sceneId: editando.id })}
+              >
+                Cambiar la foto
+              </Boton>
+            </div>
+            <p className="-mt-1 px-1 text-xs text-ink-200">
+              La foto se reemplaza; el nombre y los puntos de esta habitación se quedan como están.
+            </p>
+
             {editando.id !== tour.startSceneId && (
               <Boton
                 ancho
