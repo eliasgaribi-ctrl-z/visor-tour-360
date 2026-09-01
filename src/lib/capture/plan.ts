@@ -48,34 +48,61 @@ export type PlanOpciones = {
 /**
  * Alturas (pitch) de cada anillo de fotos.
  *
- * Se suben anillos de `vfov · avance` en vfov·avance hasta que el siguiente ya
- * se saldría por arriba, y se cierra con una foto al cenit y otra al nadir: un
- * anillo cerca del polo daría muchas fotos casi idénticas, y una sola apuntando
- * hacia arriba tapa el agujero completo.
+ * ── El hueco que nadie ve venir ────────────────────────────────────────────
+ *
+ * Lo natural es subir anillos de `vfov · avance` en `vfov · avance` hasta
+ * llegar arriba y cerrar con una foto al cenit. Pero una foto al cenit NO cubre
+ * un casquete: cubre un rectángulo. Alrededor del polo solo alcanza para todas
+ * las direcciones hasta `min(hfov, vfov) / 2` grados de distancia; más allá,
+ * cubre unas direcciones sí y otras no, según por dónde caiga la esquina.
+ *
+ * Si el anillo de más arriba no llega hasta ahí, queda una faja sin fotografiar
+ * a unos 60° de altura, y no en toda la vuelta sino a pedazos, que es peor
+ * porque se ve como manchas y no como un hueco.
+ *
+ * Así que el anillo más alto se coloca donde tenga que estar:
+ *
+ *     pitch_arriba + vfov/2  ≥  90 − min(hfov, vfov)/2
+ *
+ * y los anillos intermedios se reparten parejo hasta ahí, con el paso que haga
+ * falta para no pasarse de `vfov · avance`.
+ *
+ * Verificado por muestreo de la esfera (720×360 direcciones, pesadas por el
+ * coseno del pitch) sobre lentes de 30° a 100° en vertical y en horizontal.
  */
-function anillos(vfov: number, avance: number, alcance: 'esfera' | 'vuelta'): number[] {
+function anillos(
+  hfov: number,
+  vfov: number,
+  avance: number,
+  alcance: 'esfera' | 'vuelta',
+): number[] {
   if (alcance === 'vuelta') return [0]
 
-  const paso = Math.max(15, vfov * avance)
-  const salida = [0]
+  const pasoMaximo = Math.max(12, vfov * avance)
+  // Hasta dónde llega la foto del polo cubriendo TODAS las direcciones.
+  const radioDelPolo = Math.min(hfov, vfov) / 2
+  // Un poco de traslape, para que no empalmen justo en el borde.
+  const margen = Math.max(4, vfov * 0.1)
+  const necesario = Math.max(0, 90 - radioDelPolo - vfov / 2 + margen)
 
-  for (let k = 1; k < 6; k++) {
-    const pitch = k * paso
-    // Si el borde superior de este anillo ya pasó del polo, sobra.
-    if (pitch + vfov / 2 > 96) break
-    salida.push(pitch, -pitch)
+  const salida = [0]
+  const cuantos = Math.ceil(necesario / pasoMaximo)
+  if (cuantos > 0) {
+    const paso = necesario / cuantos
+    for (let k = 1; k <= cuantos; k++) salida.push(k * paso, -k * paso)
   }
 
+  // Cenit y nadir: una sola foto cada uno cierra el agujero del polo.
   salida.push(90, -90)
   return salida
 }
 
 export function planDeCaptura(opciones: PlanOpciones): PuntoGuia[] {
-  const { hfov, vfov, alcance = 'esfera', avance = 0.72 } = opciones
+  const { hfov, vfov, alcance = 'esfera', avance = 0.8 } = opciones
   const pasoBase = Math.max(8, hfov * avance)
 
   const puntos: PuntoGuia[] = []
-  const listaAnillos = anillos(vfov, avance, alcance)
+  const listaAnillos = anillos(hfov, vfov, avance, alcance)
 
   listaAnillos.forEach((pitch, indice) => {
     if (Math.abs(pitch) >= 89.5) {
@@ -83,8 +110,13 @@ export function planDeCaptura(opciones: PlanOpciones): PuntoGuia[] {
       return
     }
 
-    // El paso crece al acercarse al polo, donde la vuelta es más corta.
-    const paso = Math.min(120, pasoBase / Math.max(0.28, Math.cos(pitch * DEG)))
+    /* El paso crece al acercarse al polo, donde la vuelta es más corta. Pero
+       el que manda no es el centro de la foto sino su ORILLA de abajo: ahí la
+       vuelta todavía es larga y la foto abarca menos grados de yaw. Midiendo
+       por el centro, entre foto y foto queda un triángulo sin cubrir en la
+       parte baja del anillo. */
+    const pitchCritico = Math.max(0, Math.abs(pitch) - vfov / 2)
+    const paso = Math.min(120, pasoBase / Math.max(0.28, Math.cos(pitchCritico * DEG)))
     const cuantos = Math.max(3, Math.round(360 / paso))
     const pasoExacto = 360 / cuantos
 

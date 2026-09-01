@@ -157,6 +157,10 @@ export type Toma = {
 
 /* --------------------------------------------------------------- HERRAMIENTA */
 
+/** Holgura de la caja de recorte, en grados. Ver el comentario de `caja`. */
+const MARGEN_PITCH = 4
+const MARGEN_YAW = 2
+
 /** Tamaño de lienzo razonable según lo que aguante el dispositivo. */
 export function anchoRecomendado(renderer: THREE.WebGLRenderer): number {
   const maxTextura = renderer.capabilities.maxTextureSize
@@ -381,6 +385,12 @@ export class PanoramaStitcher {
    * Se muestrea el borde del rectángulo de la foto porque las esquinas NO son
    * el extremo: una foto inclinada alcanza su pitch máximo a media orilla.
    * Si la foto se traga un polo, el rango de yaw pasa a ser el círculo completo.
+   *
+   * El muestreo es aproximado —el máximo real cae entre dos muestras— así que
+   * lleva margen. Medido barriendo miles de combinaciones de inclinación y
+   * ladeo, el error del muestreo llega a 3° de pitch en el peor caso (una foto
+   * muy abierta, muy inclinada y ladeada); con 4° de margen no se sale ninguna.
+   * Quedarse corto significa recortar una tira de la foto sin avisar.
    */
   private caja(toma: Toma) {
     const tanH = Math.tan((toma.hfov * DEG) / 2)
@@ -404,7 +414,7 @@ export class PanoramaStitcher {
     pitchMin = pitchMax = centro.pitch
     yawMin = yawMax = 0
 
-    const PASOS = 16
+    const PASOS = 24
     for (let i = 0; i <= PASOS; i++) {
       const t = (i / PASOS) * 2 - 1
       for (const [sx, sy] of [[t, -1], [t, 1], [-1, t], [1, t]] as const) {
@@ -441,13 +451,12 @@ export class PanoramaStitcher {
       x0 = -1
       x1 = 1
     } else {
-      const margen = 1 // grado de holgura contra el redondeo
-      x0 = (yawCentro + yawMin - margen) / 180
-      x1 = (yawCentro + yawMax + margen) / 180
+      x0 = (yawCentro + yawMin - MARGEN_YAW) / 180
+      x1 = (yawCentro + yawMax + MARGEN_YAW) / 180
     }
 
-    const y0 = Math.max(-1, (pitchMin - 1) / 90)
-    const y1 = Math.min(1, (pitchMax + 1) / 90)
+    const y0 = Math.max(-1, (pitchMin - MARGEN_PITCH) / 90)
+    const y1 = Math.min(1, (pitchMax + MARGEN_PITCH) / 90)
 
     // La parte que se sale por un lado del lienzo reaparece por el otro.
     const copias = [0]

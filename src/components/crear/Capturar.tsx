@@ -647,7 +647,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
                 }`}
               >
                 <b className="block">Todo el cuarto</b>
-                <span className="text-xs text-ink-200">Incluye techo y piso. Unas 25 fotos.</span>
+                <span className="text-xs text-ink-200">Incluye techo y piso. Unas 30 fotos.</span>
               </button>
               <button
                 type="button"
@@ -802,7 +802,9 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             </div>
           )}
 
-          {estadoSensor === 'no-soportado' && (
+          {/* Solo hasta la primera foto: después ya entendió cómo va, y el
+              panel le estaría comiendo media pantalla a la cámara. */}
+          {estadoSensor === 'no-soportado' && tomadas === 0 && (
             <div className="pointer-events-auto">
               <Aviso tono="alerta" titulo="Sin sensores de movimiento">
                 Este teléfono no está diciendo hacia dónde apunta, así que la foto se toma a mano:

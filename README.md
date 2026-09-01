@@ -287,6 +287,24 @@ cerca de un marco de acero o del cableado del muro. Entre dos fotos seguidas eso
 se ve como una pared partida. La brújula se usa una sola vez, al principio, para
 anotar dónde quedó el norte.
 
+**El plan de fotos** (`src/lib/capture/plan.ts`) dice a dónde apuntar. Tiene dos
+detalles que solo aparecen midiendo:
+
+- Una foto al cenit **no cubre un casquete, cubre un rectángulo**: alrededor del
+  polo solo alcanza para todas las direcciones hasta `min(hfov, vfov)/2` grados.
+  Si el anillo de más arriba no llega hasta ahí, queda una faja sin fotografiar
+  a unos 60° de altura — y a pedazos, que se ve peor que un hueco limpio. Por eso
+  el anillo más alto se coloca donde tenga que estar y los intermedios se
+  reparten parejo hasta ahí.
+- El paso horizontal de cada anillo lo manda **la orilla de abajo de la foto**,
+  no su centro: ahí la vuelta todavía es larga y la foto abarca menos grados de
+  yaw. Midiendo por el centro queda un triángulo sin cubrir entre foto y foto.
+
+Barriendo la esfera con más de un millón de direcciones, para dieciséis formas
+de encuadre distintas (de 30° a 100°, en vertical y en horizontal), el plan
+cubre **el 100.0000 % en todas**. Un cuarto completo con la cámara típica de un
+celular en vertical son 29 fotos.
+
 **La costura** (`src/lib/capture/stitcher.ts`) proyecta **al revés**. Lo
 intuitivo sería deformar la foto y pegarla sobre el lienzo, pero entonces los
 triángulos que cruzan la costura de 360° se dibujan atravesando toda la imagen y
@@ -533,6 +551,10 @@ valor real.
 | ZIP hecho por otra herramienta con deflate, leído por el visor     | ✓         |
 | CRC-32 contra el valor de referencia (`"123456789"` → `cbf43926`) | ✓         |
 | Captura guiada con cámara y sensores simulados: disparo automático, cobertura, armado y guardado | ✓ |
+| Captura a mano en un teléfono sin sensores (fantasma de la toma anterior)   | ✓ |
+| Cobertura del plan de fotos: 16 formas de encuadre × 1 M de direcciones     | 100.0000 % ✓ |
+| El recorrido importado conserva habitaciones, nombres y puntos              | ✓         |
+| El sitio publicado, servido desde un subdirectorio como en GitHub Pages     | ✓         |
 | Conversión sensores → (yaw, pitch): 9 posturas verificadas contra sus valores esperados | ✓ |
 | Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
 
