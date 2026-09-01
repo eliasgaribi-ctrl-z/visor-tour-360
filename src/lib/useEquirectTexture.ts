@@ -19,8 +19,23 @@ import { registrarOlvido } from './texturasVivas'
  */
 const MAXIMO_EN_CACHE = 5
 const cache = new Map<string, THREE.Texture>()
-/** Precargas en vuelo, para no bajar dos veces la misma foto. */
-const enCamino = new Set<string>()
+
+/**
+ * Descargas en curso, para que dos pedidos de la misma foto compartan una sola.
+ *
+ * Antes esto era un Set que solo consultaba la precarga, y no evitaba nada:
+ * la precarga de una vecina y la entrada del visitante a esa misma habitación
+ * salen con milisegundos de diferencia, así que la segunda no encontraba nada
+ * en el caché —todavía no llegaba— y se bajaba el megabyte otra vez, con su
+ * segunda decodificación de 33 MB encima. Guardando la PROMESA, el que llega
+ * tarde se cuelga de la que ya está en vuelo y los dos terminan con la MISMA
+ * textura.
+ *
+ * Que sea la misma tiene una consecuencia que hay que tener presente en todo
+ * este archivo: ninguno de los dos puede destruirla por su cuenta al cancelar,
+ * porque se la estaría tumbando al otro y su habitación saldría negra.
+ */
+const enVuelo = new Map<string, Promise<THREE.Texture>>()
 
 /**
  * Texturas que ALGUIEN ESTÁ MOSTRANDO ahora mismo.
@@ -42,6 +57,29 @@ function soltar(url: string) {
   else enUso.delete(url)
 }
 
+/**
+ * Suelta una textura del todo: la memoria de video Y la de la CPU.
+ *
+ * `dispose()` solo avisa a three que libere lo que subió a la tarjeta gráfica.
+ * El ImageBitmap del que salió sigue vivo aparte —otros 33 MB de mapa de bits,
+ * fuera del montón de JavaScript, que el recolector de basura no tiene prisa
+ * por tirar porque desde su punto de vista es un objeto diminuto—. Cerrarlo es
+ * explícito o no pasa.
+ *
+ * Ojo con dónde se llama: esto solo vale para texturas que NADIE está
+ * mostrando. `dispose()` a solas es recuperable, porque three vuelve a subir la
+ * imagen la próxima vez que la dibuja; un bitmap cerrado no se recupera con
+ * nada, y al desmontar la escena se fuerza a propósito la pérdida del contexto
+ * WebGL (ver Escena360), justo el momento en que three necesita la fuente para
+ * volver a subirlo todo. Cerrar el bitmap de una textura viva deja la
+ * habitación en negro sin vuelta atrás.
+ */
+function liberar(texture: THREE.Texture) {
+  const fuente = texture.image as unknown
+  texture.dispose()
+  if (typeof ImageBitmap !== 'undefined' && fuente instanceof ImageBitmap) fuente.close()
+}
+
 /** Marca una textura como la más reciente y suelta las que ya sobran. */
 function refrescar(url: string, texture: THREE.Texture) {
   // Un Map recuerda el orden de inserción: reinsertar la manda al final.
@@ -51,7 +89,8 @@ function refrescar(url: string, texture: THREE.Texture) {
   for (const vieja of [...cache.keys()]) {
     if (cache.size <= MAXIMO_EN_CACHE) break
     if (enUso.has(vieja)) continue
-    cache.get(vieja)?.dispose()
+    const textura = cache.get(vieja)
+    if (textura) liberar(textura)
     cache.delete(vieja)
   }
 }
@@ -213,14 +252,46 @@ async function cargarTextura(url: string): Promise<THREE.Texture> {
 }
 
 function configurar(texture: THREE.Texture, gl?: THREE.WebGLRenderer) {
+  // Anisotropía al máximo: el suelo y el techo se ven mucho menos borrosos.
+  const aniso = gl ? gl.capabilities.getMaxAnisotropy() : texture.anisotropy
+
+  /* Salir temprano si ya está lista NO es una micro-optimización: esta función
+     también corre al reentrar a una habitación que ya está en el caché, y
+     `needsUpdate = true` obliga a three a volver a subir la textura entera a la
+     tarjeta gráfica. Son 33 MB por cada vez que el visitante va y vuelve entre
+     dos cuartos, con su tirón correspondiente.
+
+     La anisotropía TIENE que entrar en la comparación: three solo la programa
+     mientras SUBE la textura, así que una precargada —que se guarda sin
+     renderer a la mano, o sea con anisotropía 1— nunca la recibiría, y el suelo
+     y el techo se quedarían borrosos para siempre. Y a las habitaciones a las
+     que se llega por un punto siempre se llega precargadas. */
+  if (
+    texture.colorSpace === THREE.SRGBColorSpace &&
+    texture.wrapS === THREE.RepeatWrapping &&
+    texture.wrapT === THREE.ClampToEdgeWrapping &&
+    texture.anisotropy === aniso
+  ) {
+    return
+  }
+
   // sRGB: sin esto la foto se ve lavada / con el color equivocado.
   texture.colorSpace = THREE.SRGBColorSpace
   // Repeat en horizontal: hace que la costura de 360° no se note.
   texture.wrapS = THREE.RepeatWrapping
   texture.wrapT = THREE.ClampToEdgeWrapping
-  // Anisotropía al máximo: el suelo y el techo se ven mucho menos borrosos.
-  if (gl) texture.anisotropy = gl.capabilities.getMaxAnisotropy()
+  texture.anisotropy = aniso
+  // Algo cambió de verdad: que three la vuelva a subir con los ajustes buenos.
   texture.needsUpdate = true
+}
+
+/** Una sola descarga por URL, compartida por todos los que la pidan a la vez. */
+function cargarUnaVez(url: string): Promise<THREE.Texture> {
+  const yaVenia = enVuelo.get(url)
+  if (yaVenia) return yaVenia
+  const promesa = cargarTextura(url).finally(() => enVuelo.delete(url))
+  enVuelo.set(url, promesa)
+  return promesa
 }
 
 export type TextureState = {
@@ -266,12 +337,15 @@ export function useEquirectTexture(url: string | null): TextureState {
     let cancelled = false
     setState((s) => ({ ...s, loading: true, error: false }))
 
-    cargarTextura(url)
+    cargarUnaVez(url)
       .then((texture) => {
-        if (cancelled) {
-          texture.dispose()
-          return
-        }
+        /* Cancelado: nos fuimos de la habitación antes de que llegara la foto.
+           Se sale y ya. NO se destruye la textura: es compartida, y muy
+           probablemente el que la sigue esperando es la precarga de la vecina
+           o la otra vista montada sobre la misma URL. Tumbársela dejaría su
+           cuarto en negro. Si de verdad no la quiere nadie, se queda sin entrar
+           al caché y el recolector se la lleva. */
+        if (cancelled) return
         configurar(texture, gl)
         refrescar(url, texture)
         setState({ texture, loading: false, error: false })
@@ -301,27 +375,30 @@ export function useEquirectTexture(url: string | null): TextureState {
 export function olvidarEquirect(url: string) {
   const texture = cache.get(url)
   if (!texture) return
-  texture.dispose()
   cache.delete(url)
+  /* Si todavía hay una esfera mostrándola, se suelta la memoria de video pero
+     el bitmap se deja abierto: three puede volver a subirlo si el contexto se
+     pierde y se restaura, y cerrarlo aquí dejaría ese cuarto negro hasta que
+     alguien cambie de habitación. */
+  if (enUso.has(url)) texture.dispose()
+  else liberar(texture)
   enUso.delete(url)
 }
 
 /** Precarga en segundo plano (p.ej. la habitación vecina de un hotspot). */
 export function preloadEquirect(url: string) {
-  if (cache.has(url) || enCamino.has(url)) return
-  enCamino.add(url)
-  void cargarTextura(url)
+  if (cache.has(url) || enVuelo.has(url)) return
+  void cargarUnaVez(url)
     .then((texture) => {
-      // Mientras se bajaba, alguien pudo entrar a esa habitación y cargarla.
-      if (cache.has(url)) {
-        texture.dispose()
-        return
-      }
+      /* Mientras se bajaba, alguien pudo entrar a esa habitación y guardarla.
+         Como la descarga es compartida, la que está en el caché es ESTA MISMA
+         textura: destruirla aquí sería apagarle la foto al visitante que la
+         está viendo. Se deja como está y listo. */
+      if (cache.has(url)) return
       configurar(texture)
       refrescar(url, texture)
     })
     .catch(() => undefined)
-    .finally(() => enCamino.delete(url))
 }
 
 /* El almacén de recorridos avisa por aquí cuando revoca una URL, sin tener que

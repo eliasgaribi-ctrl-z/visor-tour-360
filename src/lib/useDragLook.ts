@@ -125,8 +125,25 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
   )
 
   const endPointer = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    pointers.current.delete(event.pointerId)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    /* Este mismo manejador está colgado de tres eventos (up, cancel y leave) y
+       en un gesto normal llegan dos: al levantar el dedo, el navegador suelta
+       la captura y manda el leave detrás. Si el dedo ya se dio de baja, no hay
+       nada que hacer — sin esta salida, un pointerup que llega después de un
+       cancel apagaría el arrastre del OTRO dedo que sigue en la pantalla. */
+    if (!pointers.current.delete(event.pointerId)) return
+
+    /* Soltar una captura que ya no se tiene lanza NotFoundError en Safari y en
+       Firefox, y sale por la consola sin que nadie lo haya pedido. Se pregunta
+       primero, y aun así se envuelve: entre la pregunta y la respuesta el
+       navegador puede haberla soltado él solo al terminar el gesto. */
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // Ya estaba suelta; es justo lo que queríamos.
+    }
+
     if (pointers.current.size < 2) pinchDistance.current = 0
     if (pointers.current.size === 0) dragging.current = false
   }, [])

@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import type { PerspectiveCamera } from 'three'
 import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
+import { menosMovimiento } from '../../lib/movimiento'
 
 export type CameraRigProps = {
   /** Grados por segundo con el joystick a tope. 90 ≈ un cuarto de vuelta por segundo. */
@@ -150,9 +151,24 @@ export function CameraRig({
 
     targetPitch.current = clamp(targetPitch.current, -maxPitchDeg, maxPitchDeg)
 
-    /* ------------------------------------------------------------ SUAVIZADO */
-    yaw.current = damp(yaw.current, targetYaw.current, smoothing, dt)
-    pitch.current = damp(pitch.current, targetPitch.current, smoothing, dt)
+    /* ------------------------------------------------------------ SUAVIZADO
+     * Con "reducir movimiento" encendido no hay inercia: la cámara se planta en
+     * su objetivo de un solo cuadro. La que sufre de verdad es la animación de
+     * los puntos —tocar un hotspot dispara un paneo de casi un segundo con la
+     * panorámica entera barriendo la pantalla, que es justo el movimiento que
+     * marea—; el arrastre con el dedo apenas cambia, porque ahí el objetivo va
+     * pegado al dedo de todos modos.
+     *
+     * Va DESPUÉS del clamp a propósito: copiar el objetivo antes de toparlo
+     * dejaría el pitch pasarse de los 85° y la panorámica se retorcería en el
+     * polo, que es exactamente lo que el clamp está evitando. */
+    if (menosMovimiento()) {
+      yaw.current = targetYaw.current
+      pitch.current = targetPitch.current
+    } else {
+      yaw.current = damp(yaw.current, targetYaw.current, smoothing, dt)
+      pitch.current = damp(pitch.current, targetPitch.current, smoothing, dt)
+    }
 
     /* ------------------------------------------------- APLICAR A LA CÁMARA */
     camera.position.set(0, 0, 0)
