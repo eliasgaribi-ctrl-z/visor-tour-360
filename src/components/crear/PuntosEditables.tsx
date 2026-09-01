@@ -167,7 +167,7 @@ export function PuntosEditables({
               arrastrando.current = null
             }}
             className={`pointer-events-auto absolute left-0 top-0 flex touch-none items-center gap-2
-                        rounded-full py-1.5 pl-1.5 pr-3.5 text-sm font-medium text-white
+                        rounded-full py-2 pl-2 pr-4 text-sm font-medium text-white
                         ring-1 backdrop-blur-sm will-change-transform ${
                           activo
                             ? 'bg-brand-500/80 ring-white/80'

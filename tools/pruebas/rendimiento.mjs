@@ -16,6 +16,11 @@
  *   2. COMPRUEBA que todo responde. Recorre todas las formas de mover la cámara
  *      —arrastrar, joystick, zoom, rueda, teclado, reencuadrar, cambiar de
  *      habitación, tocar un punto— y verifica que cada una de verdad la mueve.
+ *   3. REVISA que con "reducir movimiento" el adorno que late se quede quieto y
+ *      la rueda de "cargando" siga girando.
+ *
+ * El punto 2 necesita el badge de ángulos, que solo existe en modo desarrollo:
+ * contra el sitio ya publicado esa parte se salta y lo dice.
  *
  * Corre con la CPU limitada 4x, que se parece a un celular de gama media.
  *
@@ -91,6 +96,48 @@ await page.waitForTimeout(7000)
 
 let bien = true
 
+/* Dónde tocar, sin dejarlo al azar.
+ *
+ * El HUD y los marcadores son HERMANOS del canvas, no hijos: si el cursor cae
+ * encima de uno, el gesto va por otra rama del árbol y el manejador del visor
+ * ni se entera. Antes esta prueba apretaba siempre en (195,400) y salía roja
+ * una de cada tres veces, según dónde hubiera quedado mirando la cámara. Ahora
+ * pregunta primero qué hay debajo. */
+const sobreLaFoto = async () => {
+  const r = await page.evaluate(() => {
+    const encima = new Set()
+    for (const y of [400, 330, 470, 260]) {
+      for (const x of [195, 120, 270]) {
+        const e = document.elementFromPoint(x, y)
+        if (e && e.tagName === 'CANVAS') return { punto: { x, y } }
+        encima.add(e ? `${e.tagName}.${String(e.className).split(' ').slice(0, 4).join('.')}` : 'nada')
+      }
+    }
+    return { punto: null, encima: [...encima] }
+  })
+  /* Si la foto no está a la vista, casi siempre es que el visor está mostrando
+     un aviso encima —"no se pudo cargar la foto", o el respaldo de sin WebGL—.
+     Por eso el error dice QUÉ había encima: sin eso, apretar a ciegas daba un
+     "arrastrando 1 dibujo/s" que parecía un problema de rendimiento y no lo
+     era. */
+  if (!r.punto) throw new Error(`la foto no está a la vista; encima hay: ${r.encima.join(' · ')}`)
+  return r.punto
+}
+/** Centro de un marcador de la escena visible, o null si no hay ninguno.
+ *  Se reconocen por el `transform` en línea que les escribe el pulso del HUD
+ *  (ver src/components/ui/HotspotLayer.tsx); así no se confunden con los
+ *  botones fijos del HUD, que también viven en esa capa. */
+const sobreUnMarcador = async () =>
+  page.evaluate(() => {
+    for (const b of document.querySelectorAll('button[style*="translate3d"]')) {
+      const r = b.getBoundingClientRect()
+      if (getComputedStyle(b).visibility !== 'visible' || r.width < 20) continue
+      if (r.left < 0 || r.top < 40 || r.right > innerWidth || r.bottom > innerHeight - 40) continue
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), texto: b.textContent.trim() }
+    }
+    return null
+  })
+
 /* ------------------------------------------------------------- 1. MEDIR --- */
 console.log(`=== Trabajo del teléfono · CPU limitada ${CPU}x ===`)
 const muestrear = async (etiqueta, ms = 3000) => {
@@ -109,11 +156,12 @@ if (quieto.draws > 0 || quieto.raf > 0) {
   bien = false
 }
 
-await page.mouse.move(195, 400)
+const inicio = await sobreLaFoto()
+await page.mouse.move(inicio.x, inicio.y)
 await page.mouse.down()
 await page.evaluate(() => window.__RESET())
 for (let i = 0; i < 30; i++) {
-  await page.mouse.move(195 + i * 4, 400 + Math.sin(i / 4) * 20)
+  await page.mouse.move(inicio.x + i * 4, inicio.y + Math.sin(i / 4) * 20)
   await page.waitForTimeout(30)
 }
 await page.mouse.up()
@@ -128,12 +176,32 @@ await page.waitForTimeout(2500)
 /* ------------------------------------------------- 2. ¿TODO RESPONDE? --- */
 console.log('\n=== Cada forma de mover la cámara ===')
 const angulos = async () => {
-  const t = await page.locator('pre').first().textContent()
+  /* El badge de ángulos solo existe en modo desarrollo. En el sitio ya
+     publicado no está, y sin límite de espera propio esto se quedaba 30 s
+     colgado y reventaba en vez de avisar. */
+  let t = null
+  try {
+    t = await page.locator('pre').first().textContent({ timeout: 1500 })
+  } catch {
+    return null
+  }
   const m = /yaw\s+(-?[\d.]+)°\s+pitch\s+(-?[\d.]+)°\s+fov\s+(\d+)/.exec(t || '')
   return m ? { yaw: +m[1], pitch: +m[2], fov: +m[3] } : null
 }
-const revisar = (nombre, antes, despues, campos) => {
-  const movio = campos.some((k) => Math.abs(antes[k] - despues[k]) > 0.5)
+/**
+ * Con la CPU limitada, la cámara puede seguir acomodándose cuando se lee. Si
+ * la primera lectura no muestra movimiento se espera y se vuelve a leer: eso
+ * no esconde un fallo real —una cámara congelada sigue congelada un segundo
+ * después— y evita el falso positivo por leer demasiado pronto.
+ */
+const revisar = async (nombre, antes, campos) => {
+  let despues = await angulos()
+  let movio = campos.some((k) => Math.abs(antes[k] - despues[k]) > 0.5)
+  if (!movio) {
+    await page.waitForTimeout(1500)
+    despues = await angulos()
+    movio = campos.some((k) => Math.abs(antes[k] - despues[k]) > 0.5)
+  }
   const detalle = campos.map((k) => `${k} ${antes[k]}→${despues[k]}`).join(' ')
   console.log(`  ${nombre.padEnd(28)} ${(movio ? 'responde' : 'CONGELADO').padEnd(10)} ${detalle}`)
   if (!movio) bien = false
@@ -143,15 +211,16 @@ let a = await angulos()
 if (!a) {
   console.log('  (no se encontró el badge de ángulos: esta parte solo corre en modo desarrollo)')
 } else {
-  await page.mouse.move(195, 400)
+  const desde = await sobreLaFoto()
+  await page.mouse.move(desde.x, desde.y)
   await page.mouse.down()
   for (let i = 0; i < 12; i++) {
-    await page.mouse.move(195 - i * 8, 400)
+    await page.mouse.move(desde.x - i * 8, desde.y)
     await page.waitForTimeout(25)
   }
   await page.mouse.up()
   await page.waitForTimeout(2000)
-  revisar('arrastrar la foto', a, await angulos(), ['yaw'])
+  await revisar('arrastrar la foto', a, ['yaw'])
 
   a = await angulos()
   const zona = await page.locator('[role=application]').boundingBox()
@@ -161,26 +230,54 @@ if (!a) {
   await page.waitForTimeout(1200)
   await page.mouse.up()
   await page.waitForTimeout(900)
-  revisar('joystick', a, await angulos(), ['yaw'])
+  await revisar('joystick', a, ['yaw'])
 
   a = await angulos()
   await page.getByRole('button', { name: 'Acercar' }).click()
   await page.waitForTimeout(2000)
-  revisar('botón de zoom', a, await angulos(), ['fov'])
+  await revisar('botón de zoom', a, ['fov'])
 
+  /* La rueda, en los dos sitios donde puede caer el cursor: sobre la foto y
+     encima de un marcador. El segundo NO es un capricho: los marcadores están
+     en la capa del HUD, que es hermana del canvas, y ahí el zoom no hacía nada
+     —se notaba solo cuando la cámara quedaba mirando hacia un punto, o sea de
+     vez en cuando. Ver useWheelZoom en src/lib/useDragLook.ts. */
   await page.waitForTimeout(600) // que termine de asentarse el zoom anterior
-  a = await angulos()
-  await page.mouse.move(195, 400)
-  await page.mouse.wheel(0, 200)
-  await page.waitForTimeout(2000)
-  revisar('rueda del mouse', a, await angulos(), ['fov'])
+  const rodar = async (nombre, donde) => {
+    const antes = await angulos()
+    await page.mouse.move(donde.x, donde.y)
+    await page.mouse.wheel(0, 200)
+    await page.waitForTimeout(2000)
+    const despues = await angulos()
+    const movio = Math.abs(despues.fov - antes.fov) > 0.5
+    console.log(`  ${nombre.padEnd(28)} ${(movio ? 'responde' : 'CONGELADO').padEnd(10)} fov ${antes.fov}\u2192${despues.fov}`)
+    if (!movio) bien = false
+  }
+  await rodar('rueda sobre la foto', await sobreLaFoto())
+
+  /* Girar hasta que se vea un marcador, para no depender de dónde quedó la
+     cámara ni de los ángulos del recorrido de ejemplo. */
+  let marcador = await sobreUnMarcador()
+  for (let vuelta = 0; !marcador && vuelta < 12; vuelta++) {
+    await page.keyboard.down('ArrowRight')
+    await page.waitForTimeout(400)
+    await page.keyboard.up('ArrowRight')
+    await page.waitForTimeout(700)
+    marcador = await sobreUnMarcador()
+  }
+  if (marcador) {
+    await rodar(`rueda sobre «${marcador.texto}»`, marcador)
+  } else {
+    console.log(`  ${'rueda sobre un marcador'.padEnd(28)} NO SE ENCONTRÓ NINGUNO`)
+    bien = false
+  }
 
   a = await angulos()
   await page.keyboard.down('ArrowUp')
   await page.waitForTimeout(900)
   await page.keyboard.up('ArrowUp')
   await page.waitForTimeout(900)
-  revisar('teclado', a, await angulos(), ['pitch'])
+  await revisar('teclado', a, ['pitch'])
 
   await page.getByRole('button', { name: 'Reencuadrar' }).click()
   await page.waitForTimeout(1800)
@@ -212,6 +309,40 @@ const brillo = await page.evaluate(async (datos) => {
 }, png.toString('base64'))
 console.log(`  ${'cambiar de habitación'.padEnd(28)} ${brillo > 40 ? `la foto se dibujó (brillo ${brillo})` : 'PANTALLA NEGRA'}`)
 if (brillo <= 40) bien = false
+
+/* --------------------------------------------- 3. ¿MENOS MOVIMIENTO? ---
+ * Con "reducir movimiento" activo, el aro que late en los puntos de enlace
+ * tiene que quedarse quieto —es adorno, y una animación infinita mantiene
+ * despierto al compositor— y la rueda de "cargando" tiene que seguir girando,
+ * porque ahí el movimiento sí dice algo.
+ *
+ * Se revisa en una pestaña aparte: `reducedMotion` se fija al crear el
+ * contexto y no se puede cambiar a media sesión. */
+console.log('\n=== Si el teléfono pide menos movimiento ===')
+const quieta = await browser.newContext({
+  viewport: { width: 390, height: 844 },
+  isMobile: true,
+  hasTouch: true,
+  reducedMotion: 'reduce',
+})
+const hoja = await quieta.newPage()
+await hoja.goto(BASE, { waitUntil: 'networkidle' })
+await hoja.waitForTimeout(3000)
+const animaciones = await hoja.evaluate(() => {
+  const nombre = (sel) => {
+    const e = document.querySelector(sel)
+    return e ? getComputedStyle(e).animationName : 'no está en pantalla'
+  }
+  return { aro: nombre('.animate-ping'), rueda: nombre('.animate-spin') }
+})
+/* Se exige que el aro EXISTA: si un cambio se lleva la clase por delante, la
+   prueba tiene que gritarlo, no dar por bueno que no encontró nada. */
+const aroQuieto = animaciones.aro === 'none'
+const detalle = aroQuieto ? 'quieto' : `SIGUE LATIENDO (${animaciones.aro})`
+console.log(`  ${'aro de los enlaces'.padEnd(28)} ${detalle}`)
+console.log(`  ${'rueda de cargando'.padEnd(28)} ${animaciones.rueda}`)
+if (!aroQuieto) bien = false
+await quieta.close()
 
 console.log(`\n${bien ? 'TODO BIEN' : 'HAY ALGO MAL'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')

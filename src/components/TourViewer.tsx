@@ -1,6 +1,7 @@
 /* oxlint-disable react/immutability -- Ver la nota de arquitectura en src/lib/tourEngine.ts */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
+import { useWheelZoom } from '../lib/useDragLook'
 import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
@@ -43,6 +44,8 @@ export type TourViewerProps = {
  */
 export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourViewerProps) {
   const engine = useCreateTourEngine()
+  /* La rueda también sobre el HUD: ver useWheelZoom en src/lib/useDragLook.ts */
+  const zoomRueda = useWheelZoom(engine)
 
   const [sceneId, setSceneId] = useState(tour.startSceneId)
   const [loading, setLoading] = useState(true)
@@ -167,7 +170,7 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
         />
 
         {/* ───────────────────────────── CAPA 1 · HUD ───────────────────────────── */}
-        <div className="pointer-events-none absolute inset-0 z-30">
+        <div className="pointer-events-none absolute inset-0 z-30" onWheel={zoomRueda}>
           {/* Hotspots: van pegados a la escena pero son DOM de verdad. */}
           <HotspotLayer hotspots={scene.hotspots} onSelect={handleHotspot} />
 

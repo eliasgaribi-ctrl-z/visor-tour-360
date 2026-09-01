@@ -121,7 +121,7 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
           onClick={() => onSelect(hotspot)}
           style={{ visibility: 'hidden', opacity: 0 }}
           className="pointer-events-auto absolute left-0 top-0 flex items-center gap-2 rounded-full
-                     bg-black/45 py-1.5 pl-1.5 pr-3.5 text-sm font-medium text-white
+                     bg-black/45 py-2 pl-2 pr-4 text-sm font-medium text-white
                      ring-1 ring-white/25 backdrop-blur-sm transition-[opacity,background-color]
                      duration-150 will-change-transform hover:bg-black/65 active:scale-95"
         >

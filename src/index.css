@@ -67,3 +67,26 @@
     0 8px 32px color-mix(in oklab, black 45%, transparent),
     inset 0 1px 0 color-mix(in oklab, white 10%, transparent);
 }
+
+/* ---------------------------------------------------------------------------
+   MENOS MOVIMIENTO
+   Quien pidió "reducir movimiento" en los ajustes del teléfono no debería ver
+   un aro latiendo sin parar en cada punto de enlace. Es adorno, no información:
+   el aro se queda quieto y el marcador se sigue distinguiendo por su color. De
+   paso, una animación infinita mantiene despierto al compositor, que es justo
+   lo contrario de lo que hace el resto del visor (sección 11 del README).
+
+   La rueda de "cargando" NO se toca: ahí el movimiento SÍ dice algo —que la
+   foto viene en camino— y congelarla se leería como que se trabó.
+
+   Va FUERA de `@layer base` a propósito: en Tailwind v4 las capas mandan más
+   que la especificidad, y una regla dentro de `base` siempre perdería contra
+   la utilidad `.animate-ping`, que vive en `utilities`. El CSS sin capa gana
+   sobre todas.
+--------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .animate-ping {
+    animation: none;
+    opacity: 0.35;
+  }
+}

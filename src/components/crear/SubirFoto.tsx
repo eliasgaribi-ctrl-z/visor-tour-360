@@ -379,17 +379,14 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
 
         {!origen && (
           <Tarjeta>
-            <p className="text-sm text-ink-200">
-              ¿Prefieres que el visor arme la foto 360 solo?{' '}
-              <button
-                type="button"
-                className="font-semibold text-brand-300 underline"
-                onClick={() => ir({ nombre: 'capturar', tourId })}
-              >
-                Tómala con la cámara
-              </button>
-              .
+            <p className="mb-3 text-sm text-ink-200">
+              ¿Prefieres que el visor arme la foto 360 solo?
             </p>
+            {/* Un botón de verdad y no un enlace dentro del párrafo: así mide
+                44 px de alto en vez de los 20 que mide una línea de texto. */}
+            <Boton ancho onClick={() => ir({ nombre: 'capturar', tourId })}>
+              Tómala con la cámara
+            </Boton>
           </Tarjeta>
         )}
       </div>

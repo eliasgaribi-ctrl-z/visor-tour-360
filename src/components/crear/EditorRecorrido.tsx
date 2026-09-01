@@ -165,22 +165,27 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   )}
                 </p>
               </div>
+              {/* 44×44 cada una, el mínimo cómodo para un pulgar: reordenar mal
+                  por un mal toque es de las cosas que más molestan, y estaban
+                  en 32×28. */}
               <div className="flex shrink-0 flex-col gap-1">
                 <button
                   type="button"
-                  aria-label="Subir"
+                  aria-label={`Subir ${scene.name}`}
                   onClick={() => mover(indice, -1)}
                   disabled={indice === 0}
-                  className="grid h-7 w-8 place-items-center rounded-md bg-white/10 text-xs disabled:opacity-30"
+                  className="grid h-11 w-11 place-items-center rounded-lg bg-white/10 text-sm
+                             active:bg-white/20 disabled:opacity-30"
                 >
                   ↑
                 </button>
                 <button
                   type="button"
-                  aria-label="Bajar"
+                  aria-label={`Bajar ${scene.name}`}
                   onClick={() => mover(indice, 1)}
                   disabled={indice === tour.scenes.length - 1}
-                  className="grid h-7 w-8 place-items-center rounded-md bg-white/10 text-xs disabled:opacity-30"
+                  className="grid h-11 w-11 place-items-center rounded-lg bg-white/10 text-sm
+                             active:bg-white/20 disabled:opacity-30"
                 >
                   ↓
                 </button>

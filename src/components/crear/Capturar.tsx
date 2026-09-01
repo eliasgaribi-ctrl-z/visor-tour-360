@@ -847,7 +847,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
               apagar()
               ir({ nombre: 'editar', tourId })
             }}
-            className="hud-glass pointer-events-auto grid h-10 w-10 shrink-0 place-items-center rounded-full"
+            className="hud-glass pointer-events-auto grid h-11 w-11 shrink-0 place-items-center rounded-full"
             aria-label="Salir"
           >
             ×

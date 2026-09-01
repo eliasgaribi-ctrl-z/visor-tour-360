@@ -3,6 +3,7 @@
    arquitectura en src/lib/tourEngine.ts */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { useWheelZoom } from '../../lib/useDragLook'
 import type { Ruta } from '../../lib/useHashRoute'
 import type { Hotspot } from '../../lib/types'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
@@ -53,6 +54,8 @@ type Borrador = {
  */
 export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
   const engine = useCreateTourEngine()
+  /* La rueda también sobre el HUD: ver useWheelZoom en src/lib/useDragLook.ts */
+  const zoomRueda = useWheelZoom(engine)
   const [webgl] = useState(detectWebGL)
 
   const [tour, setTour] = useState<StoredTour | null | 'no-existe'>(null)
@@ -246,7 +249,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-56
                         bg-gradient-to-t from-black/75 via-black/35 to-transparent" />
 
-        <div className="pointer-events-none absolute inset-0 z-30">
+        <div className="pointer-events-none absolute inset-0 z-30" onWheel={zoomRueda}>
           <PuntosEditables
             hotspots={escena.hotspots}
             seleccionado={seleccion}
@@ -266,7 +269,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             <button
               type="button"
               onClick={() => ir({ nombre: 'editar', tourId })}
-              className="hud-glass pointer-events-auto grid h-10 w-10 shrink-0 place-items-center rounded-full text-ink-50"
+              className="hud-glass pointer-events-auto grid h-11 w-11 shrink-0 place-items-center rounded-full text-ink-50"
               aria-label="Regresar"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">

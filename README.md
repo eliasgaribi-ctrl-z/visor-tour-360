@@ -49,7 +49,8 @@ Y una tercera, que se corre desde la terminal:
 
 ```bash
 node tools/pruebas/memoria.mjs http://localhost:5173/       # memoria de video (sección 10)
-node tools/pruebas/rendimiento.mjs http://localhost:5173/   # batería y respuesta (sección 11)
+node tools/pruebas/rendimiento.mjs http://localhost:5173/   # batería, respuesta y movimiento (sección 11)
+node tools/pruebas/tactil.mjs http://localhost:5173/        # tamaño de lo que se toca (sección 11)
 ```
 
 ---
@@ -153,6 +154,7 @@ tools/make_test_panoramas.py    Genera las panorámicas de prueba
 tools/pruebas/costura.html      Banco de pruebas de la costura (sección 11)
 tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
+tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
 public/prueba.html              Diagnóstico de compatibilidad del teléfono
 ```
 
@@ -648,6 +650,64 @@ al de la foto que sí está esperando. Ahora se bajan mientras mira alrededor.
 node tools/pruebas/rendimiento.mjs http://localhost:5173/
 ```
 
+### Que todo se pueda tocar con el pulgar
+
+Apple pide **44 px** de lado como mínimo para cualquier cosa que se toque
+(Android pide 48). Debajo de eso el pulgar falla y la gente toca dos veces, o
+toca lo de junto. `tools/pruebas/tactil.mjs` recorre las once pantallas en un
+iPhone SE simulado —la más chica que sigue siendo común— y mide cada control.
+
+La primera pasada encontró seis que no llegaban, y varios eran de los que más se
+tocan:
+
+| Control                                  | Antes  | Ahora |
+| ---------------------------------------- | ------ | ----- |
+| Barra de habitaciones (lo más tocado)    | 36 px  | 44 px |
+| Marcadores de los puntos, en la escena   | 40 px  | 44 px |
+| La × de las hojas                        | 32 px  | 44 px |
+| Flechas para reordenar habitaciones      | 32×28  | 44×44 |
+| Botón de regresar del editor de puntos   | 40 px  | 44 px |
+| "Tómala con la cámara" (era un enlace)   | 20 px  | 44 px |
+
+```bash
+node tools/pruebas/tactil.mjs http://localhost:5173/
+```
+
+### El zoom encima de un marcador
+
+El HUD y los marcadores **no** viven dentro del div del canvas: son su hermano,
+en una capa encima. Un evento de rueda encima de un marcador sube por *su* rama
+del árbol y nunca pasa por el manejador del visor — así que ahí el zoom no hacía
+nada.
+
+Se notaba poco porque depende de hacia dónde quedó mirando la cámara, y por eso
+mismo la prueba salía roja una de cada tres veces sin explicación aparente. El
+manejador de rueda ahora se cuelga también de la capa del HUD (`useWheelZoom` en
+`src/lib/useDragLook.ts`); como las dos capas son hermanas, no se dispara dos
+veces.
+
+El **arrastre** sigue sin girar la cámara cuando empieza encima de un marcador,
+y es a propósito (`data-no-drag`): ahí el gesto es "voy a tocar este punto".
+
+La prueba dejó de apretar siempre en el mismo píxel: ahora pregunta qué hay
+debajo del cursor y prueba la rueda en los dos sitios, sobre la foto y sobre un
+marcador.
+
+### Si el teléfono pidió menos movimiento
+
+Los puntos de enlace traen un aro que late para que se noten. Es adorno, y una
+animación infinita mantiene despierto al compositor del navegador — justo lo
+contrario de lo que hace el resto del visor. Con **`prefers-reduced-motion`**
+activo (iOS: Accesibilidad › Movimiento › Reducir movimiento) el aro se queda
+quieto y translúcido; el marcador se sigue distinguiendo por su color.
+
+La rueda de "cargando" no se toca: ahí el movimiento sí dice algo —que la foto
+viene en camino— y congelarla se leería como que se trabó.
+
+La regla vive **fuera** de `@layer base`. En Tailwind v4 las capas mandan más
+que la especificidad: dentro de `base`, `.animate-ping` habría perdido siempre
+contra la utilidad del mismo nombre, que vive en `utilities`.
+
 ---
 
 ## 12. Qué se verificó
@@ -731,6 +791,9 @@ valor real.
 | Contextos WebGL: se sueltan al desmontar en vez de acumularse               | ✓         |
 | Parado, el visor no dibuja ni un cuadro (CPU limitada 4x)                   | 0/s ✓     |
 | Las 8 formas de mover la cámara responden con el dibujo a pedido            | ✓         |
+| La rueda hace zoom también encima de un marcador (antes no)                 | ✓         |
+| Todo lo que se toca mide ≥ 44 px, en 11 pantallas y un iPhone SE            | ✓         |
+| Con «reducir movimiento», el aro deja de latir y la rueda sigue girando     | ✓         |
 | Cambio de habitación: el congelamiento bajó de 900 ms a ~600 (170 en gama baja) | ✓     |
 | Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
 
@@ -804,3 +867,9 @@ cualquier hosting.
   completa (`h-[100dvh]`); nunca está fuera de la vista mientras está montado.
   Lo que sí aplicaba de esa idea era no descargar el motor 3D en las pantallas
   que no lo usan, y eso está hecho con `lazy()` (sección 10).
+- **Quitar el vidrio esmerilado (`backdrop-filter`) del HUD.** Parecía caro: un
+  desenfoque del fondo obliga al compositor a releer lo que hay detrás, y los
+  marcadores se recolocan en cada cuadro. La primera medición decía que costaba
+  el doble en el peor cuadro… y estaba mal: había tres navegadores midiendo a la
+  vez. Repetida en limpio, con y sin desenfoque, la diferencia arrastrando es
+  ninguna: mediana 70 contra 69 ms, p95 131 contra 134. Se queda como está.
