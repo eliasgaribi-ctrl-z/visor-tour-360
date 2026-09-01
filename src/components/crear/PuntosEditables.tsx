@@ -1,7 +1,7 @@
 /* oxlint-disable react/immutability -- La posición de cada marcador se escribe
    directo al DOM en cada cuadro, sin pasar por el estado de React: es el mismo
    patrón de HotspotLayer y por la misma razón. */
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import type { Hotspot } from '../../lib/types'
@@ -38,6 +38,21 @@ export function PuntosEditables({
   const contenedor = useRef<HTMLDivElement>(null)
   const nodos = useRef(new Map<string, HTMLElement>())
   const arrastrando = useRef<string | null>(null)
+  /* Los puntos se leen desde un ref y no desde las dependencias del efecto:
+     arrastrar uno cambia el arreglo sesenta veces por segundo, y con él en las
+     dependencias se rearmaba el observador de tamaño en cada movimiento del
+     dedo. */
+  const puntos = useRef(hotspots)
+  // useLayoutEffect y no una asignación suelta: corre antes de pintar, así que
+  // el marcador no se queda un cuadro atrás del dedo.
+  //
+  // Y toca el timbre: el pulso del HUD se duerme cuando la cámara está quieta,
+  // así que un punto recién agregado no se colocaría —quedaría invisible en la
+  // esquina— hasta que el usuario moviera la cámara por su cuenta.
+  useLayoutEffect(() => {
+    puntos.current = hotspots
+    engine.invalidar()
+  }, [engine, hotspots])
   /** Dónde empezó el gesto, para distinguir un toque de un arrastre. */
   const inicio = useRef({ x: 0, y: 0 })
 
@@ -47,18 +62,22 @@ export function PuntosEditables({
 
     let ancho = caja.clientWidth
     let alto = caja.clientHeight
+    /* Al cambiar de tamaño hay que TOCAR EL TIMBRE, no solo anotar la medida.
+       El pulso del HUD se duerme cuando la cámara está quieta, y la primera
+       medición llega justo después de montar: sin este aviso, los marcadores se
+       quedaban sin colocar —invisibles en la esquina— hasta que el usuario
+       moviera la cámara. */
     const observador = new ResizeObserver(() => {
       ancho = caja.clientWidth
       alto = caja.clientHeight
+      engine.invalidar()
     })
     observador.observe(caja)
 
-    let frame = 0
-    const tick = () => {
-      frame = requestAnimationFrame(tick)
+    const desuscribir = engine.suscribirHud(() => {
       if (!ancho || !alto) return
 
-      for (const hotspot of hotspots) {
+      for (const hotspot of puntos.current) {
         const nodo = nodos.current.get(hotspot.id)
         if (!nodo) continue
 
@@ -70,14 +89,13 @@ export function PuntosEditables({
         nodo.style.visibility = 'visible'
         nodo.style.transform = `translate3d(${punto.x}px, ${punto.y}px, 0) translate(-50%, -50%)`
       }
-    }
+    })
 
-    frame = requestAnimationFrame(tick)
     return () => {
-      cancelAnimationFrame(frame)
+      desuscribir()
       observador.disconnect()
     }
-  }, [engine, hotspots])
+  }, [engine])
 
   /**
    * Convierte la posición del dedo a (yaw, pitch) y lo reporta.
@@ -133,14 +151,17 @@ export function PuntosEditables({
             }}
             onPointerUp={(event) => {
               if (arrastrando.current !== hotspot.id) return
-              arrastrando.current = null
               /* Un toque para SELECCIONAR no debe mover el punto. El marcador
                  es una píldora ancha anclada por su centro, así que el dedo cae
                  casi siempre sobre la etiqueta, a decenas de píxeles del ancla:
                  sin este umbral, tocarlo lo mandaba de un salto al dedo y lo
-                 guardaba ahí. */
-              if (!paso(event)) return
-              alMover(event, hotspot.id, true)
+                 guardaba ahí.
+
+                 El orden importa: `alMover` comprueba que el gesto siga vivo,
+                 así que `arrastrando` se limpia DESPUÉS de guardar. Al revés,
+                 la posición final nunca llegaba a grabarse. */
+              if (paso(event)) alMover(event, hotspot.id, true)
+              arrastrando.current = null
             }}
             onPointerCancel={() => {
               arrastrando.current = null

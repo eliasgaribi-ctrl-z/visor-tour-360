@@ -71,6 +71,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
           // Separar los dedos = acercarse = reducir el FOV.
           const ratio = distance / pinchDistance.current
           engine.input.dFov += (1 - ratio) * engine.readout.fov
+          engine.invalidar()
         }
         pinchDistance.current = distance
         return
@@ -91,6 +92,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
 
       engine.input.dragYaw -= (dx / rect.width) * hfov
       engine.input.dragPitch += (dy / rect.height) * fov
+      engine.invalidar()
     },
     [engine, threshold],
   )
@@ -105,6 +107,7 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
   const onWheel = useCallback(
     (event: ReactWheelEvent<HTMLElement>) => {
       engine.input.dFov += Math.sign(event.deltaY) * wheelZoomStep
+      engine.invalidar()
     },
     [engine, wheelZoomStep],
   )

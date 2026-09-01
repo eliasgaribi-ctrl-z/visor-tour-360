@@ -43,12 +43,13 @@ Con el servidor de desarrollo corriendo hay dos páginas de diagnóstico:
 | Página                          | Para qué |
 | ------------------------------- | -------- |
 | `/prueba.html`                  | Abrirla **en el celular**: dice si hay https, cámara, sensores, WebGL y espacio |
-| `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 11) |
+| `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 12) |
 
 Y una tercera, que se corre desde la terminal:
 
 ```bash
-node tools/pruebas/memoria.mjs http://localhost:5173/   # memoria de video (sección 10)
+node tools/pruebas/memoria.mjs http://localhost:5173/       # memoria de video (sección 10)
+node tools/pruebas/rendimiento.mjs http://localhost:5173/   # batería y respuesta (sección 11)
 ```
 
 ---
@@ -151,6 +152,7 @@ src/
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
 tools/pruebas/costura.html      Banco de pruebas de la costura (sección 11)
 tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
+tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
 public/prueba.html              Diagnóstico de compatibilidad del teléfono
 ```
 
@@ -571,7 +573,84 @@ unos renglones de texto.
 
 ---
 
-## 11. Qué se verificó
+## 11. Trabajar poco: batería, calor y tirones
+
+Un recorrido se **mira parado** la mayor parte del tiempo. La persona apunta a
+una esquina, lee la medida de un cuarto, se queda pensando. En todos esos
+segundos el visor no tiene nada nuevo que pintar — y sin embargo el camino
+normal de three.js redibuja la escena sesenta veces por segundo pase lo que
+pase, más un `requestAnimationFrame` por cada pieza del HUD.
+
+Medido con la CPU limitada 4x (que se parece a un celular de gama media):
+
+| Estado                       | Antes                        | Ahora        |
+| ---------------------------- | ---------------------------- | ------------ |
+| Parado, sin tocar nada       | 11 dibujos/s · 43 cuadros/s  | **0 · 0**    |
+| Arrastrando para mirar       | 31 dibujos/s                 | 28 dibujos/s |
+
+O sea: quieto, el visor **no gasta absolutamente nada**, y moviéndose responde
+igual que antes. En un teléfono eso es batería y es calor — y el calor importa
+el doble aquí, porque una captura de una habitación dura dos minutos con la
+cámara encendida, y un teléfono caliente baja la resolución del video a media
+panorámica.
+
+### Cómo funciona: un solo timbre
+
+El canvas usa `frameloop="demand"` y las piezas del HUD comparten un solo pulso
+(`src/lib/tourEngine.ts`). Las dos capas duermen hasta que alguien toca el
+timbre:
+
+```
+joystick / arrastre / zoom / teclado / cambio de cuarto
+        └──> engine.invalidar()  ──┬──> redibuja el canvas 3D
+                                   └──> despierta el pulso del HUD (250 ms)
+
+CameraRig, mientras la cámara se sigue acomodando ──> vuelve a tocar el timbre
+```
+
+El `CameraRig` toca el timbre en cada cuadro mientras el ángulo o el zoom sigan
+persiguiendo a su objetivo, así que la inercia se sostiene sola y se apaga cuando
+de verdad se detiene.
+
+**La regla que hay que recordar**, y está escrita en el propio `tourEngine.ts`:
+todo lo que cambie lo que se ve tiene que llamar a `invalidar()`. Un control
+nuevo que se olvide de hacerlo no truena — simplemente deja la imagen congelada,
+que es peor. Por eso `tools/pruebas/rendimiento.mjs` recorre **todas** las
+formas de mover la cámara y comprueba una por una que respondan.
+
+### Decodificar la foto fuera del hilo principal
+
+Cambiar de habitación congelaba la pantalla **900 ms**. No era la descarga —el
+JPEG pesa un megabyte— sino convertir 4096×2048 píxeles comprimidos en 33 MB de
+mapa de bits, en el mismo hilo que dibuja la interfaz.
+
+Ahora se decodifica con `createImageBitmap`, que trabaja en otro hilo y de paso
+reduce la imagen mientras la decodifica (lo que en un teléfono modesto es
+justamente lo que hace falta). El congelamiento bajó a **~600 ms**, y en un
+aparato de gama baja —que además trabaja a 2048— a **170-460 ms**.
+
+Hay un detalle que puede dejar la panorámica **de cabeza**: WebGL sube las
+imágenes al revés y three lo compensa con `flipY`, pero `flipY` **no funciona
+con un ImageBitmap**. Hay que pedirle el volteo al propio `createImageBitmap`, y
+esa opción no está en todos los navegadores. Como equivocarse no truena —solo
+deja la foto invertida— no se supone: se prueba una vez, con una imagen de dos
+píxeles de la que se conoce el resultado, y si el navegador no la respeta se usa
+el camino de siempre con una etiqueta `<img>`.
+
+### Y no precargar en el peor momento
+
+Las habitaciones vecinas se precargan **1.4 segundos después** de entrar, y
+escalonadas entre sí. Subir una textura a la tarjeta gráfica bloquea el hilo
+principal; hacerlo justo cuando el usuario acaba de entrar le sumaba ese bloqueo
+al de la foto que sí está esperando. Ahora se bajan mientras mira alrededor.
+
+```bash
+node tools/pruebas/rendimiento.mjs http://localhost:5173/
+```
+
+---
+
+## 12. Qué se verificó
 
 ### El visor
 
@@ -650,11 +729,14 @@ valor real.
 | Conversión sensores → (yaw, pitch): 9 posturas verificadas contra sus valores esperados | ✓ |
 | Memoria de video con 7 habitaciones: acotada y liberada al salir            | 160 MB / 0 MB ✓ |
 | Contextos WebGL: se sueltan al desmontar en vez de acumularse               | ✓         |
+| Parado, el visor no dibuja ni un cuadro (CPU limitada 4x)                   | 0/s ✓     |
+| Las 8 formas de mover la cámara responden con el dibujo a pedido            | ✓         |
+| Cambio de habitación: el congelamiento bajó de 900 ms a ~600 (170 en gama baja) | ✓     |
 | Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
 
 ---
 
-## 12. Publicarlo en internet (GitHub Pages)
+## 13. Publicarlo en internet (GitHub Pages)
 
 El visor es una página estática: no necesita servidor, base de datos ni nada que
 se quede corriendo. Se compila una vez y el resultado se sube tal cual.
@@ -684,7 +766,7 @@ cualquier hosting.
 
 ---
 
-## 13. Siguientes pasos naturales
+## 14. Siguientes pasos naturales
 
 - Reordenar habitaciones arrastrando en vez de con flechas.
 - Planta arquitectónica con la posición de cada escena.

@@ -1,7 +1,7 @@
 /* oxlint-disable react/set-state-in-effect -- Commit del fundido: el estado nuevo
    depende de una textura que terminó de cargar fuera de React. */
 import { useEffect, useRef, useState } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useEquirectTexture } from '../../lib/useEquirectTexture'
 
@@ -47,6 +47,7 @@ export function PanoSphere({
   onError,
 }: PanoSphereProps) {
   const { texture, loading, error } = useEquirectTexture(url)
+  const invalidate = useThree((s) => s.invalidate)
 
   const [base, setBase] = useState<THREE.Texture | null>(null)
   const [incoming, setIncoming] = useState<THREE.Texture | null>(null)
@@ -63,6 +64,8 @@ export function PanoSphere({
 
   useEffect(() => {
     if (!texture || texture === base) return
+    // El canvas dibuja a pedido: una foto nueva es justamente un motivo.
+    invalidate()
     if (base === null) {
       // Primera carga: no hay de dónde venir, se muestra directo.
       setBase(texture)
@@ -70,7 +73,7 @@ export function PanoSphere({
     }
     fade.current = 0
     setIncoming(texture)
-  }, [texture, base])
+  }, [texture, base, invalidate])
 
   useFrame((_state, delta) => {
     if (!incoming || !overlayMaterial.current) return
@@ -79,6 +82,9 @@ export function PanoSphere({
     if (fade.current >= 1) {
       setBase(incoming)
       setIncoming(null)
+    } else {
+      // El fundido es una animación: mientras dure, hay que seguir pidiendo.
+      invalidate()
     }
   })
 

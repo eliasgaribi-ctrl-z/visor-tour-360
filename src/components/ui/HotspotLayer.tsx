@@ -15,8 +15,9 @@ export type HotspotLayerProps = {
  * ============================================================================
  *
  * Los marcadores NO viven dentro del <Canvas>: son <button> normales en la capa
- * de overlay. Un solo requestAnimationFrame proyecta cada dirección (yaw, pitch)
- * a coordenadas de pantalla y les escribe el transform.
+ * de overlay. El pulso compartido del HUD proyecta cada dirección (yaw, pitch)
+ * a coordenadas de pantalla y les escribe el transform. Cuando la cámara se
+ * detiene, el pulso se apaga y los marcadores dejan de recalcularse.
  *
  * Ventajas de hacerlo así en lugar de meterlos al 3D:
  *   · se estilizan con Tailwind como cualquier botón (y así se ven "de app",
@@ -44,9 +45,15 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
     // después de escribir transforms forzaría un reflow por frame.
     let width = container.clientWidth
     let height = container.clientHeight
+    /* Al cambiar de tamaño hay que TOCAR EL TIMBRE, no solo anotar la medida.
+       El pulso del HUD se duerme cuando la cámara está quieta, y la primera
+       medición llega justo después de montar: sin este aviso, los marcadores se
+       quedaban sin colocar —invisibles en la esquina— hasta que el usuario
+       moviera la cámara. */
     const observer = new ResizeObserver(() => {
       width = container.clientWidth
       height = container.clientHeight
+      engine.invalidar()
     })
     observer.observe(container)
 
@@ -54,9 +61,7 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
     const euler = new THREE.Euler(0, 0, 0, 'YXZ')
     const quaternion = new THREE.Quaternion()
 
-    let frame = 0
-    const tick = () => {
-      frame = requestAnimationFrame(tick)
+    const desuscribir = engine.suscribirHud(() => {
       if (!width || !height) return
 
       const { yaw, pitch, fov } = engine.readout
@@ -91,13 +96,15 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
         node.style.opacity = '1'
         node.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
       }
-    }
+    })
 
-    frame = requestAnimationFrame(tick)
     return () => {
-      cancelAnimationFrame(frame)
+      desuscribir()
       observer.disconnect()
     }
+    // `hotspots` en las dependencias no es de adorno: al cambiar de habitación
+    // hay que volver a suscribirse (y eso toca el timbre) para colocar los
+    // marcadores nuevos, que si no se quedarían invisibles.
   }, [engine, hotspots])
 
   return (

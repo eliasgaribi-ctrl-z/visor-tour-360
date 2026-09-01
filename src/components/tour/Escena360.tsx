@@ -94,6 +94,12 @@ export function Escena360({
         <ViewerBoundary>
         <Canvas
           flat
+          /* "a pedido": no se dibuja nada hasta que alguien lo pida. Un
+             recorrido se mira parado la mayor parte del tiempo, y redibujar una
+             esfera de 4096 px sesenta veces por segundo para mostrar lo mismo
+             solo calienta el teléfono. Quien mueve algo pide cuadro con
+             `engine.invalidar()`; ver src/lib/tourEngine.ts. */
+          frameloop="demand"
           /* En un teléfono de gama baja se dibuja a 1x (ver src/lib/dispositivo.ts).
              Un 2x en una pantalla de 390×844 son cinco megabytes más de búfer:
              no es lo que tira la pestaña, pero va en el mismo paquete que

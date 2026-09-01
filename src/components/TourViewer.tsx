@@ -73,6 +73,7 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
     (x: number, y: number) => {
       engine.input.axis.x = x
       engine.input.axis.y = y
+      engine.invalidar()
       if (x !== 0 || y !== 0) dismissHint()
     },
     [engine, dismissHint],
@@ -87,6 +88,7 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
       setSceneId(next.id)
       // La cámara viaja al frente de la nueva habitación por el camino corto.
       engine.input.goto = { yaw: arriveYaw ?? next.initialYaw ?? 0, pitch: 0 }
+      engine.invalidar()
     },
     [engine, sceneId, tour.scenes],
   )
@@ -103,6 +105,7 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
   const resetView = useCallback(() => {
     engine.input.goto = { yaw: scene.initialYaw ?? 0, pitch: 0 }
     engine.input.dFov += BASE_FOV - engine.readout.fov
+    engine.invalidar()
   }, [engine, scene.initialYaw])
 
   /** Si nadie toca nada, la pista se retira sola a los 7 segundos. */
@@ -114,21 +117,37 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
   /**
    * Precarga las habitaciones vecinas: el salto se siente instantáneo.
    *
-   * Solo unas cuantas, no todas. Cada panorámica precargada son decenas de
+   * Con dos frenos, los dos medidos:
+   *
+   * SOLO UNAS CUANTAS, no todas. Cada panorámica precargada son decenas de
    * megabytes de memoria de video, y un cuarto con cinco puertas llenaría el
    * caché de golpe con habitaciones a las que quizá nadie va a entrar. Cuántas
-   * se precargan lo decide el aparato (ver src/lib/dispositivo.ts).
+   * lo decide el aparato (ver src/lib/dispositivo.ts).
+   *
+   * Y MÁS TARDE, no ahora mismo. Subir una textura a la tarjeta gráfica bloquea
+   * el hilo principal, y hacerlo justo cuando el usuario acaba de entrar a la
+   * habitación le suma ese bloqueo al de la foto que sí está esperando: tres
+   * subidas encimadas en el peor momento. Esperando a que la escena se asiente,
+   * las vecinas se bajan mientras la persona mira alrededor, que es cuando no
+   * molesta. Se escalonan entre sí por lo mismo.
    */
   useEffect(() => {
+    const vecinas: string[] = []
     let quedan = aparato().precargas
     for (const hotspot of scene.hotspots) {
       if (quedan <= 0) break
       if (hotspot.kind !== 'link') continue
       const target = tour.scenes.find((s) => s.id === hotspot.to)
       if (!target) continue
-      preloadEquirect(target.image)
+      vecinas.push(target.image)
       quedan--
     }
+    if (vecinas.length === 0) return
+
+    const temporizadores = vecinas.map((url, indice) =>
+      window.setTimeout(() => preloadEquirect(url), 1400 + indice * 1200),
+    )
+    return () => temporizadores.forEach(window.clearTimeout)
   }, [scene, tour.scenes])
 
   return (

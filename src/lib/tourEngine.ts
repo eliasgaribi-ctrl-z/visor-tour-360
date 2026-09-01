@@ -60,12 +60,89 @@ export type CameraReadout = {
 export type TourEngine = {
   input: LookInput
   readout: CameraReadout
+  /**
+   * ==========================================================================
+   *  EL TIMBRE: "algo cambió, hay que repintar"
+   * ==========================================================================
+   *
+   * Ni el visor 3D ni el HUD trabajan sesenta veces por segundo pase lo que
+   * pase. Cuando la cámara está quieta no hay nada nuevo que pintar, y seguir
+   * dibujando una esfera de 4096 px —y recalculando la posición de cada
+   * marcador— solo calienta el teléfono y se come la pila. Medido: parado, el
+   * visor pasó de 11 dibujos por segundo a CERO.
+   *
+   * El trato es que quien le escriba algo a `input` tiene que tocar el timbre,
+   * o la imagen se queda congelada. Por eso vive aquí, junto al input: quien
+   * escribe, avisa, en la línea de al lado.
+   *
+   * Una llamada despierta las dos capas y las mantiene despiertas un cuarto de
+   * segundo. Como el `CameraRig` vuelve a tocar el timbre en cada cuadro
+   * mientras la cámara se está acomodando, la animación se sostiene sola hasta
+   * que se detiene de verdad.
+   */
+  invalidar: () => void
+
+  /** La conecta CameraRig: es la que redibuja el canvas 3D. */
+  conectarRender: (fn: (() => void) | null) => void
+
+  /**
+   * Suscribe algo del HUD (la brújula, los marcadores, el badge) al mismo
+   * pulso. Devuelve la función para darse de baja.
+   *
+   * Antes cada pieza tenía su propio requestAnimationFrame, y los tres seguían
+   * corriendo aunque la cámara llevara un minuto sin moverse.
+   *
+   * OJO, la regla que hay que recordar: el pulso se duerme solo. Cualquier cosa
+   * que cambie lo que el HUD dibuja —un punto nuevo, un cambio de tamaño de la
+   * ventana— tiene que llamar a `invalidar()`, o se quedará sin pintar hasta
+   * que alguien mueva la cámara.
+   */
+  suscribirHud: (fn: () => void) => () => void
 }
 
-export const createTourEngine = (): TourEngine => ({
-  input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, goto: null },
-  readout: { yaw: 0, pitch: 0, fov: 75 },
-})
+/** Cuánto se quedan despiertas las dos capas tras un aviso. */
+const DESPIERTO_MS = 250
+
+export const createTourEngine = (): TourEngine => {
+  let render: (() => void) | null = null
+  const hud = new Set<() => void>()
+  let frame = 0
+  let despiertoHasta = 0
+
+  const tick = () => {
+    for (const fn of hud) fn()
+    if (performance.now() < despiertoHasta) {
+      frame = requestAnimationFrame(tick)
+    } else {
+      frame = 0
+    }
+  }
+
+  const invalidar = () => {
+    render?.()
+    despiertoHasta = performance.now() + DESPIERTO_MS
+    if (frame === 0 && hud.size > 0) frame = requestAnimationFrame(tick)
+  }
+
+  return {
+    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, goto: null },
+    readout: { yaw: 0, pitch: 0, fov: 75 },
+    invalidar,
+    conectarRender: (fn) => {
+      render = fn
+    },
+    suscribirHud: (fn) => {
+      hud.add(fn)
+      // Una pasada de inmediato: al montarse hay que colocarse aunque nadie se
+      // haya movido todavía.
+      fn()
+      invalidar()
+      return () => {
+        hud.delete(fn)
+      }
+    },
+  }
+}
 
 const TourEngineContext = createContext<TourEngine | null>(null)
 

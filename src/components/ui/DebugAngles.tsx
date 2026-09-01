@@ -11,9 +11,7 @@ export function DebugAngles() {
   const ref = useRef<HTMLPreElement>(null)
 
   useEffect(() => {
-    let frame = 0
-    const tick = () => {
-      frame = requestAnimationFrame(tick)
+    return engine.suscribirHud(() => {
       const { yaw, pitch, fov } = engine.readout
       if (ref.current) {
         const signedYaw = yaw > 180 ? yaw - 360 : yaw
@@ -22,9 +20,7 @@ export function DebugAngles() {
           `pitch ${pitch.toFixed(1).padStart(5)}°  ` +
           `fov ${fov.toFixed(0).padStart(3)}°`
       }
-    }
-    frame = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(frame)
+    })
   }, [engine])
 
   return (
