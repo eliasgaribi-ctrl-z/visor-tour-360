@@ -64,6 +64,7 @@ export function Inicio({ ir }: InicioProps) {
   const [sePuedeGuardar, setSePuedeGuardar] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [importando, setImportando] = useState(false)
+  const [creando, setCreando] = useState(false)
   const archivo = useRef<HTMLInputElement>(null)
 
   const recargar = useCallback(async () => {
@@ -94,8 +95,20 @@ export function Inicio({ ir }: InicioProps) {
   }, [])
 
   const crear = async (titulo: string) => {
-    const tour = await saveTour(createTour(titulo))
+    // En un celular, el doble toque sobre un botón que no responde al instante
+    // es el gesto normal; sin esto quedan dos recorridos vacíos.
+    if (creando) return
+    setCreando(true)
+    let tour
+    try {
+      tour = await saveTour(createTour(titulo))
+    } catch (e) {
+      setCreando(false)
+      setError(e instanceof Error ? e.message : 'No se pudo crear el recorrido.')
+      return
+    }
     setNuevo(null)
+    setCreando(false)
     // Al primer guardado se pide que el navegador no borre los datos. Tiene que
     // ser dentro de la interacción del usuario para que Chrome lo conceda.
     void requestPersistence()
@@ -226,8 +239,13 @@ export function Inicio({ ir }: InicioProps) {
               maxLength={60}
               ayuda="Es lo que se ve arriba mientras alguien recorre la casa."
             />
-            <Boton tipo="principal" ancho onClick={() => void crear(nuevo)} disabled={!nuevo.trim()}>
-              Crear
+            <Boton
+              tipo="principal"
+              ancho
+              onClick={() => void crear(nuevo)}
+              disabled={!nuevo.trim() || creando}
+            >
+              {creando ? 'Creando…' : 'Crear'}
             </Boton>
           </div>
         </Hoja>

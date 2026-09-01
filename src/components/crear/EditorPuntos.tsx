@@ -358,7 +358,15 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
-                  onClick={() => setBorrador({ ...borrador, kind: 'link' })}
+                  onClick={() =>
+                    setBorrador({
+                      ...borrador,
+                      kind: 'link',
+                      // Sin destino, el punto se guarda apuntando a nada y el
+                      // visor lo descarta: desaparece sin decir por qué.
+                      to: borrador.to || (otras[0]?.id ?? ''),
+                    })
+                  }
                   disabled={otras.length === 0}
                   className={`rounded-2xl border p-3 text-left text-sm disabled:opacity-40 ${
                     borrador.kind === 'link'
@@ -426,7 +434,12 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
                 puedes arrastrar con el dedo.
               </p>
 
-              <Boton tipo="principal" ancho onClick={() => void guardarPunto()}>
+              <Boton
+                tipo="principal"
+                ancho
+                onClick={() => void guardarPunto()}
+                disabled={borrador.kind === 'link' && !borrador.to}
+              >
                 {borrador.nuevo ? 'Agregar' : 'Guardar'}
               </Boton>
               {!borrador.nuevo && (

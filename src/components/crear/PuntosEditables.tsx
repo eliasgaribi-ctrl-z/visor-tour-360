@@ -38,6 +38,8 @@ export function PuntosEditables({
   const contenedor = useRef<HTMLDivElement>(null)
   const nodos = useRef(new Map<string, HTMLElement>())
   const arrastrando = useRef<string | null>(null)
+  /** Dónde empezó el gesto, para distinguir un toque de un arrastre. */
+  const inicio = useRef({ x: 0, y: 0 })
 
   useEffect(() => {
     const caja = contenedor.current
@@ -100,6 +102,10 @@ export function PuntosEditables({
     onMover(id, yaw, pitch, final)
   }
 
+  /** ¿El dedo se movió lo suficiente como para que esto sea un arrastre? */
+  const paso = (event: ReactPointerEvent<HTMLElement>) =>
+    Math.hypot(event.clientX - inicio.current.x, event.clientY - inicio.current.y) > 8
+
   return (
     <div ref={contenedor} className="pointer-events-none absolute inset-0 overflow-hidden">
       {hotspots.map((hotspot) => {
@@ -116,14 +122,25 @@ export function PuntosEditables({
             style={{ visibility: 'hidden' }}
             onPointerDown={(event) => {
               arrastrando.current = hotspot.id
+              inicio.current = { x: event.clientX, y: event.clientY }
               event.currentTarget.setPointerCapture(event.pointerId)
               onSeleccionar(hotspot.id)
             }}
-            onPointerMove={(event) => alMover(event, hotspot.id, false)}
+            onPointerMove={(event) => {
+              if (arrastrando.current !== hotspot.id) return
+              if (!paso(event)) return
+              alMover(event, hotspot.id, false)
+            }}
             onPointerUp={(event) => {
               if (arrastrando.current !== hotspot.id) return
-              alMover(event, hotspot.id, true)
               arrastrando.current = null
+              /* Un toque para SELECCIONAR no debe mover el punto. El marcador
+                 es una píldora ancha anclada por su centro, así que el dedo cae
+                 casi siempre sobre la etiqueta, a decenas de píxeles del ancla:
+                 sin este umbral, tocarlo lo mandaba de un salto al dedo y lo
+                 guardaba ahí. */
+              if (!paso(event)) return
+              alMover(event, hotspot.id, true)
             }}
             onPointerCancel={() => {
               arrastrando.current = null

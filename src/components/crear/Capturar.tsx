@@ -116,6 +116,8 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   /** Ángulo de pantalla con el que se calculó el plan. Girar lo invalida. */
   const [anguloInicial, setAnguloInicial] = useState(0)
   const [girado, setGirado] = useState(false)
+  /** El permiso de sensores se negó a propósito (distinto de "no hay"). */
+  const [permisoNegado, setPermisoNegado] = useState(false)
 
   /* El seguidor se crea UNA sola vez y vive lo que viva la pantalla: si se
      recreara en cada render, el dibujo por cuadro leería un objeto distinto del
@@ -141,13 +143,42 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   /** El lienzo tiene tomas pegadas con distintos campos de visión. */
   const mezclado = useRef(false)
   const disparando = useRef(false)
+  /** Se pone en false al salir: los await de comenzar() lo consultan. */
+  const vivo = useRef(true)
+  /** Cancelador de la vigilancia de la cámara (llamada, silencio, calor). */
+  const vigilancia = useRef<(() => void) | null>(null)
+  /** La URL del fantasma, para poder revocarla sin depender del estado. */
+  const urlFantasma = useRef<string | null>(null)
+
 
   useEffect(() => {
-    void getTour(tourId).then((t) => setTour(t))
+    /* Si el recorrido no está, hay que decirlo ANTES de dejar tomar veinticinco
+       fotos: al final, Guardar no tendría dónde guardarlas y la captura se
+       perdería entera sin un solo mensaje. */
+    void getTour(tourId)
+      .then((t) => {
+        if (t) setTour(t)
+        else
+          setFase({
+            nombre: 'error',
+            mensaje: 'Este recorrido ya no está guardado en este teléfono.',
+            consejo: 'Regresa a Mis recorridos y vuelve a entrar.',
+          })
+      })
+      .catch(() =>
+        setFase({
+          nombre: 'error',
+          mensaje: 'No se pudo abrir el recorrido.',
+          consejo: '¿El navegador está en modo privado?',
+        }),
+      )
   }, [tourId])
 
   /* --------------------------------------------------------------- LIMPIEZA */
   const apagar = useCallback(() => {
+    vivo.current = false
+    vigilancia.current?.()
+    vigilancia.current = null
     cerrarCamara(sesion.current)
     sesion.current = null
     seguidor.stop()
@@ -155,6 +186,10 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     stitcher.current = null
     tomas.current = []
     hechos.current.clear()
+    if (urlFantasma.current) {
+      URL.revokeObjectURL(urlFantasma.current)
+      urlFantasma.current = null
+    }
   }, [seguidor])
 
   useEffect(() => apagar, [apagar])
@@ -176,12 +211,21 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     setCaja({ ancho: caja.clientWidth, alto: caja.clientHeight })
   }, [])
 
+  /** Pinta (o quita) el fantasma de la toma anterior, sin fugar la URL vieja. */
+  const mostrarFantasma = useCallback((blob: Blob | null) => {
+    if (urlFantasma.current) URL.revokeObjectURL(urlFantasma.current)
+    urlFantasma.current = blob ? URL.createObjectURL(blob) : null
+    setFantasma(urlFantasma.current)
+  }, [])
+
   /* ---------------------------------------------------------------- DISPARO */
   const tomarFoto = useCallback(
     (puntoId: string | null, orientacion: THREE.Quaternion, yaw: number, pitch: number) => {
       const v = video.current
       const st = stitcher.current
-      if (!v || !st || disparando.current) return
+      // Devuelve si de verdad se tomó: el modo manual avanza el contador solo
+      // cuando sí hubo foto.
+      if (!v || !st || disparando.current) return false
       disparando.current = true
 
       const lienzo = capturarFotograma(v)
@@ -207,12 +251,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
               pitch,
             })
             setTomadas(tomas.current.length)
-            if (manual) {
-              setFantasma((anterior) => {
-                if (anterior) URL.revokeObjectURL(anterior)
-                return URL.createObjectURL(blob)
-              })
-            }
+            if (manual) mostrarFantasma(blob)
           }
           soltarLienzo(lienzo)
           disparando.current = false
@@ -227,8 +266,9 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       }
       ultimaToma.current = performance.now()
       setCobertura(st.cobertura())
+      return true
     },
-    [manual],
+    [manual, mostrarFantasma],
   )
 
   /* -------------------------------------------------------- BUCLE AUTOMÁTICO */
@@ -334,18 +374,23 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const comenzar = useCallback(async () => {
     setFase({ nombre: 'abriendo' })
     setAviso(null)
+    vivo.current = true
+    setPermisoNegado(false)
 
     if (needsOrientationPermission()) {
       const permiso = await requestOrientationPermission()
-      if (permiso === 'denied') {
-        setAviso(
-          'No diste permiso para los sensores de movimiento. Se puede capturar a mano, pero queda mejor con ellos.',
-        )
-      }
+      if (permiso === 'denied') setPermisoNegado(true)
     }
 
     try {
       let abierta = await abrirCamara()
+      /* Salirse mientras el sistema pide el permiso o abre el lente es normal:
+         el botón × ya está en pantalla. Si no se comprueba, la cámara se queda
+         encendida (con su luz prendida) y el contexto WebGL huérfano. */
+      if (!vivo.current) {
+        cerrarCamara(abierta)
+        return
+      }
       /* Con el permiso ya dado, las etiquetas de las cámaras dejan de venir
          vacías y se puede escoger el lente principal en vez de la gran angular
          o la "virtual", que cambia de lente sola a media captura. */
@@ -368,8 +413,10 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       v.srcObject = abierta.stream
       await v.play().catch(() => undefined)
       await esperarVideo(v)
+      if (!vivo.current) return
 
-      vigilarCamara(abierta, (motivo) => {
+      vigilancia.current?.()
+      vigilancia.current = vigilarCamara(abierta, (motivo) => {
         if (motivo === 'interrumpida') setAviso('La cámara se pausó. Vuelve a la app para seguir.')
         if (motivo === 'terminada') setAviso('La cámara se cerró. Guarda lo que llevas y vuelve a entrar.')
         if (motivo === 'cambio-de-formato') {
@@ -394,6 +441,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       // Se espera un momento a que lleguen lecturas antes de decidir si hay
       // sensores: preguntar si el evento existe no sirve de nada.
       await new Promise((resolve) => setTimeout(resolve, 900))
+      if (!vivo.current) return
 
       const hayS = seguidor.state === 'activo'
       setManual(!hayS)
@@ -457,31 +505,52 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     const lienzo = document.createElement('canvas')
     const ctx = lienzo.getContext('2d', { alpha: false })
 
-    for (const toma of tomas.current) {
-      const bitmap = await createImageBitmap(toma.blob)
-      lienzo.width = bitmap.width
-      lienzo.height = bitmap.height
-      ctx?.drawImage(bitmap, 0, 0)
-      bitmap.close()
+    try {
+      for (const toma of tomas.current) {
+        const bitmap = await createImageBitmap(toma.blob)
+        // Recoser 25 tomas tarda segundos; si el usuario se sale a media
+        // operación, seguir dibujando sobre un costurero ya destruido explota.
+        if (stitcher.current !== st) {
+          bitmap.close()
+          return
+        }
+        lienzo.width = bitmap.width
+        lienzo.height = bitmap.height
+        ctx?.drawImage(bitmap, 0, 0)
+        bitmap.close()
 
-      const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovFinal)
-      const corregida = new THREE.Quaternion()
-        .setFromAxisAngle(Y, baseYaw.current * DEG)
-        .multiply(toma.orientacion)
-      st.agregar({ fuente: lienzo, orientacion: corregida, hfov, vfov, brillo: toma.brillo })
+        const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovFinal)
+        const corregida = new THREE.Quaternion()
+          .setFromAxisAngle(Y, baseYaw.current * DEG)
+          .multiply(toma.orientacion)
+        st.agregar({ fuente: lienzo, orientacion: corregida, hfov, vfov, brillo: toma.brillo })
+      }
+      setCobertura(st.cobertura())
+    } finally {
+      soltarLienzo(lienzo)
     }
-    soltarLienzo(lienzo)
-    setCobertura(st.cobertura())
   }, [])
 
   const deshacer = useCallback(async () => {
+    /* La toma más reciente puede seguir comprimiéndose a JPEG: sin esperarla,
+       el pop() se lleva la ANTERIOR y la que se quería borrar se queda. */
+    for (let intento = 0; disparando.current && intento < 40; intento++) {
+      await new Promise((seguir) => setTimeout(seguir, 50))
+    }
+
     const ultima = tomas.current.pop()
     if (!ultima) return
     if (ultima.puntoId) {
       hechos.current.delete(ultima.puntoId)
       setCubiertos(hechos.current.size)
+      // A mano, el contador de pasos ES el avance: si no retrocede, el punto
+      // que se acaba de deshacer no se vuelve a fotografiar nunca.
+      if (manual) setPasoManual((n) => Math.max(0, n - 1))
     }
     setTomadas(tomas.current.length)
+    // El fantasma tiene que volver a ser la foto que ahora sí es la última.
+    if (manual) mostrarFantasma(tomas.current[tomas.current.length - 1]?.blob ?? null)
+
     setFase({
       nombre: 'procesando',
       mensaje:
@@ -489,10 +558,14 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           ? 'Quitando la última toma y volviendo a unir las demás. Tarda unos segundos…'
           : 'Quitando la última toma…',
     })
-    await recoser(fovLargo.current)
-    mezclado.current = false
+    try {
+      await recoser(fovLargo.current)
+      mezclado.current = false
+    } catch {
+      setAviso('No se pudo volver a unir las fotos. Puedes seguir tomando o terminar así.')
+    }
     setFase({ nombre: 'capturando' })
-  }, [recoser])
+  }, [manual, mostrarFantasma, recoser])
 
   const terminar = useCallback(async () => {
     const st = stitcher.current
@@ -517,19 +590,30 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       })
       fovLargo.current = calibrado
       mezclado.current = false
-      await recoser(calibrado)
+      try {
+        await recoser(calibrado)
+      } catch {
+        // Si no se pudo recoser, lo que ya está en el lienzo sigue sirviendo.
+        setAviso('No se pudo afinar la unión de las fotos; la panorámica se guarda como está.')
+      }
     }
 
     setFase({ nombre: 'procesando', mensaje: 'Armando la foto 360…' })
     try {
       const foto = await st.exportar(0.86)
-      const bitmap = await createImageBitmap(foto)
+
+      /* La miniatura se saca pidiéndole al navegador que decodifique la foto YA
+         reducida. Decodificarla completa aquí sumaría 33 MB de bitmap más otro
+         tanto de canvas justo en el peor momento de memoria de toda la app:
+         acaban de convivir el lienzo del costurero, su lectura de píxeles y el
+         JPEG recién armado. */
+      const chico = await createImageBitmap(foto, { resizeWidth: 320, resizeQuality: 'high' })
       const lienzo = document.createElement('canvas')
-      lienzo.width = bitmap.width
-      lienzo.height = bitmap.height
-      lienzo.getContext('2d', { alpha: false })?.drawImage(bitmap, 0, 0)
-      bitmap.close()
-      const mini = await miniatura(lienzo)
+      lienzo.width = chico.width
+      lienzo.height = chico.height
+      lienzo.getContext('2d', { alpha: false })?.drawImage(chico, 0, 0)
+      chico.close()
+      const mini = await miniatura(lienzo, 320)
       soltarLienzo(lienzo)
 
       const existente = sceneId ? tour?.scenes.find((s) => s.id === sceneId) : undefined
@@ -546,6 +630,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
 
   const guardar = useCallback(async () => {
     if (fase.nombre !== 'nombrar' || !tour) return
+    const rescate = fase
     setFase({ nombre: 'procesando', mensaje: 'Guardando…' })
     try {
       if (sceneId) {
@@ -574,11 +659,17 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       apagar()
       ir({ nombre: 'puntos', tourId: tour.id, sceneId: scene.id })
     } catch (error) {
-      setFase({
-        nombre: 'error',
-        mensaje: 'No se pudo guardar la habitación.',
-        consejo: error instanceof Error ? error.message : undefined,
-      })
+      /* CRÍTICO: se vuelve a la hoja de nombrar con la MISMA foto en la mano.
+         Mandar esto a la pantalla de error tiraría el objeto de la fase, o sea
+         la panorámica recién armada: veinticinco fotos y dos minutos de trabajo
+         perdidos por un teléfono sin espacio. Así el usuario puede hacer lugar
+         y volver a tocar Guardar. */
+      setFase(rescate)
+      setAviso(
+        error instanceof Error && /quota|space|almacen/i.test(error.message)
+          ? 'No hay espacio en el teléfono. Borra algo y vuelve a tocar Guardar; la foto no se ha perdido.'
+          : 'No se pudo guardar. Vuelve a tocar Guardar; la foto no se ha perdido.',
+      )
     }
   }, [apagar, fase, ir, nombre, sceneId, tour])
 
@@ -599,8 +690,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     const yaw = usaSensor ? seguidor.reading.yaw : punto.yaw + baseYaw.current
     const pitch = usaSensor ? seguidor.reading.pitch : punto.pitch
 
-    tomarFoto(punto.id, orientacion, yaw, pitch)
-    setPasoManual((n) => n + 1)
+    if (tomarFoto(punto.id, orientacion, yaw, pitch)) setPasoManual((n) => n + 1)
   }, [pasoManual, seguidor, tomarFoto])
 
   /* ------------------------------------------------------------------ VISTAS */
@@ -806,11 +896,19 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
               panel le estaría comiendo media pantalla a la cámara. */}
           {estadoSensor === 'no-soportado' && tomadas === 0 && (
             <div className="pointer-events-auto">
-              <Aviso tono="alerta" titulo="Sin sensores de movimiento">
-                Este teléfono no está diciendo hacia dónde apunta, así que la foto se toma a mano:
-                dispara, gira hasta que la imagen de fondo empate con lo que ves, y vuelve a
-                disparar.
-              </Aviso>
+              {permisoNegado ? (
+                <Aviso tono="alerta" titulo="Dijiste que no a los sensores">
+                  Sin ellos, el teléfono no sabe hacia dónde apunta y las fotos se toman a mano.
+                  Para que se tomen solas: recarga la página, toca de nuevo <b>Abrir la cámara</b> y
+                  acepta el permiso de movimiento y orientación.
+                </Aviso>
+              ) : (
+                <Aviso tono="alerta" titulo="Sin sensores de movimiento">
+                  Este teléfono no está diciendo hacia dónde apunta, así que la foto se toma a mano:
+                  dispara, gira hasta que la imagen de fondo empate con lo que ves, y vuelve a
+                  disparar.
+                </Aviso>
+              )}
             </div>
           )}
 
@@ -856,6 +954,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           onCerrar={() => setFase({ nombre: 'capturando' })}
         >
           <div className="flex flex-col gap-3">
+            {aviso && <Aviso tono="error">{aviso}</Aviso>}
             {fase.cobertura < 0.75 && (
               <Aviso tono="alerta">
                 Quedaron huecos sin fotografiar ({Math.round(fase.cobertura * 100)} % cubierto). Se

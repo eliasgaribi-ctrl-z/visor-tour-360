@@ -8,16 +8,34 @@
  */
 import { Component, type ReactNode } from 'react'
 
-/** ¿Este navegador puede darnos WebGL ahora mismo? */
+let deteccion: { ok: boolean; motivo?: string } | null = null
+
+/**
+ * ¿Este navegador puede darnos WebGL ahora mismo?
+ *
+ * El contexto de prueba se SUELTA en cuanto se responde, y la respuesta se
+ * guarda: un celular aguanta pocos contextos WebGL vivos a la vez (ocho o
+ * dieciséis), y esta función se llama en cada montaje del visor y del editor.
+ * Dejar uno abandonado en cada llamada se lleva por delante justo el que la
+ * escena necesita.
+ */
 export function detectWebGL(): { ok: boolean; motivo?: string } {
+  if (deteccion) return deteccion
   try {
     const canvas = document.createElement('canvas')
     const gl = canvas.getContext('webgl2') ?? canvas.getContext('webgl')
-    if (!gl) return { ok: false, motivo: 'el navegador no entregó un contexto WebGL' }
-    return { ok: true }
+    if (!gl) {
+      deteccion = { ok: false, motivo: 'el navegador no entregó un contexto WebGL' }
+      return deteccion
+    }
+    gl.getExtension('WEBGL_lose_context')?.loseContext()
+    canvas.width = 0
+    canvas.height = 0
+    deteccion = { ok: true }
   } catch (e) {
-    return { ok: false, motivo: e instanceof Error ? e.message : String(e) }
+    deteccion = { ok: false, motivo: e instanceof Error ? e.message : String(e) }
   }
+  return deteccion
 }
 
 export function ViewerFallback({ motivo }: { motivo?: string }) {

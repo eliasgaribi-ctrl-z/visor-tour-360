@@ -203,6 +203,11 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
   const tourId = newId('tour')
   const escenas: StoredScene[] = []
   const blobs: { id: string; blob: Blob }[] = []
+  /* El archivo viene de fuera y pudo editarse a mano. Dos habitaciones con el
+     mismo id romperían las listas de React y harían que un punto llevara a la
+     habitación equivocada, así que la segunda se renombra. */
+  const idsVistos = new Set<string>()
+  const renombradas = new Map<string, string>()
 
   for (const escena of manifiesto.recorrido.scenes) {
     const foto = porNombre.get(escena.archivo)
@@ -218,8 +223,13 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
       blobs.push({ id: thumbId, blob: new Blob([mini], { type: 'image/jpeg' }) })
     }
 
+    const idOriginal = typeof escena.id === 'string' ? escena.id : ''
+    const id = idOriginal && !idsVistos.has(idOriginal) ? idOriginal : newId('esc')
+    if (id !== idOriginal && idOriginal) renombradas.set(idOriginal, id)
+    idsVistos.add(id)
+
     escenas.push({
-      id: escena.id,
+      id,
       name: escena.name || 'Habitación',
       imageId,
       thumbId,
@@ -233,6 +243,15 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
 
   if (escenas.length === 0) {
     throw new PaqueteError('El archivo no traía ninguna foto utilizable.')
+  }
+
+  // Si hubo que renombrar, los puntos que llevaban a esas habitaciones también.
+  if (renombradas.size > 0) {
+    for (const escena of escenas) {
+      escena.hotspots = escena.hotspots.map((h) =>
+        h.kind === 'link' && renombradas.has(h.to) ? { ...h, to: renombradas.get(h.to)! } : h,
+      )
+    }
   }
 
   const ahora = Date.now()
@@ -276,7 +295,13 @@ export function entregarArchivo(blob: Blob, nombre: string): 'compartido' | 'des
   const file = new File([blob], nombre, { type: 'application/zip' })
 
   if (navigator.canShare?.({ files: [file] })) {
-    void navigator.share({ files: [file], title: nombre }).catch(() => descargar(blob, nombre))
+    void navigator.share({ files: [file], title: nombre }).catch((error: unknown) => {
+      // Cancelar la hoja de compartir NO es un fallo: descargar el archivo
+      // "por si acaso" le deja al usuario en Descargas algo que decidió no
+      // mandar.
+      if ((error as Error)?.name === 'AbortError') return
+      descargar(blob, nombre)
+    })
     return 'compartido'
   }
 

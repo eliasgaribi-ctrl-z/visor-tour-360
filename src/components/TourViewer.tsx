@@ -206,9 +206,17 @@ export function TourViewer({ tour, debug = import.meta.env.DEV, accion }: TourVi
 
         {failed && (
           <div className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center">
-            <div>
-              <p className="text-sm font-semibold text-ink-50">No se pudo cargar la panorámica</p>
-              <p className="mt-1 text-xs text-ink-200">{scene.image}</p>
+            <div className="max-w-xs">
+              <p className="text-sm font-semibold text-ink-50">
+                No se pudo cargar la foto de {scene.name}
+              </p>
+              {/* La ruta interna (una URL blob: de cuarenta caracteres) no le
+                  dice nada a nadie; lo que sirve es qué hacer. */}
+              <p className="mt-2 text-xs leading-relaxed text-ink-200">
+                Si el recorrido lo hiciste en este teléfono, vuelve a tomar la foto de esa
+                habitación desde el editor. Si tienes el archivo <b>.tour</b> que exportaste,
+                ábrelo otra vez.
+              </p>
             </div>
           </div>
         )}

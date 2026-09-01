@@ -94,6 +94,11 @@ export async function tx<T>(
     transaction.onerror = () => reject(transaction.error ?? new Error('Transacción fallida'))
     transaction.onabort = () => reject(transaction.error ?? new Error('Transacción cancelada'))
   })
+  /* Si `run` lanza (por ejemplo al llenarse el almacenamiento), salimos sin
+     llegar al `await done`, y la transacción aborta después con nadie
+     escuchando: eso es un "unhandled rejection" que ensucia la consola y en
+     algunos navegadores tumba la página. El error real ya viaja por `run`. */
+  done.catch(() => undefined)
 
   const result = await run(transaction)
   // En readonly no hace falta esperar el commit, pero esperarlo siempre evita

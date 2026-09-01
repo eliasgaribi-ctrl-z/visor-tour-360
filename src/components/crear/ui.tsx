@@ -196,13 +196,16 @@ export function Hoja({
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
-      <button
-        type="button"
-        aria-label="Cerrar"
-        onClick={onCerrar}
-        className="absolute inset-0 cursor-default"
-      />
-      <div className="hud-glass relative w-full max-w-md rounded-hud p-4">
+      {/* El fondo cierra la hoja al tocarlo, pero NO es un botón con nombre:
+          tener dos controles llamados "Cerrar" confunde a un lector de pantalla
+          y a cualquiera que navegue con teclado. La × de adentro es la que
+          cuenta. */}
+      <div aria-hidden onClick={onCerrar} className="absolute inset-0" />
+      {/* max-h + scroll: la hoja de editar un punto pasa de 500 px de alto, y
+          en un teléfono chico con el teclado abierto no cabe. Sin esto, el
+          botón de guardar queda fuera de la pantalla y no hay forma de llegar. */}
+      <div className="hud-glass relative max-h-[85dvh] w-full max-w-md overflow-y-auto
+                      overscroll-contain rounded-hud p-4">
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/25" />
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold text-ink-50">{titulo}</h2>

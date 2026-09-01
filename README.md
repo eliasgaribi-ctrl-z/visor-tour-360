@@ -545,7 +545,6 @@ valor real.
 | ----------------------------------------------------------------- | --------- |
 | Crear recorrido → subir foto → guardar → colocar punto → ver       | ✓         |
 | Punto de enlace entre dos habitaciones                            | ✓         |
-| Reemplazar la foto de una habitación conservando nombre y puntos  | ✓         |
 | Exportar `.tour` y volver a importarlo (ida y vuelta completa)     | ✓         |
 | ZIP escrito por el visor, abierto con `unzip` y con `zipfile`      | CRC ✓, nombres UTF-8 ✓ |
 | ZIP hecho por otra herramienta con deflate, leído por el visor     | ✓         |
@@ -555,6 +554,8 @@ valor real.
 | Cobertura del plan de fotos: 16 formas de encuadre × 1 M de direcciones     | 100.0000 % ✓ |
 | El recorrido importado conserva habitaciones, nombres y puntos              | ✓         |
 | El sitio publicado, servido desde un subdirectorio como en GitHub Pages     | ✓         |
+| Tocar un punto lo selecciona sin moverlo; arrastrarlo sí lo mueve           | ✓         |
+| Reemplazar la foto de una habitación conservando su nombre y sus puntos     | ✓         |
 | Conversión sensores → (yaw, pitch): 9 posturas verificadas contra sus valores esperados | ✓ |
 | Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
 

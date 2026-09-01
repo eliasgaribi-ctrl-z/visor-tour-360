@@ -37,7 +37,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const [tour, setTour] = useState<StoredTour | null | 'no-existe'>(null)
   const [editando, setEditando] = useState<StoredScene | null>(null)
   const [agregando, setAgregando] = useState(false)
-  const [datos, setDatos] = useState(false)
+  /* El formulario del recorrido trabaja sobre su PROPIO borrador. Editar el
+     estado compartido haría que cerrar la hoja sin guardar dejara el cambio a
+     medio aplicar: visible en pantalla y persistido con la siguiente acción. */
+  const [datos, setDatos] = useState<{ title: string; subtitle: string } | null>(null)
+  const [confirmarBorrado, setConfirmarBorrado] = useState<StoredScene | null>(null)
   const [paquete, setPaquete] = useState<
     { estado: 'armando' } | { estado: 'listo'; blob: Blob; nombre: string } | { estado: 'error'; mensaje: string } | null
   >(null)
@@ -223,7 +227,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           </>
         )}
 
-        <Boton tipo="fantasma" ancho onClick={() => setDatos(true)}>
+        <Boton
+          tipo="fantasma"
+          ancho
+          onClick={() => setDatos({ title: tour.title, subtitle: tour.subtitle ?? '' })}
+        >
           Cambiar el nombre del recorrido
         </Boton>
       </div>
@@ -256,30 +264,61 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
       )}
 
       {datos && (
-        <Hoja titulo="Datos del recorrido" onCerrar={() => setDatos(false)}>
+        <Hoja titulo="Datos del recorrido" onCerrar={() => setDatos(null)}>
           <div className="flex flex-col gap-3">
             <Campo
               etiqueta="Nombre"
-              valor={tour.title}
-              onChange={(title) => setTour({ ...tour, title })}
+              valor={datos.title}
+              onChange={(title) => setDatos({ ...datos, title })}
               maxLength={60}
             />
             <Campo
               etiqueta="Renglón de abajo (opcional)"
-              valor={tour.subtitle ?? ''}
-              onChange={(subtitle) => setTour({ ...tour, subtitle })}
+              valor={datos.subtitle}
+              onChange={(subtitle) => setDatos({ ...datos, subtitle })}
               placeholder="3 recámaras · 120 m²"
               maxLength={80}
             />
             <Boton
               tipo="principal"
               ancho
+              disabled={!datos.title.trim()}
               onClick={async () => {
-                await guardar(tour)
-                setDatos(false)
+                await guardar({
+                  ...tour,
+                  title: datos.title.trim(),
+                  subtitle: datos.subtitle.trim() || undefined,
+                })
+                setDatos(null)
               }}
             >
               Guardar
+            </Boton>
+          </div>
+        </Hoja>
+      )}
+
+      {confirmarBorrado && (
+        <Hoja titulo="¿Borrar la habitación?" onCerrar={() => setConfirmarBorrado(null)}>
+          <p className="mb-4 text-sm text-ink-200">
+            Se va a borrar <b className="text-ink-50">{confirmarBorrado.name}</b> con su foto y sus
+            puntos. Los puntos de otras habitaciones que llevaban aquí también se quitan. No hay
+            manera de deshacerlo.
+          </p>
+          <div className="flex gap-2">
+            <Boton ancho onClick={() => setConfirmarBorrado(null)}>
+              Mejor no
+            </Boton>
+            <Boton
+              tipo="peligro"
+              ancho
+              onClick={async () => {
+                const escena = confirmarBorrado
+                setConfirmarBorrado(null)
+                await borrarEscena(escena)
+              }}
+            >
+              Sí, borrar
             </Boton>
           </div>
         </Hoja>
@@ -337,7 +376,15 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                 Que el recorrido empiece aquí
               </Boton>
             )}
-            <Boton tipo="peligro" ancho onClick={() => void borrarEscena(editando)}>
+            <Boton
+              tipo="peligro"
+              ancho
+              onClick={() => {
+                const escena = tour.scenes.find((s) => s.id === editando.id)
+                setEditando(null)
+                if (escena) setConfirmarBorrado(escena)
+              }}
+            >
               Borrar la habitación
             </Boton>
           </div>

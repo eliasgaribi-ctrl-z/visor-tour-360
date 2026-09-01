@@ -64,6 +64,10 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
   const galeria = useRef<HTMLInputElement>(null)
   const camara = useRef<HTMLInputElement>(null)
   const urlPrevia = useRef<string | null>(null)
+  /** El lienzo de la foto original, para poder soltarlo al salir. */
+  const lienzoOrigen = useRef<HTMLCanvasElement | null>(null)
+  /** Contador de vistas previas: la que llega tarde ya no manda. */
+  const generacion = useRef(0)
 
   useEffect(() => {
     void getTour(tourId).then(setTour)
@@ -71,9 +75,16 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
 
   /* Al salir de la pantalla se sueltan las dos cosas caras: la URL de la vista
      previa y el contexto WebGL que usa la proyección de una foto normal. */
+  /* Al salir se sueltan las tres cosas caras: la URL de la vista previa, el
+     contexto WebGL de la proyección y el lienzo de la foto original — que para
+     una foto de iPhone de 4032×3024 son unos 48 MB. */
   useEffect(
     () => () => {
+      generacion.current++
       if (urlPrevia.current) URL.revokeObjectURL(urlPrevia.current)
+      urlPrevia.current = null
+      if (lienzoOrigen.current) soltarLienzo(lienzoOrigen.current)
+      lienzoOrigen.current = null
       liberarProyector()
     },
     [],
@@ -84,6 +95,8 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
     setTrabajando(true)
     try {
       const [lienzo, metadatos] = await Promise.all([leerImagen(file), leerGPano(file)])
+      if (lienzoOrigen.current) soltarLienzo(lienzoOrigen.current)
+      lienzoOrigen.current = lienzo
       setOrigen(lienzo)
       setGpano(metadatos)
       const adivinado = adivinarTipo(lienzo.width, lienzo.height, metadatos)
@@ -114,6 +127,11 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
      deslizador tardaría segundos. A 1024 px se ve igual de bien para decidir. */
   const construirPrevia = useCallback(async () => {
     if (!origen) return
+    // Dos construcciones encimadas (el deslizador se mueve mientras una corre)
+    // terminarían en orden impredecible y la vista previa se quedaría mostrando
+    // los parámetros viejos. Gana la última que empezó.
+    const mia = ++generacion.current
+
     const lienzo = await aEquirectangular(origen, {
       tipo,
       gpano,
@@ -123,6 +141,8 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
     })
     const blob = await aJpeg(lienzo, 0.8)
     soltarLienzo(lienzo)
+
+    if (mia !== generacion.current) return
     if (urlPrevia.current) URL.revokeObjectURL(urlPrevia.current)
     urlPrevia.current = URL.createObjectURL(blob)
     setPrevia(urlPrevia.current)
@@ -341,7 +361,9 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
               <Boton
                 ancho
                 onClick={() => {
+                  generacion.current++
                   soltarLienzo(origen)
+                  lienzoOrigen.current = null
                   setOrigen(null)
                   setPrevia(null)
                 }}
