@@ -316,6 +316,15 @@ const PITCH_MAXIMO = 6
 /** Hasta dónde puede estar ladeado el teléfono. */
 const ROLL_MAXIMO = 8
 
+/**
+ * Por debajo de esta correlación la medida no es una medida.
+ *
+ * Es el mismo número para calibrar el lente y para medir un giro, y a propósito:
+ * las dos cosas se apoyan en el mismo pico de la misma correlación, así que si
+ * un cuarto de paredes lisas no da para una, tampoco da para la otra.
+ */
+const CONFIANZA_MINIMA = 0.45
+
 export function estimarFovConGiro(params: {
   anterior: Float32Array
   actual: Float32Array
@@ -390,7 +399,7 @@ export function estimarFovConGiro(params: {
     Math.floor(width * 0.45),
     VENTANA_CALIBRACION,
   )
-  if (confianza < 0.45 || Math.abs(pixeles) < 1) return null
+  if (confianza < CONFIANZA_MINIMA || Math.abs(pixeles) < 1) return null
 
   // Un giro a la derecha mueve la imagen a la izquierda: los signos se cancelan.
   const focal = Math.abs(pixeles) / (Math.tan(giroEfectivo * DEG) * Math.cos(roll * DEG))
@@ -402,6 +411,132 @@ export function estimarFovConGiro(params: {
   // existe se rechazara por medio grado de error de medición.
   if (hfov < 34 || hfov > 110) return null
   return hfov
+}
+
+/**
+ * ============================================================================
+ *  MEDIR EL GIRO CON LA IMAGEN, PARA CERRAR EL ANILLO
+ * ============================================================================
+ *
+ * Es la cuenta de `estimarFovConGiro` al revés. Allá el giroscopio era la
+ * referencia y el resultado era el lente; aquí el lente ya se conoce y lo que
+ * se quiere saber es cuánto giró el teléfono DE VERDAD entre dos tomas:
+ *
+ *   Δyaw = atan( corrimiento_px / f )
+ *
+ * ── Para qué ────────────────────────────────────────────────────────────────
+ *
+ * El costurero confía al cien por ciento en la orientación que reportan los
+ * sensores, que viene del evento `deviceorientation` RELATIVO. Se prefiere el
+ * relativo por una buena razón (el magnetómetro brinca 5 a 10 grados junto a un
+ * marco de acero, y eso partiría la panorámica por la mitad), pero el precio es
+ * que el yaw se va a la deriva.
+ *
+ * En el centro de la panorámica esa deriva no se nota, porque cada toma se pega
+ * junto a su vecina y el error entre vecinas es diminuto. Donde sí aparece es en
+ * el CIERRE: la última foto de la vuelta se pega junto a la primera, y ahí la
+ * deriva de los 360 grados enteros sale de golpe como una pared partida. Con
+ * esta función se puede medir el error acumulado —la suma de los Δyaw medidos
+ * de toda la vuelta tiene que dar 360— y repartirlo entre las tomas.
+ *
+ * ── Qué significa el signo ──────────────────────────────────────────────────
+ *
+ * Positivo = el teléfono giró a la DERECHA, que es el mismo sentido en el que
+ * crece el yaw del proyecto (`anglesOf` en ./orientation.ts: yaw = atan2(x, −z),
+ * y a la derecha del frente está +x). Un giro a la derecha corre el contenido de
+ * la imagen hacia la izquierda, así que el corrimiento en píxeles sale con el
+ * signo contrario al del ángulo; de ahí el menos de la fórmula.
+ *
+ * Esa cadena de signos es la única parte que no se puede comprobar sin un
+ * teléfono: depende de que el fotograma no venga espejeado y de que el eje X de
+ * la imagen apunte a la derecha del aparato. Por eso existe `esperado`: si se le
+ * pasa lo que dice el giroscopio, la medición que no se parezca a él se descarta
+ * en vez de aplicarse al revés. Con el signo invertido, TODAS las mediciones se
+ * caerían por ahí y el costurero seguiría trabajando como hoy —peinado, pero
+ * nunca partido.
+ *
+ * ── Por qué la franja central y no la imagen entera ─────────────────────────
+ *
+ * Al girar, cada columna se corre distinto (eso es la perspectiva) y la
+ * correlación devuelve el promedio de todas, que es mayor que el corrimiento del
+ * centro, que es el que cumple la fórmula. Con la imagen completa el mismo
+ * lente de 66° medía entre 61° y 65° (ver el comentario de
+ * `desplazamientoHorizontal`), o sea que el promedio se pasa como un 4 %: en un
+ * giro de 30° serían más de 1° de error inventado por pareja, mucho más que la
+ * deriva que se está tratando de corregir. Por eso se mide la misma franja
+ * central del 40 % que usa la calibración.
+ */
+
+export type YawMedido = {
+  /** Grados que giró el teléfono. Positivo = a la derecha. */
+  grados: number
+  /** Correlación del pico, −1…1. Quien llama puede exigir más que el mínimo. */
+  confianza: number
+}
+
+export function deltaYawMedido(params: {
+  anterior: Float32Array
+  actual: Float32Array
+  width: number
+  height: number
+  /** Distancia focal EN PÍXELES DE ESTA imagen reducida: width / (2·tan(hfov/2)). */
+  focalPx: number
+  /**
+   * Lo que dice el giroscopio para esta pareja, si se sabe. No se usa para
+   * calcular nada: solo para tirar la medición que se aleje demasiado, que es
+   * la firma de una correlación enganchada a un pico falso.
+   */
+  esperado?: number | null
+  /** Cuánto puede alejarse la medida del giroscopio. Más que esto, se descarta. */
+  tolerancia?: number
+  /** Inclinación del eje óptico. El giro del mundo barre menos delante del lente. */
+  pitch?: number
+  /** Ladeo del teléfono: con ladeo, el corrimiento deja de ser horizontal. */
+  roll?: number
+}): YawMedido | null {
+  const { anterior, actual, width, height, focalPx } = params
+  const pitch = params.pitch ?? 0
+  const roll = params.roll ?? 0
+  const tolerancia = params.tolerancia ?? 10
+
+  if (!Number.isFinite(focalPx) || focalPx <= 0) return null
+  // Fuera de este rango la corrección por inclinación divide entre un coseno
+  // chiquito y multiplica el error de medición en vez de corregirlo. Las tomas
+  // del anillo del horizonte, que son las que cierran la vuelta, están muy
+  // dentro.
+  if (Math.abs(pitch) > 60 || Math.abs(roll) > 45) return null
+
+  const maximo = Math.floor(width * 0.45)
+  if (maximo < 1) return null
+
+  const { pixeles, confianza } = desplazamientoHorizontal(
+    anterior,
+    actual,
+    width,
+    height,
+    maximo,
+    VENTANA_CALIBRACION,
+  )
+  if (confianza < CONFIANZA_MINIMA) return null
+
+  /* El pico pegado al borde de la búsqueda no es un pico: es el mejor de los
+     corrimientos que se alcanzaron a probar, y el de verdad se quedó afuera.
+     Pasa cuando dos tomas están más separadas de lo que el traslape permite
+     medir, y devolverlo sería jurar que el giro fue exactamente el máximo. */
+  if (Math.abs(pixeles) >= maximo - 1) return null
+
+  // Al revés que en la calibración: allá se despejaba f, aquí el ángulo.
+  const anguloEfectivo = Math.atan(-pixeles / (focalPx * Math.cos(roll * DEG))) / DEG
+  const grados = anguloEfectivo / Math.cos(pitch * DEG)
+
+  if (!Number.isFinite(grados)) return null
+
+  const { esperado } = params
+  if (typeof esperado === 'number' && Number.isFinite(esperado)) {
+    if (Math.abs(grados - esperado) > tolerancia) return null
+  }
+
+  return { grados, confianza }
 }
 
 /** Promedio robusto de varias estimaciones: la mediana aguanta un dato loco. */
