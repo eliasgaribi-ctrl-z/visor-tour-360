@@ -16,7 +16,12 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Recorrido virtual 360</title>
   </head>
-  <body style="margin: 0; background: #0b0f19">
+  <!-- El fondo va aquí en línea, y no solo en index.css, porque tiene que estar
+       ANTES de que la hoja cargue: sin él se ve un flash blanco. Y como un estilo
+       inline gana a cualquier hoja, la regla de index.css nunca llegaba a aplicar.
+       Con la variable, la marca de una inmobiliaria puede cambiarlo y el valor de
+       respaldo sigue siendo el mismo de siempre. Ver src/lib/marca.ts. -->
+  <body style="margin: 0; background: var(--fondo-app, #0b0f19)">
     <div id="root"></div>
 
     <!-- ─────────────────────────────────────────────────────────────────────

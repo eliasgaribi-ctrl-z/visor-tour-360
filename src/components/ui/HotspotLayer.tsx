@@ -138,14 +138,18 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
         >
           <span
             className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[13px] ${
-              hotspot.kind === 'link' ? 'bg-brand-500 text-black' : 'bg-white/85 text-black'
+              hotspot.kind === 'link' ? 'bg-brand-500 text-[var(--tinta-marca,#000)]' : 'bg-white/85 text-black'
             }`}
           >
             {hotspot.kind === 'link' ? '→' : 'i'}
           </span>
           <span className="whitespace-nowrap drop-shadow">{hotspot.label}</span>
+          {/* Plano + `opacity-20` y no `bg-brand-500/20`: la variante con alfa
+              compila a un rgba() con el color QUEMADO como respaldo para Safari
+              anterior a la 16.2, así que con una marca ajena este aro se quedaba
+              ámbar. La opacidad aparte sí respeta el token. Ver lib/marca.ts. */}
           {hotspot.kind === 'link' && (
-            <span className="absolute -inset-1 -z-10 animate-ping rounded-full bg-brand-500/20" />
+            <span className="absolute -inset-1 -z-10 animate-ping rounded-full bg-brand-500 opacity-20" />
           )}
         </button>
       ))}

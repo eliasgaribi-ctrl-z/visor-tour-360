@@ -105,7 +105,7 @@ export default function App() {
       type="button"
       onClick={alMenu}
       className="hud-glass pointer-events-auto flex h-16 shrink-0 items-center gap-2 rounded-hud
-                 bg-brand-500 px-4 text-sm font-semibold text-black active:bg-brand-600"
+                 bg-brand-500 px-4 text-sm font-semibold text-[var(--tinta-marca,#000)] active:bg-brand-600"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path

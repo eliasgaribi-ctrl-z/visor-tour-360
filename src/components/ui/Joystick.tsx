@@ -213,7 +213,12 @@ export function Joystick({
         {/* Aro que se enciende al agarrarlo */}
         <div
           className={`absolute inset-0 rounded-full ring-2 transition-colors duration-200 ${
-            active ? 'ring-brand-400/80' : 'ring-white/10'
+            /* `ring-brand-400` plano y no `ring-brand-400/80`: las utilidades
+               con alfa compilan a un rgba() con el color QUEMADO como respaldo
+               para Safari < 16.2, así que con una marca ajena el aro se quedaba
+               ámbar. La opacidad se pone aparte, que sí respeta el token en
+               cualquier navegador. Ver src/lib/marca.ts. */
+            active ? 'ring-brand-400 opacity-90' : 'ring-white/10'
           }`}
         />
 

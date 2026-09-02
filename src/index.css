@@ -40,10 +40,24 @@
 
   body {
     margin: 0;
-    background: #000;
+    /* El patrón `var(--x, <lo de hoy>)`, con el default puesto, es lo que hace
+       que SIN marca no cambie ni un píxel. Los llena `aplicarMarca()` de
+       src/lib/marca.ts cuando el recorrido trae una. */
+    /* El mismo respaldo que el estilo inline de index.html, no #000: los dos
+       tienen que decir lo mismo o el fondo cambia cuando carga la hoja. */
+    background: var(--fondo-app, #0b0f19);
     color: var(--color-ink-50);
-    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, sans-serif;
+    font-family: var(
+      --tipografia,
+      ui-sans-serif,
+      system-ui,
+      -apple-system,
+      "Segoe UI",
+      Roboto,
+      "Helvetica Neue",
+      Arial,
+      sans-serif
+    );
 
     /* Móvil: nada de rebote, scroll ni menús contextuales encima del visor */
     overscroll-behavior: none;
@@ -92,7 +106,7 @@
 /* rgba() en vez de color-mix(): color-mix llegó a Safari en la 16.2 y, igual que
    con oklch, lo que no se entiende no se pinta. */
 @utility hud-glass {
-  background-color: rgba(12, 16, 22, 0.55);
+  background-color: var(--hud-fondo, rgba(12, 16, 22, 0.55));
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.14);

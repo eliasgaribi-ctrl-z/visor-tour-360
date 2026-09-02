@@ -40,7 +40,7 @@ export class PantallaBoundary extends Component<Props, State> {
             type="button"
             onClick={() => window.location.reload()}
             className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-brand-500 px-5 text-sm
-                       font-semibold text-black active:bg-brand-600"
+                       font-semibold text-[var(--tinta-marca,#000)] active:bg-brand-600"
           >
             Volver a cargar
           </button>

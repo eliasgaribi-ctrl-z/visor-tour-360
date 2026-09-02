@@ -71,6 +71,12 @@ jobs:
       - name: Patrones que no deben volver
         run: node tools/pruebas/patrones.mjs
 
+      # De esta cuenta depende que el visor siga siendo usable con una marca
+      # ajena: si la luminancia estuviera mal, el editor de marca aprobaria
+      # colores ilegibles y no se sabria hasta ver un visor roto.
+      - name: La cuenta del contraste
+        run: node tools/pruebas/contraste.mjs
+
       # El presupuesto de descarga es una decisión medida del proyecto (README
       # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
       # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —
@@ -152,6 +158,13 @@ jobs:
       # con el manifiesto de la v1, no generado por el codigo de hoy.
       - name: Los .tour viejos siguen abriendo
         run: node tools/pruebas/formato.mjs http://localhost:5173/
+
+      # Toda la personalizacion se apoya en que Tailwind emita las utilidades por
+      # referencia y no con el hex quemado. Si eso cambiara, aplicarMarca()
+      # seguiria corriendo sin errores y no pintaria nada: un fallo silencioso que
+      # solo se veria en la demo a un cliente. Se mide en pixeles, no leyendo CSS.
+      - name: La marca reviste el visor
+        run: node tools/pruebas/marca.mjs http://localhost:5173/
 
       - name: El log del servidor, si algo falló
         if: failure()

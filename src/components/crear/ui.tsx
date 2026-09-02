@@ -64,7 +64,11 @@ type BotonProps = {
 }
 
 const ESTILOS: Record<NonNullable<BotonProps['tipo']>, string> = {
-  principal: 'bg-brand-500 text-black active:bg-brand-600 disabled:bg-white/10 disabled:text-ink-200',
+  /* La tinta se deriva del color de acento, no se fija: `text-black` es correcto
+     con el ámbar de THIQA, pero con un azul marino de marca el texto negro
+     desaparece. `aplicarMarca` calcula `--tinta-marca` por luminancia (ver
+     src/lib/marca.ts) y el default de la variable deja todo como hoy. */
+  principal: 'bg-brand-500 text-[var(--tinta-marca,#000)] active:bg-brand-600 disabled:bg-white/10 disabled:text-ink-200',
   normal: 'bg-white/10 text-ink-50 active:bg-white/20 disabled:text-ink-200/50',
   peligro: 'bg-red-500/15 text-red-300 active:bg-red-500/25',
   fantasma: 'text-ink-200 active:bg-white/10',
