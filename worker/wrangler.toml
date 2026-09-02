@@ -1,0 +1,34 @@
+# ============================================================================
+#  EL WORKER QUE PUBLICA UNA CASA
+# ============================================================================
+#
+# Se despliega aparte del visor. El visor sigue siendo un sitio estático que se
+# puede servir desde donde sea; esto solo guarda y entrega las casas publicadas.
+#
+# Puesta en marcha, una sola vez:
+#
+#   npm install                                  (aquí dentro, en worker/)
+#   npx wrangler login
+#   npx wrangler r2 bucket create visor-tours
+#   npx wrangler secret put CLAVE_PUBLICACION    ← inventa una larga y guárdala
+#   npx wrangler deploy
+#
+# Wrangler imprime la dirección al terminar. Esa dirección es la que va en
+# VITE_PUBLICAR_BASE al compilar el visor, y la que hay que poner abajo en
+# APP_BASE al revés (el Worker necesita saber dónde vive el visor para rebotar).
+
+name = "visor-tours"
+main = "src/index.ts"
+compatibility_date = "2026-01-01"
+
+[[r2_buckets]]
+binding = "TOURS"
+bucket_name = "visor-tours"
+
+[vars]
+# De dónde se sirve el visor, CON la barra final. Si algún día el visor se muda
+# a Cloudflare Pages, aquí es donde se dice.
+APP_BASE = "https://eliasgaribi-ctrl-z.github.io/visor-tour-360/"
+
+# CLAVE_PUBLICACION NO va aquí: es un secreto y este archivo se sube al
+# repositorio. Se pone con `npx wrangler secret put CLAVE_PUBLICACION`.

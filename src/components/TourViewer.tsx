@@ -4,11 +4,13 @@ import type { ReactNode } from 'react'
 import { useWheelZoom } from '../lib/useDragLook'
 import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
+import { useGyroLook } from '../lib/useGyroLook'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
+import { detectWebGL } from '../lib/webgl'
 
-import { BASE_FOV, Escena360, detectWebGL } from './tour/Escena360'
+import { BASE_FOV, Escena360 } from './tour/Escena360'
 
 import { Compass } from './ui/Compass'
 import { DebugAngles } from './ui/DebugAngles'
@@ -60,6 +62,7 @@ export function TourViewer({
   const [info, setInfo] = useState<{ title: string; body?: string } | null>(null)
   const [hintVisible, setHintVisible] = useState(true)
   const hintDismissed = useRef(false)
+  const cartelError = useRef<HTMLDivElement>(null)
 
   /* Se pregunta UNA vez, antes de montar el canvas: si el navegador no da WebGL
      preferimos un mensaje a una pantalla negra sin explicación. */
@@ -71,12 +74,23 @@ export function TourViewer({
   )
 
   useKeyboardLook(engine)
+  /* Mirar moviendo el teléfono. Devuelve `disponible: false` en cuanto queda
+     claro que este aparato no tiene sensores, y entonces el botón ni aparece. */
+  const giro = useGyroLook(engine)
 
   const dismissHint = useCallback(() => {
     if (hintDismissed.current) return
     hintDismissed.current = true
     setHintVisible(false)
   }, [])
+
+  /* El botón del sensor tiene que salir de un gesto real: iOS solo abre el
+     diálogo de permiso si la llamada nace de un click. Por eso está colgado
+     aquí y no de un useEffect. */
+  const alternarGiro = useCallback(() => {
+    dismissHint()
+    giro.alternar()
+  }, [dismissHint, giro])
 
   /** El joystick escribe aquí. Es la única línea que conecta UI y cámara. */
   const handleAxis = useCallback(
@@ -117,6 +131,14 @@ export function TourViewer({
     engine.input.dFov += BASE_FOV - engine.readout.fov
     engine.invalidar()
   }, [engine, scene.initialYaw])
+
+  /* El cartel de "no se pudo cargar la foto" tapa la pantalla entera pero no
+     recibía el foco, así que con teclado o lector de pantalla no había manera de
+     leerlo: el foco seguía en los controles de abajo, que quedaron debajo del
+     velo y ya no hacen nada. role="alert" lo anuncia y el focus() lleva ahí. */
+  useEffect(() => {
+    if (failed) cartelError.current?.focus()
+  }, [failed])
 
   /** Si nadie toca nada, la pista se retira sola a los 7 segundos. */
   useEffect(() => {
@@ -178,6 +200,21 @@ export function TourViewer({
           onPointerDownCapture={dismissHint}
         />
 
+        {/* Un lector de pantalla no ve la esfera ni el velo de carga: pasar de
+            un cuarto a otro no anunciaba absolutamente nada, así que la app
+            parecía congelada justo cuando más está pasando. Este párrafo es lo
+            único que la persona oye al cambiar de habitación. Se queda fuera del
+            HUD para que no lo alcance el pointer-events-none ni el z-30. */}
+        <p className="sr-only" aria-live="polite" aria-atomic="true">
+          {loading
+            ? `Cargando ${scene.name}…`
+            : `${scene.name}. ${
+                scene.hotspots.length === 0
+                  ? 'Sin puntos'
+                  : `${scene.hotspots.length} ${scene.hotspots.length === 1 ? 'punto' : 'puntos'}`
+              }.`}
+        </p>
+
         {/* ───────────────────────────── CAPA 1 · HUD ───────────────────────────── */}
         <div className="pointer-events-none absolute inset-0 z-30" onWheel={zoomRueda}>
           {/* Hotspots: van pegados a la escena pero son DOM de verdad. */}
@@ -195,6 +232,43 @@ export function TourViewer({
             </div>
             <div className="flex shrink-0 items-start gap-2">
               {accion}
+              {/* Mirar moviendo el teléfono. Solo aparece si el aparato puede
+                  de verdad: en un escritorio no hay sensores y un botón que no
+                  hace nada es peor que no tener botón. */}
+              {giro.disponible && (
+                <button
+                  type="button"
+                  onClick={alternarGiro}
+                  aria-pressed={giro.activo}
+                  aria-label={
+                    giro.activo
+                      ? 'Dejar de mirar moviendo el teléfono'
+                      : 'Mirar moviendo el teléfono'
+                  }
+                  className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center
+                              rounded-2xl transition-colors active:bg-white/15 ${
+                                giro.activo ? 'text-brand-400' : 'text-ink-50'
+                              }`}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    aria-hidden
+                  >
+                    <g transform="rotate(-12 12 12)">
+                      <rect x="8.5" y="4" width="7" height="16" rx="1.6" />
+                      <path d="M11 6.6h2" strokeLinecap="round" />
+                    </g>
+                    <path
+                      d="M4.6 8.8a8 8 0 0 0 0 6.4M19.4 8.8a8 8 0 0 1 0 6.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              )}
               <Compass className="relative shrink-0" />
             </div>
           </div>
@@ -228,15 +302,31 @@ export function TourViewer({
             <ZoomControls />
           </div>
 
-          {/* Pista de arranque · por encima de la fila de controles */}
+          {/* Pista de arranque · por encima de la fila de controles.
+              El mismo hueco lo reutiliza el sensor de movimiento para decir qué
+              pasó —que se encendió, que Safari negó el permiso, que este
+              aparato no tiene sensores—. Reutilizarlo y no inventar un segundo
+              cartel es a propósito: los dos textos dicen lo mismo, "así se mira
+              alrededor", y nunca hacen falta al mismo tiempo. El aviso gana
+              porque es respuesta a un botón que la persona acaba de tocar.
+
+              La píldora se cuadra cuando lleva un aviso: los avisos son de dos
+              renglones y en una forma redonda las esquinas se comen el texto. */}
           <div
             className={`absolute bottom-[calc(env(safe-area-inset-bottom)+12rem)] left-1/2 w-[min(20rem,90vw)]
                         -translate-x-1/2 transition-opacity duration-500 ${
-                          hintVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+                          hintVisible || giro.mensaje
+                            ? 'opacity-100'
+                            : 'pointer-events-none opacity-0'
                         }`}
           >
-            <p className="hud-glass rounded-full px-4 py-2 text-center text-xs text-ink-200">
-              {pista}
+            <p
+              role="status"
+              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-ink-200 ${
+                giro.mensaje ? 'rounded-2xl' : 'rounded-full'
+              }`}
+            >
+              {giro.mensaje ?? pista}
             </p>
           </div>
 
@@ -251,7 +341,12 @@ export function TourViewer({
         <LoadingVeil visible={webgl.ok && loading && !failed} />
 
         {failed && (
-          <div className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center">
+          <div
+            ref={cartelError}
+            role="alert"
+            tabIndex={-1}
+            className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center outline-none"
+          >
             <div className="max-w-xs">
               <p className="text-sm font-semibold text-ink-50">
                 No se pudo cargar la foto de {scene.name}

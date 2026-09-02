@@ -7,6 +7,15 @@ import type { StoredScene, StoredTour } from '../../lib/store/types'
 import { blobUrl, deleteImage, getTour, saveTour } from '../../lib/store/tours'
 import { entregarArchivo, exportarTour, PaqueteError } from '../../lib/store/paquete'
 import { contextoSeguro } from '../../lib/capture/camera'
+import {
+  PublicarError,
+  claveGuardada,
+  despublicar,
+  enlacePublico,
+  guardarClave,
+  publicarTour,
+  sePuedePublicar,
+} from '../../lib/publicar'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
 export type EditorRecorridoProps = {
@@ -42,9 +51,27 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
      medio aplicar: visible en pantalla y persistido con la siguiente acción. */
   const [datos, setDatos] = useState<{ title: string; subtitle: string } | null>(null)
   const [confirmarBorrado, setConfirmarBorrado] = useState<StoredScene | null>(null)
+  /* ── Publicar ───────────────────────────────────────────────────────────
+     Estados separados del paquete `.tour` porque son dos cosas distintas que
+     pueden estar en curso a la vez, y porque publicar puede tardar bastante:
+     son varias fotos de 1.5 MB subiendo por datos móviles. De ahí el avance. */
+  const [publicando, setPublicando] = useState<
+    | null
+    | { estado: 'subiendo'; hechas: number; total: number }
+    | { estado: 'error'; mensaje: string }
+  >(null)
+  const [pidiendoClave, setPidiendoClave] = useState(false)
+  const [claveEscrita, setClaveEscrita] = useState('')
+  const [copiado, setCopiado] = useState(false)
+
   const [paquete, setPaquete] = useState<
     { estado: 'armando' } | { estado: 'listo'; blob: Blob; nombre: string } | { estado: 'error'; mensaje: string } | null
   >(null)
+  /* Escribir en IndexedDB puede fallar —disco lleno, modo privado, otra pestaña
+     bloqueando la base— y hasta ahora ese fallo era una promesa rechazada que
+     nadie atrapaba: la hoja se cerraba igual y el cambio parecía hecho. */
+  const [escribiendo, setEscribiendo] = useState(false)
+  const [errorGuardado, setErrorGuardado] = useState<string | null>(null)
 
   const cargar = useCallback(async () => {
     const encontrado = await getTour(tourId)
@@ -55,9 +82,22 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     void cargar()
   }, [cargar])
 
-  const guardar = async (siguiente: StoredTour) => {
-    const guardado = await saveTour(siguiente)
-    setTour(guardado)
+  /** Devuelve si la escritura llegó al disco. Quien llama cierra su hoja solo si sí. */
+  const guardar = async (siguiente: StoredTour): Promise<boolean> => {
+    setEscribiendo(true)
+    setErrorGuardado(null)
+    try {
+      const guardado = await saveTour(siguiente)
+      setTour(guardado)
+      return true
+    } catch (e) {
+      setErrorGuardado(
+        e instanceof Error ? e.message : 'No se pudo guardar el cambio en este teléfono.',
+      )
+      return false
+    } finally {
+      setEscribiendo(false)
+    }
   }
 
   if (tour === null) {
@@ -87,21 +127,34 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     void guardar({ ...tour, scenes })
   }
 
-  const borrarEscena = async (scene: StoredScene) => {
+  const borrarEscena = async (scene: StoredScene): Promise<boolean> => {
     const scenes = tour.scenes.filter((s) => s.id !== scene.id)
     // Los puntos que llevaban a esa habitación quedarían sin destino.
     const limpias = scenes.map((s) => ({
       ...s,
       hotspots: s.hotspots.filter((h) => h.kind !== 'link' || h.to !== scene.id),
     }))
-    await guardar({
+    /* El orden es a propósito y no se toca: primero se escribe el recorrido sin
+       la habitación y SOLO si eso funcionó se borran sus fotos. Al revés, una
+       escritura fallida dejaría el recorrido entero apuntando a fotos que ya no
+       existen, y eso no se puede deshacer. */
+    const ok = await guardar({
       ...tour,
       scenes: limpias,
       startSceneId: tour.startSceneId === scene.id ? (limpias[0]?.id ?? '') : tour.startSceneId,
     })
-    await deleteImage(scene.imageId)
-    if (scene.thumbId) await deleteImage(scene.thumbId)
+    if (!ok) return false
+    /* Las fotos ya son huérfanas: el recorrido guardado no las menciona. Si su
+       borrado falla, lo único que pasa es que ocupan espacio, así que no vale la
+       pena asustar con un error por algo que la persona no puede arreglar. */
+    try {
+      await deleteImage(scene.imageId)
+      if (scene.thumbId) await deleteImage(scene.thumbId)
+    } catch {
+      /* espacio desperdiciado, nada más */
+    }
     setEditando(null)
+    return true
   }
 
   const prepararArchivo = async () => {
@@ -120,7 +173,89 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     }
   }
 
+  /* ── Publicar la casa ────────────────────────────────────────────────────
+     Lo que convierte un recorrido en algo que se le puede enseñar a alguien:
+     hasta aquí vivía en este teléfono y solo se podía pasar como archivo.
+
+     La clave no está en el código de la app —es un sitio estático, cualquiera
+     leería su JavaScript— así que la escribe la persona una vez y se queda en
+     este navegador. Si no hay ninguna guardada, se pide antes de subir nada. */
+  const subir = async (clave: string) => {
+    setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
+    try {
+      const { llave } = await publicarTour(tour, clave, (avance) =>
+        setPublicando({ estado: 'subiendo', ...avance }),
+      )
+      /* Se guarda la llave ANTES de dar por buena la publicación: si esta
+         escritura fallara y no se guardara, la casa quedaría en línea y sin
+         forma de bajarla desde aquí. */
+      await guardar({ ...tour, publicadoComo: llave })
+      setPublicando(null)
+      setCopiado(false)
+    } catch (e) {
+      setPublicando({
+        estado: 'error',
+        mensaje:
+          e instanceof PublicarError
+            ? [e.message, e.consejo].filter(Boolean).join(' ')
+            : 'No se pudo publicar el recorrido.',
+      })
+    }
+  }
+
+  const publicar = () => {
+    const clave = claveGuardada()
+    if (!clave) {
+      setClaveEscrita('')
+      setPidiendoClave(true)
+      return
+    }
+    void subir(clave)
+  }
+
+  const bajar = async () => {
+    if (!tour.publicadoComo) return
+    setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
+    try {
+      await despublicar(tour.publicadoComo, claveGuardada())
+      await guardar({ ...tour, publicadoComo: undefined })
+      setPublicando(null)
+    } catch (e) {
+      setPublicando({
+        estado: 'error',
+        mensaje: e instanceof PublicarError ? e.message : 'No se pudo dar de baja el recorrido.',
+      })
+    }
+  }
+
+  const copiarEnlace = async () => {
+    if (!tour.publicadoComo) return
+    try {
+      await navigator.clipboard.writeText(enlacePublico(tour.publicadoComo))
+      setCopiado(true)
+      window.setTimeout(() => setCopiado(false), 2000)
+    } catch {
+      /* Safari solo deja escribir en el portapapeles desde un gesto y con
+         permiso; si dice que no, el link sigue a la vista para copiarlo a
+         mano, que es justo para lo que se enseña completo. */
+      setPublicando({
+        estado: 'error',
+        mensaje: 'No se pudo copiar solo. Mantén el dedo sobre el link para copiarlo.',
+      })
+    }
+  }
+
   const listo = tour.scenes.length > 0
+
+  /* El mismo mensaje se enseña en dos sitios porque el fallo puede venir de dos
+     lados: de una hoja abierta (renombrar, ajustes, borrar) o de las flechas de
+     reordenar, que están en la lista. Cuando hay una hoja encima, la lista está
+     tapada, así que ahí no sirve de nada ponerlo. */
+  const hojaAbierta =
+    agregando || datos !== null || confirmarBorrado !== null || editando !== null || pidiendoClave
+  const avisoError = errorGuardado ? (
+    <p className="text-sm leading-relaxed text-red-300">{errorGuardado}</p>
+  ) : null
 
   return (
     <Pantalla
@@ -136,6 +271,12 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
       }
     >
       <div className="mx-auto flex w-full max-w-md flex-col gap-3">
+        {!hojaAbierta && errorGuardado && (
+          <Aviso tono="error" titulo="No se guardó">
+            {errorGuardado}
+          </Aviso>
+        )}
+
         {tour.scenes.length === 0 && (
           <Aviso titulo="Empieza por la sala">
             Párate en medio del cuarto, agrega la habitación y ve girando despacio sobre tu propio
@@ -173,7 +314,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   type="button"
                   aria-label={`Subir ${scene.name}`}
                   onClick={() => mover(indice, -1)}
-                  disabled={indice === 0}
+                  disabled={indice === 0 || escribiendo}
                   className="grid h-11 w-11 place-items-center rounded-lg bg-white/10 text-sm
                              active:bg-white/20 disabled:opacity-30"
                 >
@@ -183,7 +324,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   type="button"
                   aria-label={`Bajar ${scene.name}`}
                   onClick={() => mover(indice, 1)}
-                  disabled={indice === tour.scenes.length - 1}
+                  disabled={indice === tour.scenes.length - 1 || escribiendo}
                   className="grid h-11 w-11 place-items-center rounded-lg bg-white/10 text-sm
                              active:bg-white/20 disabled:opacity-30"
                 >
@@ -202,6 +343,69 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             </div>
           </Tarjeta>
         ))}
+
+        {listo && sePuedePublicar() && (
+          <>
+            <div className="mt-2 h-px bg-white/10" />
+            <Tarjeta>
+              <p className="mb-1 font-semibold">Enseñar por link</p>
+              <p className="mb-3 text-sm text-ink-200">
+                Sube la casa para poder mandarla por WhatsApp. Quien reciba el link la abre sin
+                instalar nada y sin cuenta. El link no aparece en Google: solo entra quien lo tenga.
+              </p>
+
+              {tour.publicadoComo ? (
+                <div className="flex flex-col gap-2">
+                  <p
+                    className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm
+                               break-all text-ink-50 select-all"
+                  >
+                    {enlacePublico(tour.publicadoComo)}
+                  </p>
+                  <Boton tipo="principal" ancho onClick={() => void copiarEnlace()}>
+                    {copiado ? 'Copiado' : 'Copiar el link'}
+                  </Boton>
+                  <Boton
+                    ancho
+                    onClick={() => void subir(claveGuardada())}
+                    disabled={publicando?.estado === 'subiendo'}
+                  >
+                    Volver a subir con los cambios
+                  </Boton>
+                  <Boton
+                    tipo="fantasma"
+                    ancho
+                    onClick={() => void bajar()}
+                    disabled={publicando?.estado === 'subiendo'}
+                  >
+                    Quitar de internet
+                  </Boton>
+                  <p className="text-xs text-ink-200/70">
+                    Los cambios que hagas aquí no se ven en el link hasta que vuelvas a subir.
+                  </p>
+                </div>
+              ) : (
+                <Boton
+                  tipo="principal"
+                  ancho
+                  onClick={publicar}
+                  disabled={publicando?.estado === 'subiendo'}
+                >
+                  Publicar y obtener el link
+                </Boton>
+              )}
+
+              {publicando?.estado === 'subiendo' && (
+                <p className="mt-2 text-sm text-ink-200" role="status" aria-live="polite">
+                  Subiendo {publicando.hechas} de {publicando.total} fotos…
+                </p>
+              )}
+              {publicando?.estado === 'error' && (
+                <p className="mt-2 text-sm text-red-300">{publicando.mensaje}</p>
+              )}
+            </Tarjeta>
+          </>
+        )}
 
         {listo && (
           <>
@@ -240,6 +444,37 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           Cambiar el nombre del recorrido
         </Boton>
       </div>
+
+      {pidiendoClave && (
+        <Hoja titulo="Clave para publicar" onCerrar={() => setPidiendoClave(false)}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-ink-200">
+              Es la clave del servidor donde se guardan las casas publicadas. Se escribe una sola
+              vez: queda guardada en este teléfono. No viene dentro de la app porque cualquiera
+              podría leerla.
+            </p>
+            <Campo
+              etiqueta="Clave"
+              valor={claveEscrita}
+              onChange={setClaveEscrita}
+              placeholder="La que configuraste en el servidor"
+            />
+            <Boton
+              tipo="principal"
+              ancho
+              disabled={!claveEscrita.trim()}
+              onClick={() => {
+                const clave = claveEscrita.trim()
+                guardarClave(clave)
+                setPidiendoClave(false)
+                void subir(clave)
+              }}
+            >
+              Guardar y publicar
+            </Boton>
+          </div>
+        </Hoja>
+      )}
 
       {agregando && (
         <Hoja titulo="¿Cómo quieres la foto?" onCerrar={() => setAgregando(false)}>
@@ -287,18 +522,19 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             <Boton
               tipo="principal"
               ancho
-              disabled={!datos.title.trim()}
+              disabled={!datos.title.trim() || escribiendo}
               onClick={async () => {
-                await guardar({
+                const ok = await guardar({
                   ...tour,
                   title: datos.title.trim(),
                   subtitle: datos.subtitle.trim() || undefined,
                 })
-                setDatos(null)
+                if (ok) setDatos(null)
               }}
             >
-              Guardar
+              {escribiendo ? 'Guardando…' : 'Guardar'}
             </Boton>
+            {avisoError}
           </div>
         </Hoja>
       )}
@@ -311,21 +547,24 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             manera de deshacerlo.
           </p>
           <div className="flex gap-2">
-            <Boton ancho onClick={() => setConfirmarBorrado(null)}>
+            <Boton ancho onClick={() => setConfirmarBorrado(null)} disabled={escribiendo}>
               Mejor no
             </Boton>
+            {/* La hoja se queda abierta hasta que el borrado esté escrito. Antes
+                se cerraba primero y se borraba después, así que un fallo dejaba
+                la habitación en la lista sin que nada lo explicara. */}
             <Boton
               tipo="peligro"
               ancho
+              disabled={escribiendo}
               onClick={async () => {
-                const escena = confirmarBorrado
-                setConfirmarBorrado(null)
-                await borrarEscena(escena)
+                if (await borrarEscena(confirmarBorrado)) setConfirmarBorrado(null)
               }}
             >
-              Sí, borrar
+              {escribiendo ? 'Borrando…' : 'Sí, borrar'}
             </Boton>
           </div>
+          {avisoError && <div className="mt-3">{avisoError}</div>}
         </Hoja>
       )}
 
@@ -341,15 +580,16 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             <Boton
               tipo="principal"
               ancho
+              disabled={escribiendo}
               onClick={async () => {
-                await guardar({
+                const ok = await guardar({
                   ...tour,
                   scenes: tour.scenes.map((s) => (s.id === editando.id ? editando : s)),
                 })
-                setEditando(null)
+                if (ok) setEditando(null)
               }}
             >
-              Guardar
+              {escribiendo ? 'Guardando…' : 'Guardar'}
             </Boton>
             <div className="flex gap-2">
               <Boton
@@ -373,9 +613,9 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             {editando.id !== tour.startSceneId && (
               <Boton
                 ancho
+                disabled={escribiendo}
                 onClick={async () => {
-                  await guardar({ ...tour, startSceneId: editando.id })
-                  setEditando(null)
+                  if (await guardar({ ...tour, startSceneId: editando.id })) setEditando(null)
                 }}
               >
                 Que el recorrido empiece aquí
@@ -392,6 +632,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             >
               Borrar la habitación
             </Boton>
+            {avisoError}
           </div>
         </Hoja>
       )}

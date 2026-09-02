@@ -56,12 +56,23 @@ export function openDb(): Promise<IDBDatabase> {
 
     req.onsuccess = () => {
       const db = req.result
+      // Soltar la conexión guardada aquí es lo que hace que el siguiente
+      // `openDb()` abra una nueva en vez de devolver una muerta.
+      const soltar = () => {
+        dbPromise = null
+      }
       // Si otra pestaña pide una versión nueva, hay que soltar la conexión o
       // esa pestaña se queda bloqueada para siempre.
       db.onversionchange = () => {
         db.close()
-        dbPromise = null
+        soltar()
       }
+      /* `onclose` es el cierre que NO pedimos nosotros: el navegador se llevó
+         la base porque el usuario borró los datos del sitio, porque el disco se
+         llenó, o porque Safari hizo su limpieza de los siete días. Sin esto,
+         `dbPromise` seguía apuntando a una conexión cerrada y todo lo que se
+         guardara después fallaba con "InvalidStateError" hasta recargar. */
+      db.onclose = soltar
       resolve(db)
     }
 
@@ -71,6 +82,10 @@ export function openDb(): Promise<IDBDatabase> {
     }
 
     req.onblocked = () => {
+      // También hay que soltar la promesa aquí: sin esto, el usuario cerraba la
+      // otra pestaña, volvía a intentar, y `openDb()` le devolvía esta misma
+      // promesa ya rechazada, o sea el mismo error para siempre.
+      dbPromise = null
       reject(new Error('Hay otra pestaña del visor abierta. Ciérrala y vuelve a intentar.'))
     }
   })
@@ -80,14 +95,34 @@ export function openDb(): Promise<IDBDatabase> {
 
 type Mode = 'readonly' | 'readwrite'
 
-/** Corre una función dentro de una transacción y espera a que confirme. */
+/**
+ * Corre una función dentro de una transacción y espera a que confirme.
+ *
+ * El reintento único es para la conexión que se murió sin avisar a tiempo:
+ * entre que el navegador cierra la base y que corre nuestro `onclose`,
+ * `db.transaction()` lanza `InvalidStateError`. Es exactamente el momento en el
+ * que el usuario le da a "Guardar" y ve un error por algo que se arregla solo
+ * volviendo a abrir la base. Un reintento y no un bucle: si la segunda también
+ * falla, el problema es real y hay que enseñarlo.
+ */
 export async function tx<T>(
   stores: string | string[],
   mode: Mode,
   run: (t: IDBTransaction) => Promise<T> | T,
+  reintento = true,
 ): Promise<T> {
   const db = await openDb()
-  const transaction = db.transaction(stores, mode)
+
+  let transaction: IDBTransaction
+  try {
+    transaction = db.transaction(stores, mode)
+  } catch (error) {
+    if (reintento && error instanceof DOMException && error.name === 'InvalidStateError') {
+      dbPromise = null
+      return tx(stores, mode, run, false)
+    }
+    throw error
+  }
 
   const done = new Promise<void>((resolve, reject) => {
     transaction.oncomplete = () => resolve()

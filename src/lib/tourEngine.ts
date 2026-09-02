@@ -48,6 +48,26 @@ export type LookInput = {
    * Cualquier input manual del usuario lo cancela.
    */
   goto: { yaw: number; pitch: number } | null
+
+  /**
+   * Hacia dónde apunta la espalda del TELÉFONO, en grados, cuando el
+   * giroscopio está al mando (ver src/lib/useGyroLook.ts). null = no está.
+   *
+   * No es `goto` reciclado, y la diferencia importa: `goto` es de un solo
+   * disparo y el rig lo pone en null en cuanto lo consume, mientras que esto
+   * es una posición sostenida que hay que volver a leer en cada cuadro. Y no
+   * es una velocidad como `axis`: el sensor dice dónde estás mirando, no
+   * cuánto quieres girar.
+   *
+   * Va sin el ladeo a propósito: si el roll se aplicara, la habitación se
+   * inclinaría cada vez que la persona ladea la muñeca.
+   *
+   * Quien lo escribe también tiene que tocar el timbre (`invalidar`), y crear
+   * un objeto NUEVO cada vez que vuelve a encender el sensor: el rig usa el
+   * cambio de identidad para saber que empieza una sesión nueva y recalcular
+   * el desfase entre el cero del giroscopio y la habitación.
+   */
+  absoluto: { yaw: number; pitch: number } | null
 }
 
 /** Lo que la cámara le cuenta a la UI. El CameraRig lo escribe cada frame. */
@@ -98,6 +118,26 @@ export type TourEngine = {
    * que alguien mueva la cámara.
    */
   suscribirHud: (fn: () => void) => () => void
+
+  /**
+   * ==========================================================================
+   *  UN SOLO DUEÑO DE LA CÁMARA
+   * ==========================================================================
+   *
+   * Con el giroscopio encendido hay dos cosas queriendo girar la vista: el
+   * teléfono y el dedo. La regla es que el dedo GANA —arrastrar es una
+   * decisión deliberada, el teléfono se mueve solo por estar en una mano— y
+   * apaga el sensor; el botón del HUD lo vuelve a encender.
+   *
+   * Lo llama el CameraRig, que es quien ya sabe distinguir "el usuario está
+   * conduciendo" para las tres formas de conducir (joystick, teclado y
+   * arrastre). Si la regla viviera en `useDragLook` habría que repetirla tres
+   * veces y una se quedaría atrás.
+   */
+  soltarGiroscopio: () => void
+
+  /** La conecta useGyroLook para enterarse de que le quitaron la cámara. */
+  conectarGiroscopio: (fn: (() => void) | null) => void
 }
 
 /** Cuánto se quedan despiertas las dos capas tras un aviso. */
@@ -105,6 +145,7 @@ const DESPIERTO_MS = 250
 
 export const createTourEngine = (): TourEngine => {
   let render: (() => void) | null = null
+  let soltarGiro: (() => void) | null = null
   const hud = new Set<() => void>()
   let frame = 0
   let despiertoHasta = 0
@@ -125,11 +166,17 @@ export const createTourEngine = (): TourEngine => {
   }
 
   return {
-    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, goto: null },
+    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, goto: null, absoluto: null },
     readout: { yaw: 0, pitch: 0, fov: 75 },
     invalidar,
     conectarRender: (fn) => {
       render = fn
+    },
+    soltarGiroscopio: () => {
+      soltarGiro?.()
+    },
+    conectarGiroscopio: (fn) => {
+      soltarGiro = fn
     },
     suscribirHud: (fn) => {
       hud.add(fn)

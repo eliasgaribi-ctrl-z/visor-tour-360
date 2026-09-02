@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "lint": "oxlint --max-warnings=0",
     "preview": "vite preview",
+    "test": "vitest run",
     "typecheck": "tsc -b --noEmit",
     "panoramas:demo": "python3 tools/make_test_panoramas.py public/panoramas",
     "build:pages": "tsc -b && vite build --base=./ --outDir docs --emptyOutDir && node -e \"require('fs').writeFileSync('docs/.nojekyll','')\""
@@ -28,7 +29,11 @@
     "oxlint": "^1.79.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   },
-  "description": "Visor de recorridos virtuales 360 con joystick, en React + TypeScript + Tailwind + React Three Fiber"
+  "description": "Visor de recorridos virtuales 360 con joystick, en React + TypeScript + Tailwind + React Three Fiber",
+  "engines": {
+    "node": ">=22.12.0"
+  }
 }

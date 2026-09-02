@@ -53,6 +53,25 @@ export function useWheelZoom(engine: TourEngine, grados = 4) {
  * donde hfov sale del FOV vertical y el aspect ratio. Resultado: el punto de la
  * foto que agarraste se queda pegado al dedo, y el gesto se siente igual con
  * zoom abierto que cerrado.
+ *
+ * ── El dedo le gana al giroscopio ──────────────────────────────────────────
+ *
+ * Con el sensor de movimiento encendido (ver src/lib/useGyroLook.ts) hay dos
+ * cosas queriendo girar la cámara. La regla es que arrastrar GANA y apaga el
+ * sensor: el dedo sobre la pantalla es una decisión deliberada de la persona,
+ * mientras que el teléfono se mueve solo por estar en una mano. Si el sensor
+ * pudiera pisar al dedo, arrastrar se sentiría como pelear contra el aparato;
+ * volver a mirar con el teléfono es tocar otra vez el botón del HUD.
+ *
+ * Aquí no hay ni una línea de eso a propósito. Este archivo solo escribe
+ * `dragYaw`/`dragPitch`, y quien apaga el sensor es el CameraRig, que ya sabe
+ * distinguir "el usuario está conduciendo" para las TRES formas de conducir
+ * —arrastre, joystick y teclado— en una sola condición. Repartida por los tres
+ * archivos, la regla se quedaría a medias en alguno.
+ *
+ * El pellizco de zoom es la excepción y no apaga nada: solo mueve `dFov`, o
+ * sea el encuadre y no la dirección, así que acercarse mientras se mira con el
+ * teléfono es un gesto perfectamente compatible.
  */
 export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
   const { threshold = 3, wheelZoomStep = 4 } = options
@@ -125,8 +144,25 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
   )
 
   const endPointer = useCallback((event: ReactPointerEvent<HTMLElement>) => {
-    pointers.current.delete(event.pointerId)
-    event.currentTarget.releasePointerCapture?.(event.pointerId)
+    /* Este mismo manejador está colgado de tres eventos (up, cancel y leave) y
+       en un gesto normal llegan dos: al levantar el dedo, el navegador suelta
+       la captura y manda el leave detrás. Si el dedo ya se dio de baja, no hay
+       nada que hacer — sin esta salida, un pointerup que llega después de un
+       cancel apagaría el arrastre del OTRO dedo que sigue en la pantalla. */
+    if (!pointers.current.delete(event.pointerId)) return
+
+    /* Soltar una captura que ya no se tiene lanza NotFoundError en Safari y en
+       Firefox, y sale por la consola sin que nadie lo haya pedido. Se pregunta
+       primero, y aun así se envuelve: entre la pregunta y la respuesta el
+       navegador puede haberla soltado él solo al terminar el gesto. */
+    try {
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId)
+      }
+    } catch {
+      // Ya estaba suelta; es justo lo que queríamos.
+    }
+
     if (pointers.current.size < 2) pinchDistance.current = 0
     if (pointers.current.size === 0) dragging.current = false
   }, [])

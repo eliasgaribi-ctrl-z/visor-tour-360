@@ -23,26 +23,41 @@ export type VisorGuardadoProps = {
 
 /** Abre un recorrido guardado en el teléfono y lo muestra con el visor de siempre. */
 export function VisorGuardado({ tourId, ir, alFallar }: VisorGuardadoProps) {
-  const [tour, setTour] = useState<Tour | null | 'no-existe' | 'vacio'>(null)
+  const [tour, setTour] = useState<Tour | null | 'no-existe' | 'vacio' | 'error'>(null)
 
   useEffect(() => {
     let vivo = true
     void (async () => {
-      const guardado = await getTour(tourId)
-      if (!vivo) return
-      if (!guardado) {
-        setTour('no-existe')
-        alFallar?.()
-        return
+      /* El try/catch no es de adorno: si IndexedDB truena al abrirse —modo
+         privado, otra pestaña bloqueando una versión nueva, el disco lleno— la
+         promesa se rompe y este efecto no volvía a tocar el estado nunca. El
+         resultado era un "Abriendo el recorrido…" girando para siempre, sin
+         botón para salir y sin nada en la pantalla que dijera qué pasó.
+
+         Falla con su propio estado y no con 'no-existe': decirle a alguien que
+         su recorrido ya no está cuando en realidad no se pudo ni preguntar lo
+         empuja a volver a importarlo o a rehacerlo, que es la peor reacción
+         posible ante un problema que suele arreglarse cerrando una pestaña. */
+      try {
+        const guardado = await getTour(tourId)
+        if (!vivo) return
+        if (!guardado) {
+          setTour('no-existe')
+          alFallar?.()
+          return
+        }
+        const resuelto = await resolveTour(guardado)
+        if (!vivo) return
+        if (resuelto.scenes.length === 0) {
+          setTour('vacio')
+          return
+        }
+        fijarRecorridoActivo(tourId)
+        setTour(resuelto)
+      } catch {
+        if (!vivo) return
+        setTour('error')
       }
-      const resuelto = await resolveTour(guardado)
-      if (!vivo) return
-      if (resuelto.scenes.length === 0) {
-        setTour('vacio')
-        return
-      }
-      fijarRecorridoActivo(tourId)
-      setTour(resuelto)
     })()
     return () => {
       vivo = false
@@ -57,14 +72,32 @@ export function VisorGuardado({ tourId, ir, alFallar }: VisorGuardadoProps) {
     )
   }
 
-  if (tour === 'no-existe' || tour === 'vacio') {
+  if (tour === 'no-existe' || tour === 'vacio' || tour === 'error') {
+    const aviso = {
+      vacio: {
+        titulo: 'Todavía no hay nada',
+        texto: 'Este recorrido no tiene ninguna habitación con foto. Agrega la primera y vuelve.',
+        boton: 'Agregar habitación',
+      },
+      'no-existe': {
+        titulo: 'No se encontró',
+        texto: 'Este recorrido no está guardado en este teléfono.',
+        boton: 'Ver mis recorridos',
+      },
+      error: {
+        titulo: 'No se pudo abrir',
+        texto:
+          'El navegador no dejó leer los recorridos guardados. Suele pasar con otra pestaña ' +
+          'del visor abierta o en una ventana privada: cierra las demás pestañas y vuelve a entrar.',
+        boton: 'Ver mis recorridos',
+      },
+    }[tour]
+
     return (
       <Pantalla titulo="Recorrido" atras={() => ir({ nombre: 'inicio' })}>
         <div className="mx-auto flex w-full max-w-md flex-col gap-4">
-          <Aviso tono="error" titulo={tour === 'vacio' ? 'Todavía no hay nada' : 'No se encontró'}>
-            {tour === 'vacio'
-              ? 'Este recorrido no tiene ninguna habitación con foto. Agrega la primera y vuelve.'
-              : 'Este recorrido no está guardado en este teléfono.'}
+          <Aviso tono="error" titulo={aviso.titulo}>
+            {aviso.texto}
           </Aviso>
           <Boton
             tipo="principal"
@@ -73,7 +106,7 @@ export function VisorGuardado({ tourId, ir, alFallar }: VisorGuardadoProps) {
               tour === 'vacio' ? ir({ nombre: 'editar', tourId }) : ir({ nombre: 'inicio' })
             }
           >
-            {tour === 'vacio' ? 'Agregar habitación' : 'Ver mis recorridos'}
+            {aviso.boton}
           </Boton>
         </div>
       </Pantalla>

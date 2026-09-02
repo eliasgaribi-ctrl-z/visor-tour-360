@@ -1,0 +1,55 @@
+# ============================================================================
+#  LO QUE TIENE QUE PASAR ANTES DE QUE UN CAMBIO ENTRE
+# ============================================================================
+#
+# El proyecto se publica en GitHub Pages desde la carpeta docs/, que es un
+# build guardado en el repositorio. Eso trae una trampa: se puede cambiar el
+# código, olvidarse de regenerar docs/, y que el sitio publicado siga
+# mostrando la versión de hace tres semanas sin que nadie se entere. El último
+# paso de aquí abajo existe para eso.
+#
+# La versión de Node va clavada a la misma que dice .nvmrc y "engines" del
+# package.json: si se separan, el build de la máquina de alguien deja de
+# parecerse al de aquí y las diferencias aparecen justo en docs/.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.12'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build          # incluye tsc -b
+      - run: npm test
+
+      # El Worker que publica las casas se compila aparte: tiene sus propias
+      # dependencias y sus propios tipos (los del entorno de Cloudflare, que no
+      # son los del navegador). Si se rompe, el visor sigue funcionando pero
+      # nadie puede publicar, y eso conviene enterarse aquí.
+      - run: npm ci
+        working-directory: worker
+      - run: npm run typecheck
+        working-directory: worker
+
+      # ¿Está docs/ al día con el código de este commit?
+      #
+      # El `git add -A` no es de adorno. Cada build renombra los archivos con
+      # un hash del contenido, así que un cambio en el código no MODIFICA
+      # index-abc123.js: crea un index-def456.js nuevo, que para git es un
+      # archivo sin seguir. `git diff` a secas no mira los archivos sin
+      # seguir, así que el paso pasaba en verde con docs/ desactualizado, que
+      # es exactamente lo que se quería atrapar. Metiéndolos al índice
+      # primero, `git diff --cached` sí los ve.
+      - run: npm run build:pages && git add -A docs && git diff --cached --quiet -- docs
