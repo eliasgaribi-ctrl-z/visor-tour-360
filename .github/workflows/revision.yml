@@ -1,0 +1,138 @@
+# ============================================================================
+#  Revisión automática en cada push y cada pull request
+# ============================================================================
+#
+# El proyecto no tenía CI, así que lo único que garantizaba que `main` estuviera
+# sano era que alguien se acordara de correr los comandos a mano. Esto los corre
+# siempre.
+#
+# ── Lo que este archivo NO hace, a propósito ────────────────────────────────
+#
+# NO publica nada. El sitio se sigue sirviendo desde la carpeta `docs/`
+# commiteada, con Pages configurado como "deploy from a branch". Cambiar eso a
+# "GitHub Actions" es una decisión aparte que hay que tomar en la interfaz de
+# GitHub, y hasta que se tome, un workflow de deploy aquí no serviría de nada o
+# pelearía con el que ya funciona. Se agrega valor sin romper lo que hay.
+#
+# Cuando se quiera dar ese paso: Settings → Pages → Source: GitHub Actions, y
+# entonces sí conviene sacar `docs/` del repositorio (hoy cada `build:pages`
+# mete ~1.2 MB de binarios nuevos al historial porque los hashes cambian).
+
+name: Revisión
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# Un push nuevo sobre la misma rama cancela la corrida anterior: nadie necesita
+# el resultado de un commit que ya quedó atrás.
+concurrency:
+  group: revision-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Lo rápido: tipos, lint y que el build salga. Segundos, no minutos.
+  # ──────────────────────────────────────────────────────────────────────────
+  estatico:
+    name: Tipos, lint y build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tipos
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      # El presupuesto de descarga es una decisión medida del proyecto (README
+      # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
+      # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —
+      # basta un import estático mal puesto para que three.js acabe en el
+      # arranque. Aquí se mide y se imprime; el tope es holgado a propósito,
+      # para avisar de un salto grande y no de un kilobyte.
+      - name: Peso del arranque
+        run: |
+          ARRANQUE=$(grep -o 'assets/[^"]*\.js' dist/index.html \
+            | sed 's|assets/||' | sort -u \
+            | while read -r f; do stat -c%s "dist/assets/$f"; done \
+            | paste -sd+ | bc)
+          echo "JavaScript que se descarga al abrir la app: $ARRANQUE bytes"
+          echo '### Peso del arranque' >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$ARRANQUE\` bytes de JavaScript al abrir la app." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ARRANQUE" -gt 400000 ]; then
+            echo "::error::El arranque pesa $ARRANQUE bytes. El presupuesto es ~236 kB y el tope de alarma 400 kB."
+            echo "Lo más probable: un import estático nuevo arrastró three.js o React Three Fiber"
+            echo "a la pantalla de la lista. Revisa que las pantallas con 3D sigan detrás de lazy()"
+            echo "en src/App.tsx, y mira los nombres de los chunks del build de arriba."
+            exit 1
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Los arneses de Playwright que hasta ahora solo se corrían a mano.
+  #
+  # Playwright se instala con --no-save a propósito: no está en las
+  # devDependencies del proyecto y esa es una decisión deliberada (los scripts
+  # hacen `await import('playwright')` con try/catch para no obligar a nadie a
+  # bajarlo). Aquí se instala igual que lo haría una persona siguiendo el
+  # README, sin cambiar el manifiesto.
+  # ──────────────────────────────────────────────────────────────────────────
+  arneses:
+    name: Arneses del visor
+    runs-on: ubuntu-latest
+    needs: estatico
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Instalar Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      # `npm run dev` y no `preview` a propósito: el badge de ángulos que leen
+      # rendimiento.mjs y tactil.mjs solo existe en modo desarrollo.
+      - name: Levantar el servidor
+        run: |
+          npm run dev > /tmp/dev.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:5173/ > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:5173/ > /dev/null || { cat /tmp/dev.log; exit 1; }
+
+      # Cada arnés se corre por separado para que el nombre del paso diga qué
+      # se rompió sin tener que abrir el log.
+      - name: Batería, tirones y que todo responda
+        run: node tools/pruebas/rendimiento.mjs http://localhost:5173/
+
+      - name: Memoria de video (aparato normal)
+        run: node tools/pruebas/memoria.mjs http://localhost:5173/
+
+      - name: Memoria de video (gama baja)
+        run: node tools/pruebas/memoria.mjs http://localhost:5173/ modesto
+
+      - name: Todo se puede tocar con el pulgar
+        run: node tools/pruebas/tactil.mjs http://localhost:5173/
+
+      - name: El log del servidor, si algo falló
+        if: failure()
+        run: cat /tmp/dev.log
