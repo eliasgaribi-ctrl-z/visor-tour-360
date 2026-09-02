@@ -24,6 +24,18 @@
   --color-ink-700: #2f3339;
   --color-ink-900: #0c1016;
 
+  /* La tinta del HUD, aparte de la de la app.
+     `ink-50` coloreaba el texto del `body` Y el del HUD, sobre dos fondos que
+     no tienen nada que ver: la página y el vidrio encima de la foto. Mientras
+     fueron el mismo token, una inmobiliaria que quisiera el vidrio claro tenía
+     que oscurecer también la app entera. Por defecto SIGUEN a ink —sin marca no
+     cambia ni un píxel, y una marca que solo mueva `ink50` mueve las dos—, y
+     `aplicarMarca` escribe `--color-hud` cuando la marca trae `hudTinta`.
+     Regla: lo que se pinta encima de `hud-glass` usa `text-hud` / `text-hud-2`,
+     nunca `text-ink-*`. */
+  --color-hud:   var(--color-ink-50);
+  --color-hud-2: var(--color-ink-200);
+
   /* Radio y sombra del "vidrio" del HUD */
   --radius-hud: 1.25rem;
 }

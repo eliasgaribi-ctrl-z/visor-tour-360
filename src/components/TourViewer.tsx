@@ -266,8 +266,8 @@ export function TourViewer({
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3
                           pt-[calc(env(safe-area-inset-top)+0.75rem)]">
             <div className="hud-glass pointer-events-auto min-w-0 rounded-hud px-4 py-2.5">
-              <p className="truncate text-sm font-semibold text-ink-50">{tour.title}</p>
-              <p className="truncate text-xs text-ink-200">
+              <p className="truncate text-sm font-semibold text-hud">{tour.title}</p>
+              <p className="truncate text-xs text-hud-2">
                 {scene.name}
                 {tour.subtitle ? ` · ${tour.subtitle}` : ''}
               </p>
@@ -308,7 +308,7 @@ export function TourViewer({
                 aria-label={sensorActivo ? 'Dejar de mirar con el teléfono' : 'Mirar con el teléfono'}
                 className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
                            transition-colors active:bg-white/15 ${
-                             sensorActivo ? 'text-brand-300' : 'text-ink-50'
+                             sensorActivo ? 'text-brand-300' : 'text-hud'
                            }`}
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -322,7 +322,7 @@ export function TourViewer({
               onClick={resetView}
               aria-label="Reencuadrar"
               className="hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
-                         text-ink-50 transition-colors active:bg-white/15"
+                         text-hud transition-colors active:bg-white/15"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M12 4v3M12 17v3M4 12h3M17 12h3" strokeLinecap="round" />
@@ -352,7 +352,7 @@ export function TourViewer({
           >
             <p
               role="status"
-              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-ink-200 ${
+              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-hud-2 ${
                 avisoGiro ? 'rounded-2xl' : 'rounded-full'
               }`}
             >

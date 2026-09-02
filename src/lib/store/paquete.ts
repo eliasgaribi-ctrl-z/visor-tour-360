@@ -261,6 +261,8 @@ async function marcaParaArchivo(
     nombre: guardada.nombre,
     colores: guardada.colores,
     hudFondo: guardada.hudFondo,
+    hudTinta: guardada.hudTinta,
+    hudTintaSuave: guardada.hudTintaSuave,
     fondoApp: guardada.fondoApp,
     tipografia: guardada.tipografia,
   }

@@ -90,6 +90,8 @@ export function limpiarMarca(crudo: unknown): MarcaGuardada | undefined {
     if (c) paleta[clave] = c
   }
   const hud = color(m.hudFondo)
+  const hudTinta = color(m.hudTinta)
+  const hudTintaSuave = color(m.hudTintaSuave)
   const fondo = color(m.fondoApp)
 
   /* ── Que un hex válido no baste ──────────────────────────────────────────
@@ -111,9 +113,14 @@ export function limpiarMarca(crudo: unknown): MarcaGuardada | undefined {
    *
    * El nombre, la tipografía y el logo sobreviven: no pintan nada encima de
    * nada. */
-  if (revisarPaleta({ colores: paleta, hudFondo: hud, fondoApp: fondo }).length === 0) {
+  if (
+    revisarPaleta({ colores: paleta, hudFondo: hud, hudTinta, hudTintaSuave, fondoApp: fondo })
+      .length === 0
+  ) {
     if (Object.keys(paleta).length > 0) limpia.colores = paleta
     if (hud) limpia.hudFondo = hud
+    if (hudTinta) limpia.hudTinta = hudTinta
+    if (hudTintaSuave) limpia.hudTintaSuave = hudTintaSuave
     if (fondo) limpia.fondoApp = fondo
   }
 

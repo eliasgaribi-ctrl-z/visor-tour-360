@@ -134,8 +134,8 @@ export function Portada({
             <dl className="hud-glass grid grid-cols-3 gap-2 rounded-hud p-3 text-center">
               {datos.map((d) => (
                 <div key={d.que}>
-                  <dt className="text-[11px] uppercase tracking-wide text-ink-200">{d.que}</dt>
-                  <dd className="text-base font-semibold text-ink-50">{d.valor}</dd>
+                  <dt className="text-[11px] uppercase tracking-wide text-hud-2">{d.que}</dt>
+                  <dd className="text-base font-semibold text-hud">{d.valor}</dd>
                 </div>
               ))}
             </dl>
@@ -174,7 +174,7 @@ export function Portada({
                     target="_blank"
                     rel="noopener noreferrer"
                     className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
-                               text-sm font-semibold text-ink-50 active:bg-white/15"
+                               text-sm font-semibold text-hud active:bg-white/15"
                   >
                     WhatsApp
                   </a>
@@ -183,7 +183,7 @@ export function Portada({
                   <a
                     href={`tel:${agente.telefono}`}
                     className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
-                               text-sm font-semibold text-ink-50 active:bg-white/15"
+                               text-sm font-semibold text-hud active:bg-white/15"
                   >
                     Llamar
                   </a>
@@ -192,7 +192,7 @@ export function Portada({
                   <a
                     href={`mailto:${agente.correo}`}
                     className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
-                               text-sm font-semibold text-ink-50 active:bg-white/15"
+                               text-sm font-semibold text-hud active:bg-white/15"
                   >
                     Correo
                   </a>

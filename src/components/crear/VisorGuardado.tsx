@@ -177,7 +177,7 @@ export function VisorGuardado({ tourId, ir, alFallar }: VisorGuardadoProps) {
       onClick={() => ir({ nombre: 'editar', tourId })}
       aria-label="Editar el recorrido"
       className="hud-glass pointer-events-auto grid h-16 w-11 place-items-center rounded-hud
-                 text-ink-50 active:bg-white/15"
+                 text-hud active:bg-white/15"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path d="M4 20h4l10-10a2.8 2.8 0 10-4-4L4 16v4z" strokeLinejoin="round" />

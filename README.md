@@ -657,6 +657,7 @@ Casi todo sale del bloque `@theme`:
 @theme {
   --color-brand-500: #e19100;   /* acento: joystick, hotspots, activo */
   --color-ink-900:   #0c1016;   /* vidrio del HUD */
+  --color-hud:       var(--color-ink-50);  /* texto ENCIMA del vidrio; sigue a ink */
   --radius-hud:      1.25rem;
 }
 ```
@@ -706,6 +707,19 @@ que le toca (4.5:1 para letras por WCAG 1.4.3, 3:1 para formas grandes por
 con medio tema base da un resultado peor que cualquiera de los dos, y sin paleta
 el visor se ve como siempre, que es legible por construcción. Un tema claro
 coherente pasa entero.
+
+**El HUD tiene su propia tinta.** `ink50`/`ink200` colorean la página y, hasta
+hace poco, también el texto encima del vidrio: dos fondos que no tienen nada que
+ver con un solo token, así que un vidrio claro obligaba a oscurecer la app
+entera. Ahora `hudTinta` y `hudTintaSuave` (`--color-hud` y `--color-hud-2`;
+utilidades `text-hud`/`text-hud-2`) colorean solo lo que va sobre `hud-glass`, y
+sin ellas **siguen** a `ink50`/`ink200` —en el `@theme` son
+`var(--color-ink-50)`, no un hex—, así que sin marca no cambia ni un píxel y una
+marca que solo mueva `ink50` mueve las dos, como siempre. `revisarPaleta` mide
+cada tinta contra el fondo que le toca: la del HUD contra el vidrio, la de la app
+contra la página. Regla para el que agregue algo al HUD: encima de `hud-glass`
+va `text-hud`, nunca `text-ink-*`. La marca viste el visor y la portada, no el
+editor: las hojas del agente siguen con el tema del proyecto.
 
 La tipografía es una **lista blanca de tres pilas** y no una URL: una URL
 arbitraria haría que el visor de un comprador pidiera un archivo a un tercero

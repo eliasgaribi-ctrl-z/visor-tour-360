@@ -270,6 +270,16 @@ revisar('y con los colores que sí eran hex', m?.colores?.brand500 === '#7c3aed'
 revisar('la inyección de CSS se descarta', m?.colores?.ink50 === undefined, String(m?.colores?.ink50))
 revisar('un color que no es hex se descarta', m?.colores?.ink900 === undefined, String(m?.colores?.ink900))
 revisar('una tipografía fuera de la lista se descarta', m?.tipografia === undefined, String(m?.tipografia))
+/* La tinta del HUD viaja aparte de la de la app: es lo que permite un vidrio
+   claro sobre una página oscura. Y entra al recorrido guardado, que es de donde
+   la lee `resolveTour` y de donde la exporta `marcaParaArchivo`: la ida y vuelta
+   de más abajo compara `marca` completa, así que si el exportador la olvida, ahí
+   se pone rojo. */
+revisar(
+  'la tinta del HUD llega con la marca',
+  m?.hudTinta === '#f8fafc' && m?.hudTintaSuave === '#cbd5e1',
+  JSON.stringify([m?.hudTinta, m?.hudTintaSuave]),
+)
 revisar('el campo desconocido no se copia', m !== undefined && !('campoQueNoExiste' in m))
 
 /* ── El logo de OTRO teléfono ────────────────────────────────────────────

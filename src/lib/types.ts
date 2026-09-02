@@ -88,6 +88,13 @@ export type Marca = {
   }
   /** El vidrio del HUD. Una inmobiliaria puede quererlo claro. */
   hudFondo?: string
+  /**
+   * La tinta del texto que va ENCIMA del vidrio, y su tono secundario. Sin
+   * ellas el HUD sigue a `ink50`/`ink200`, que también colorean la página: un
+   * vidrio claro necesita las suyas, oscuras, sin oscurecer la app entera.
+   */
+  hudTinta?: string
+  hudTintaSuave?: string
   /** Fondo de la app detrás del canvas. */
   fondoApp?: string
   /** Una de las pilas de `TIPOGRAFIAS`, no una URL: ver marca.ts. */

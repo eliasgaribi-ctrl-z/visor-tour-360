@@ -213,6 +213,8 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
       nombre: m.nombre,
       colores: m.colores,
       hudFondo: m.hudFondo,
+      hudTinta: m.hudTinta,
+      hudTintaSuave: m.hudTintaSuave,
       fondoApp: m.fondoApp,
       tipografia: m.tipografia,
       logo,

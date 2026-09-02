@@ -366,7 +366,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             <button
               type="button"
               onClick={() => ir({ nombre: 'editar', tourId })}
-              className="hud-glass pointer-events-auto grid h-11 w-11 shrink-0 place-items-center rounded-full text-ink-50"
+              className="hud-glass pointer-events-auto grid h-11 w-11 shrink-0 place-items-center rounded-full text-hud"
               aria-label="Regresar"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
@@ -374,8 +374,8 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
               </svg>
             </button>
             <div className="hud-glass pointer-events-auto min-w-0 flex-1 rounded-hud px-4 py-2.5">
-              <p className="truncate text-sm font-semibold text-ink-50">{escena.name}</p>
-              <p className="truncate text-xs text-ink-200">
+              <p className="truncate text-sm font-semibold text-hud">{escena.name}</p>
+              <p className="truncate text-xs text-hud-2">
                 {escena.hotspots.length === 0
                   ? 'Sin puntos todavía'
                   : `${escena.hotspots.length} ${escena.hotspots.length === 1 ? 'punto' : 'puntos'}`}
@@ -386,7 +386,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
 
           {guardado && !pendiente && (
             <div className="absolute left-1/2 top-[calc(env(safe-area-inset-top)+5.5rem)] -translate-x-1/2">
-              <p className="hud-glass rounded-full px-4 py-1.5 text-xs text-ink-50">{guardado}</p>
+              <p className="hud-glass rounded-full px-4 py-1.5 text-xs text-hud">{guardado}</p>
             </div>
           )}
 
