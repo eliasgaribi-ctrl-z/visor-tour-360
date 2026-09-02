@@ -66,8 +66,25 @@ export function Portada({
 
   const agente = ficha.agente
 
+  /* ── Dos cajas y no una, y la razón está medida ────────────────────────────
+   *
+   * La de fuera NO hace scroll y es la que sostiene el fondo; la de dentro hace
+   * scroll y lleva el contenido.
+   *
+   * Con una sola caja —el fondo como hijo absoluto del MISMO contenedor que
+   * scrollea— el `<img>` y el degradado se van con el scroll: `inset-0` se
+   * resuelve contra el área visible y el elemento viaja con el contenido.
+   * Medido en un iPhone SE (375×667) con una descripción de 400 caracteres, que
+   * es lo normal en un anuncio: sobran 58 px, y al bajar hasta el final la foto
+   * quedaba de -58 a 609 en una pantalla de 667. Esos 58 px de abajo —donde
+   * están el botón de entrar y el contacto del agente— se quedaban con texto
+   * claro sobre el fondo gris de la app, sin foto y sin degradado.
+   *
+   * En un teléfono grande no pasa: a 390×844 el contenido cabe. Es un defecto
+   * que solo existe en la pantalla chica, que es donde está la mitad del
+   * mercado al que se le vende esto. */
   return (
-    <div className="alto-pantalla relative flex w-full flex-col overflow-y-auto">
+    <div className="alto-pantalla relative w-full overflow-hidden">
       {/* El fondo es la miniatura de la primera habitación, ya cargada para la
           lista de recorridos: no cuesta una descarga nueva. Un <img> y no un
           background-image, para que el navegador lo priorice como contenido. */}
@@ -81,110 +98,112 @@ export function Portada({
       )}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/50 via-black/70 to-black/90" />
 
-      {accion && (
-        <div
-          className="relative z-10 flex justify-end px-4"
-          style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
-        >
-          {accion}
-        </div>
-      )}
-
-      <div className="relative z-10 mx-auto flex w-full max-w-md flex-1 flex-col justify-end gap-5 p-5">
-        {marca?.nombre && (
-          <div className="flex items-center gap-2">
-            {marca.logo && <img src={marca.logo} alt="" className="h-8 w-auto max-w-[9rem] object-contain" />}
-            <span className="text-xs font-semibold uppercase tracking-widest text-ink-200">
-              {marca.nombre}
-            </span>
+      <div className="relative z-10 flex h-full flex-col overflow-y-auto">
+        {accion && (
+          <div
+            className="flex justify-end px-4"
+            style={{ paddingTop: 'max(1rem, env(safe-area-inset-top))' }}
+          >
+            {accion}
           </div>
         )}
 
-        <div>
-          {ficha.precio && (
-            <p className="text-3xl font-bold leading-tight text-ink-50">{ficha.precio}</p>
-          )}
-          <h1 className="mt-1 text-xl font-semibold text-ink-50">{titulo}</h1>
-          {ficha.direccion ? (
-            <p className="mt-1 text-sm text-ink-200">{ficha.direccion}</p>
-          ) : (
-            subtitulo && <p className="mt-1 text-sm text-ink-200">{subtitulo}</p>
-          )}
-        </div>
-
-        {datos.length > 0 && (
-          <dl className="hud-glass grid grid-cols-3 gap-2 rounded-hud p-3 text-center">
-            {datos.map((d) => (
-              <div key={d.que}>
-                <dt className="text-[11px] uppercase tracking-wide text-ink-200">{d.que}</dt>
-                <dd className="text-base font-semibold text-ink-50">{d.valor}</dd>
-              </div>
-            ))}
-          </dl>
-        )}
-
-        {ficha.descripcion && (
-          <p className="text-sm leading-relaxed text-ink-200">{ficha.descripcion}</p>
-        )}
-
-        <div
-          className="flex flex-col gap-2"
-          style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
-        >
-          <button
-            type="button"
-            onClick={onEntrar}
-            className="flex min-h-14 w-full items-center justify-center gap-2 rounded-hud
-                       bg-brand-500 text-base font-semibold text-[var(--tinta-marca,#000)]
-                       active:bg-brand-600"
-          >
-            <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M3.5 12h17M12 3.2a15 15 0 010 17.6M12 3.2a15 15 0 000 17.6" />
-            </svg>
-            Ver el recorrido
-          </button>
-
-          {/* El contacto va en la portada y no dentro del visor a propósito: en
-              el recorrido el dedo está mirando alrededor, y un botón de llamar
-              ahí se toca sin querer. Aquí es donde la persona decide. */}
-          {agente && (agente.whatsapp || agente.telefono || agente.correo) && (
-            <div className="flex gap-2">
-              {agente.whatsapp && (
-                <a
-                  href={`https://wa.me/${agente.whatsapp}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
-                             text-sm font-semibold text-ink-50 active:bg-white/15"
-                >
-                  WhatsApp
-                </a>
-              )}
-              {agente.telefono && (
-                <a
-                  href={`tel:${agente.telefono}`}
-                  className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
-                             text-sm font-semibold text-ink-50 active:bg-white/15"
-                >
-                  Llamar
-                </a>
-              )}
-              {agente.correo && (
-                <a
-                  href={`mailto:${agente.correo}`}
-                  className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
-                             text-sm font-semibold text-ink-50 active:bg-white/15"
-                >
-                  Correo
-                </a>
-              )}
+        <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-end gap-5 p-5">
+          {marca?.nombre && (
+            <div className="flex items-center gap-2">
+              {marca.logo && <img src={marca.logo} alt="" className="h-8 w-auto max-w-[9rem] object-contain" />}
+              <span className="text-xs font-semibold uppercase tracking-widest text-ink-200">
+                {marca.nombre}
+              </span>
             </div>
           )}
 
-          {agente?.nombre && (
-            <p className="text-center text-xs text-ink-200">{agente.nombre}</p>
+          <div>
+            {ficha.precio && (
+              <p className="text-3xl font-bold leading-tight text-ink-50">{ficha.precio}</p>
+            )}
+            <h1 className="mt-1 text-xl font-semibold text-ink-50">{titulo}</h1>
+            {ficha.direccion ? (
+              <p className="mt-1 text-sm text-ink-200">{ficha.direccion}</p>
+            ) : (
+              subtitulo && <p className="mt-1 text-sm text-ink-200">{subtitulo}</p>
+            )}
+          </div>
+
+          {datos.length > 0 && (
+            <dl className="hud-glass grid grid-cols-3 gap-2 rounded-hud p-3 text-center">
+              {datos.map((d) => (
+                <div key={d.que}>
+                  <dt className="text-[11px] uppercase tracking-wide text-ink-200">{d.que}</dt>
+                  <dd className="text-base font-semibold text-ink-50">{d.valor}</dd>
+                </div>
+              ))}
+            </dl>
           )}
+
+          {ficha.descripcion && (
+            <p className="text-sm leading-relaxed text-ink-200">{ficha.descripcion}</p>
+          )}
+
+          <div
+            className="flex flex-col gap-2"
+            style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+          >
+            <button
+              type="button"
+              onClick={onEntrar}
+              className="flex min-h-14 w-full items-center justify-center gap-2 rounded-hud
+                         bg-brand-500 text-base font-semibold text-[var(--tinta-marca,#000)]
+                         active:bg-brand-600"
+            >
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M3.5 12h17M12 3.2a15 15 0 010 17.6M12 3.2a15 15 0 000 17.6" />
+              </svg>
+              Ver el recorrido
+            </button>
+
+            {/* El contacto va en la portada y no dentro del visor a propósito: en
+                el recorrido el dedo está mirando alrededor, y un botón de llamar
+                ahí se toca sin querer. Aquí es donde la persona decide. */}
+            {agente && (agente.whatsapp || agente.telefono || agente.correo) && (
+              <div className="flex gap-2">
+                {agente.whatsapp && (
+                  <a
+                    href={`https://wa.me/${agente.whatsapp}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
+                               text-sm font-semibold text-ink-50 active:bg-white/15"
+                  >
+                    WhatsApp
+                  </a>
+                )}
+                {agente.telefono && (
+                  <a
+                    href={`tel:${agente.telefono}`}
+                    className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
+                               text-sm font-semibold text-ink-50 active:bg-white/15"
+                  >
+                    Llamar
+                  </a>
+                )}
+                {agente.correo && (
+                  <a
+                    href={`mailto:${agente.correo}`}
+                    className="hud-glass flex min-h-12 flex-1 items-center justify-center rounded-hud
+                               text-sm font-semibold text-ink-50 active:bg-white/15"
+                  >
+                    Correo
+                  </a>
+                )}
+              </div>
+            )}
+
+            {agente?.nombre && (
+              <p className="text-center text-xs text-ink-200">{agente.nombre}</p>
+            )}
+          </div>
         </div>
       </div>
     </div>

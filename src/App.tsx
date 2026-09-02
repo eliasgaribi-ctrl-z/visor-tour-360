@@ -136,7 +136,19 @@ export default function App() {
         return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
       case 'ver':
-        return <VisorGuardado tourId={ruta.tourId} ir={ir} />
+        /* ── `key` y no solo la prop ──────────────────────────────────────────
+         *
+         * `VisorGuardado` guarda DOS cosas en estado: el recorrido que leyó de
+         * IndexedDB y si la persona ya entró (o sea, si la portada ya se pasó).
+         * Al navegar de `#/ver/A` a `#/ver/B` React lo mantiene montado porque
+         * ocupa la misma posición del árbol, así que los dos estados se quedan
+         * con lo de A: el recorrido B se abría SIN portada —saltándose el
+         * precio, la dirección y el contacto, que es la pantalla que vende— y
+         * mientras cargaba mostraba los datos de A bajo el id de B.
+         *
+         * Con `key` React lo desmonta y lo monta de nuevo, que es lo correcto
+         * para otro recorrido: son otras texturas y otra marca. */
+        return <VisorGuardado key={ruta.tourId} tourId={ruta.tourId} ir={ir} />
 
       case 'demo':
         return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
@@ -145,7 +157,9 @@ export default function App() {
       default:
         if (inicial === null) return <Cargando texto="Abriendo…" />
         if (inicial === 'demo') return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
-        return <VisorGuardado tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
+        return (
+          <VisorGuardado key={inicial} tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
+        )
     }
   }
 

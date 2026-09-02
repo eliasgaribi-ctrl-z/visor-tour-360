@@ -29,7 +29,7 @@
       "recamaras": 3,
       "banos": 2.4,
       "direccion": "Av. Vallarta 1234, Zapopan",
-      "descripcion": "Dos plantas, jardín al fondo.",
+      "descripcion": "Casa de dos plantas en privada con caseta. Planta baja: sala, comedor, cocina integral con desayunador, medio bano y patio de servicio. Planta alta: tres recamaras, la principal con vestidor y bano completo, y un estudio que se puede cerrar como cuarta recamara. Jardin al fondo con jacaranda y espacio para asador. Dos cajones de estacionamiento techados. A cinco minutos de Av. Vallarta y de dos colegios.",
       "agente": {
         "nombre": "Ana Ruiz",
         "telefono": "+52 33 2222 3333",
@@ -46,8 +46,22 @@
         "coverageDeg": 358,
         "origin": "captura",
         "hotspots": [
-          { "id": "h1", "kind": "link", "to": "patio", "label": "Al patio", "yaw": 62, "pitch": -6 },
-          { "id": "h2", "kind": "info", "label": "Piso", "body": "Duela de encino.", "yaw": 200, "pitch": -20 }
+          {
+            "id": "h1",
+            "kind": "link",
+            "to": "patio",
+            "label": "Al patio",
+            "yaw": 62,
+            "pitch": -6
+          },
+          {
+            "id": "h2",
+            "kind": "info",
+            "label": "Piso",
+            "body": "Duela de encino.",
+            "yaw": 200,
+            "pitch": -20
+          }
         ],
         "createdAt": 1772000000000
       },
@@ -57,7 +71,14 @@
         "archivo": "fotos/sala.jpg",
         "initialYaw": "90",
         "hotspots": [
-          { "id": "h3", "kind": "link", "to": "sala", "label": "A la sala", "yaw": 180, "pitch": 0 }
+          {
+            "id": "h3",
+            "kind": "link",
+            "to": "sala",
+            "label": "A la sala",
+            "yaw": 180,
+            "pitch": 0
+          }
         ],
         "createdAt": 1772000001000
       }

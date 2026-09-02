@@ -66,6 +66,9 @@ const PROPIEDAD: Record<string, string> = {
   ink900: '--color-ink-900',
 }
 
+/** El valor con el que venía el HTML, para poder volver a él al quitar la marca. */
+let barraDelHtml: string | null = null
+
 /** Todo lo que esta función puede llegar a escribir, para poder limpiarlo. */
 const TODAS = [...Object.values(PROPIEDAD), '--hud-fondo', '--fondo-app', '--tipografia', '--tinta-marca']
 
@@ -81,6 +84,15 @@ export function aplicarMarca(marca: Marca | undefined): void {
   if (typeof document === 'undefined') return
   const raiz = document.documentElement.style
   for (const propiedad of TODAS) raiz.removeProperty(propiedad)
+
+  /* La barra del navegador NO es una propiedad de CSS, así que el bucle de
+     arriba no la limpia: se pone y se devuelve a mano, y por eso va ANTES del
+     `return`. Puesta después, la primera versión de esto vestía la barra al
+     entrar a un recorrido y la dejaba con el color de esa inmobiliaria al salir
+     — comprobado en la prueba, que leyó `#0a0a12` estando en "Mis recorridos".
+     Los dos caminos de esta función tienen que pasar por aquí. */
+  colorDeLaBarra(marca?.fondoApp)
+
   if (!marca) return
 
   for (const [clave, valor] of Object.entries(marca.colores ?? {})) {
@@ -99,6 +111,27 @@ export function aplicarMarca(marca: Marca | undefined): void {
   if (marca.colores?.brand500) {
     raiz.setProperty('--tinta-marca', tintaPara(marca.colores.brand500))
   }
+}
+
+/**
+ * El color de la barra del navegador.
+ *
+ * No es una propiedad de CSS sino un `<meta name="theme-color">`, así que
+ * reasignar tokens no lo mueve: se quedaba con el valor de `index.html` pase lo
+ * que pase. En un iPhone eso es la franja de arriba y la de abajo alrededor de
+ * la página, o sea que el recorrido de una inmobiliaria morada se enmarcaba en
+ * el color del visor de otra — justo el borde que más se nota porque no es parte
+ * del diseño de nadie.
+ *
+ * Se sigue `fondoApp` y no el color de acento: el acento es para lo que resalta,
+ * y esta franja tiene que DESAPARECER contra la página. Sin marca vuelve al
+ * valor declarado en el HTML, que es el mismo `#0b0f19` del `body`.
+ */
+function colorDeLaBarra(color: string | undefined): void {
+  const meta = document.querySelector('meta[name="theme-color"]')
+  if (!(meta instanceof HTMLMetaElement)) return
+  if (barraDelHtml === null) barraDelHtml = meta.content
+  meta.content = color ?? barraDelHtml
 }
 
 /* ------------------------------------------------------------------ CONTRASTE */

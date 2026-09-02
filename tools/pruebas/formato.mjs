@@ -297,6 +297,134 @@ revisar(
 )
 
 /* ==========================================================================
+ * LA PORTADA CON UNA DESCRIPCIÓN LARGA
+ *
+ * El fixture trae una descripción de 400 caracteres, que es lo normal en un
+ * anuncio de verdad, y con eso el contenido de la portada DESBORDA en un
+ * teléfono. Ahí aparece el defecto: la foto de fondo y el degradado son hijos
+ * absolutos del mismo contenedor que hace scroll, así que se van con él y la
+ * mitad de abajo queda sin fondo — el texto blanco sobre el gris de la app.
+ *
+ * Se mide la posición del `<img>` de fondo después de bajar hasta el final: si
+ * sigue cubriendo la pantalla, está bien puesto.
+ *
+ * ── Y por qué esta parte se mide en un iPhone SE ──────────────────────────
+ *
+ * Porque en un teléfono grande NO desborda: medido, en 390×844 el contenido cabe
+ * con 400 caracteres de descripción y la prueba no probaría nada. A 375×667 —el
+ * mismo aparato que `tactil.mjs` usa como referencia del proyecto— sobran 58 px
+ * y el defecto aparece. Un caso de borde que solo existe en la pantalla chica
+ * sigue siendo un caso: es donde vive la mitad del mercado al que se le vende.
+ * ========================================================================== */
+console.log('\n=== La portada con una descripción larga ===')
+
+await page.setViewportSize({ width: 375, height: 667 })
+await page.goto(`${BASE}#/ver/${v2Guardado.id}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(2000)
+
+const portada = await page.evaluate(async () => {
+  const alto = window.innerHeight
+  /* El contenedor que hace scroll: el que de verdad tiene desbordamiento, no el
+     que uno cree. Se busca desde el fondo del árbol para no confundirlo con
+     `document.scrollingElement`, que en esta app no scrollea. */
+  const cajas = [...document.querySelectorAll('div')].filter(
+    (d) => d.scrollHeight > d.clientHeight + 8 && d.clientHeight > alto / 2,
+  )
+  const caja = cajas[0]
+  if (!caja) return { desborda: false }
+
+  caja.scrollTop = caja.scrollHeight
+  await new Promise((listo) => requestAnimationFrame(() => requestAnimationFrame(listo)))
+
+  const img = document.querySelector('img[aria-hidden="true"]')
+  const r = img ? img.getBoundingClientRect() : null
+  return {
+    desborda: true,
+    sobra: caja.scrollHeight - caja.clientHeight,
+    arriba: r ? Math.round(r.top) : null,
+    abajo: r ? Math.round(r.bottom) : null,
+    alto,
+  }
+})
+
+revisar(
+  'el contenido desborda, como en un anuncio real',
+  portada.desborda === true,
+  portada.desborda ? `${portada.sobra} px de más` : 'no desbordó: la prueba no prueba nada',
+)
+revisar(
+  'y la foto de fondo sigue cubriendo abajo',
+  portada.desborda && portada.arriba !== null && portada.arriba <= 0 && portada.abajo >= portada.alto,
+  `img de ${portada.arriba} a ${portada.abajo}, pantalla ${portada.alto}`,
+)
+
+await page.setViewportSize({ width: 390, height: 844 })
+
+/* ==========================================================================
+ * LA BARRA DEL NAVEGADOR TAMBIÉN ES DE LA MARCA
+ *
+ * `theme-color` no es una propiedad de CSS sino un `<meta>`, así que reasignar
+ * tokens no lo mueve: se quedaba con el valor de `index.html`. En un iPhone eso
+ * es la franja de arriba y la de abajo alrededor de la página, o sea que el
+ * recorrido de una inmobiliaria morada se enmarcaba en el color del visor de
+ * otra — el borde que más se nota, porque no es parte del diseño de nadie.
+ * ========================================================================== */
+console.log('\n=== La barra del navegador sigue a la marca ===')
+
+const barra = async () =>
+  page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content ?? null)
+
+await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1000)
+const barraSinMarca = await barra()
+await page.goto(`${BASE}#/ver/${v2Guardado.id}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(2000)
+const barraConMarca = await barra()
+await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+const barraTrasSalir = await barra()
+
+/* El fondo del `body` y no el acento: esta franja tiene que DESAPARECER contra
+   la página, no resaltar. Se comprueba que sean el mismo color. */
+revisar('sin marca es el fondo de la app', barraSinMarca === '#0b0f19', String(barraSinMarca))
+revisar('con marca toma su fondo', barraConMarca === '#0a0a12', String(barraConMarca))
+revisar('y al salir vuelve', barraTrasSalir === '#0b0f19', String(barraTrasSalir))
+
+/* ==========================================================================
+ * DOS RECORRIDOS SEGUIDOS: EL SEGUNDO TAMBIÉN TIENE PORTADA
+ *
+ * `VisorGuardado` guarda en estado el recorrido y si la persona ya entró. Al
+ * navegar de `#/ver/A` a `#/ver/B` React lo mantiene montado —misma posición del
+ * árbol— así que los dos estados se quedaban con lo de A: B se abría SIN
+ * portada, saltándose el precio y el contacto, que es la pantalla que vende.
+ *
+ * Es el caso del agente enseñando dos casas a un cliente que tiene al lado, o
+ * sea el uso para el que existe la portada.
+ * ========================================================================== */
+console.log('\n=== El segundo recorrido también tiene portada ===')
+
+const idV1 = (await leerGuardado('Casa de prueba v1')).id
+await page.goto(`${BASE}#/ver/${idV1}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(2200)
+await page.getByRole('button', { name: /Ver el recorrido/ }).click()
+await page.waitForTimeout(3500)
+const entroEnElPrimero = await page.evaluate(() => document.querySelectorAll('canvas').length > 0)
+revisar('se entra al primero', entroEnElPrimero)
+
+/* Sin recargar la página: se cambia el hash, que es lo que hace la app. */
+await page.evaluate((id) => {
+  location.hash = `#/ver/${id}`
+}, v2Guardado.id)
+await page.waitForTimeout(2500)
+const enElSegundo = {
+  hash: await page.evaluate(() => location.hash),
+  portada: await page.getByRole('button', { name: /Ver el recorrido/ }).isVisible().catch(() => false),
+  precio: await page.getByText('Desde $1.9M').first().isVisible().catch(() => false),
+}
+revisar('el hash cambió al segundo', enElSegundo.hash === `#/ver/${v2Guardado.id}`, enElSegundo.hash)
+revisar('y el segundo muestra SU portada', enElSegundo.portada && enElSegundo.precio)
+
+/* ==========================================================================
  * UNA MARCA QUE DEJARÍA EL VISOR ILEGIBLE
  *
  * `#111111` es un hex perfectamente válido, y como `ink50` deja la portada a
