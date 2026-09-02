@@ -3,7 +3,8 @@ import * as THREE from 'three'
 
 import type { PuntoGuia } from '../../lib/capture/plan'
 import type { OrientationReading } from '../../lib/capture/orientation'
-import { DEG, yawPitchToScreenQ } from '../../lib/math'
+import { DEG } from '../../lib/math'
+import { yawPitchToScreenQ } from '../../lib/math3d'
 
 export type GuiaCapturaProps = {
   puntos: PuntoGuia[]

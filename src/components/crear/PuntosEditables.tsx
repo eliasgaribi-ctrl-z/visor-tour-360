@@ -7,7 +7,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
 import { observarTamano } from '../../lib/observarTamano'
-import { screenToYawPitch, yawPitchToScreen } from '../../lib/math'
+import { screenToYawPitch, yawPitchToScreen } from '../../lib/math3d'
 
 export type PuntosEditablesProps = {
   hotspots: Hotspot[]

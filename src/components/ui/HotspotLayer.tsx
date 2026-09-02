@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
 import { observarTamano } from '../../lib/observarTamano'
-import { CORTE_VISOR, DEG, yawPitchToScreenQ } from '../../lib/math'
+import { DEG } from '../../lib/math'
+import { CORTE_VISOR, yawPitchToScreenQ } from '../../lib/math3d'
 
 export type HotspotLayerProps = {
   hotspots: Hotspot[]
