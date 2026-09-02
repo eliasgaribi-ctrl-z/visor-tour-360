@@ -1,0 +1,66 @@
+{
+  "formato": "visor-tour-360",
+  "version": 2,
+  "exportadoEn": "2026-03-01T12:00:00.000Z",
+  "recorrido": {
+    "id": "tour-v2-fixture",
+    "title": "Casa de prueba v2",
+    "subtitle": "Con marca, ficha y basura adentro",
+    "startSceneId": "patio",
+    "createdAt": 1772000000000,
+    "marca": {
+      "nombre": "Inmobiliaria del Valle",
+      "colores": {
+        "brand500": "#7c3aed",
+        "brand600": "#6d28d9",
+        "brand300": "#c4b5fd",
+        "ink50": "#fff;} html{filter:invert(1)} :root{--x:",
+        "ink900": "rgb(11, 15, 25)"
+      },
+      "hudFondo": "#101827",
+      "fondoApp": "#0a0a12",
+      "tipografia": "https://tipos.mal.mx/fuente.css",
+      "logoId": "img-del-otro-telefono",
+      "campoQueNoExiste": "se ignora sin quejarse"
+    },
+    "ficha": {
+      "precio": "Desde $1.9M",
+      "superficie": "148 m²",
+      "recamaras": 3,
+      "banos": 2.4,
+      "direccion": "Av. Vallarta 1234, Zapopan",
+      "descripcion": "Dos plantas, jardín al fondo.",
+      "agente": {
+        "nombre": "Ana Ruiz",
+        "telefono": "+52 33 2222 3333",
+        "whatsapp": "52 33 2222 3333",
+        "correo": "ana@valle.mx"
+      }
+    },
+    "scenes": [
+      {
+        "id": "sala",
+        "name": "Sala",
+        "archivo": "fotos/sala.jpg",
+        "initialYaw": 12,
+        "coverageDeg": 358,
+        "origin": "captura",
+        "hotspots": [
+          { "id": "h1", "kind": "link", "to": "patio", "label": "Al patio", "yaw": 62, "pitch": -6 },
+          { "id": "h2", "kind": "info", "label": "Piso", "body": "Duela de encino.", "yaw": 200, "pitch": -20 }
+        ],
+        "createdAt": 1772000000000
+      },
+      {
+        "id": "patio",
+        "name": "Patio",
+        "archivo": "fotos/sala.jpg",
+        "initialYaw": "90",
+        "hotspots": [
+          { "id": "h3", "kind": "link", "to": "sala", "label": "A la sala", "yaw": 180, "pitch": 0 }
+        ],
+        "createdAt": 1772000001000
+      }
+    ]
+  }
+}

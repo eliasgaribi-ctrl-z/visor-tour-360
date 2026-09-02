@@ -1,5 +1,6 @@
-import type { Ficha, Marca } from '../types'
-import type { MarcaGuardada } from './types'
+import type { Ficha, Hotspot, Marca } from '../types'
+import type { MarcaGuardada, SceneOrigin } from './types'
+import { clamp, wrap360 } from '../math'
 
 /**
  * ============================================================================
@@ -40,6 +41,20 @@ function texto(v: unknown, max = 200): string | undefined {
   if (typeof v !== 'string') return undefined
   const limpio = v.trim().slice(0, max)
   return limpio || undefined
+}
+
+/**
+ * Un número que pudo llegar como texto.
+ *
+ * `"90"` se acepta y vale 90, a propósito: un manifiesto editado a mano que dice
+ * `"initialYaw": "90"` está diciendo noventa con toda claridad, y rechazarlo
+ * tiraría el dato para no ganar nada. Lo que NO se acepta es `"90 grados"` ni
+ * `""` ni `true` — de ahí la comprobación de finitud, que es la que atrapa los
+ * `NaN` que produce `Number()` con cualquier basura.
+ */
+function numero(v: unknown): number | undefined {
+  const n = typeof v === 'string' ? (v.trim() === '' ? NaN : Number(v)) : v
+  return typeof n === 'number' && Number.isFinite(n) ? n : undefined
 }
 
 function entero(v: unknown, max = 99): number | undefined {
@@ -83,8 +98,12 @@ export function limpiarMarca(crudo: unknown): MarcaGuardada | undefined {
   if (m.tipografia === 'sistema' || m.tipografia === 'serif' || m.tipografia === 'geometrica') {
     limpia.tipografia = m.tipografia
   }
-  const logoId = texto(m.logoId, 80)
-  if (logoId) limpia.logoId = logoId
+  /* `logoId` NO se copia, y es deliberado: es una llave del IndexedDB del
+     aparato que exportó. Traerla al recorrido importado deja un puntero a un
+     blob que en ESTE teléfono no existe — ni logo ni error, solo un hueco que
+     nadie sabe explicar. El logo cruza como archivo dentro del ZIP
+     (`marca/logo.png`), y quien lo guarda de nuevo es `importarTour`, con una
+     llave local recién hecha. Un campo ausente es honesto; una llave muerta no. */
 
   return Object.keys(limpia).length > 0 ? limpia : undefined
 }
@@ -154,6 +173,125 @@ export function limpiarFicha(crudo: unknown): Ficha | undefined {
   if (Object.keys(agente).length > 0) ficha.agente = agente
 
   return Object.keys(ficha).length > 0 ? ficha : undefined
+}
+
+/**
+ * Una habitación tal como sale del manifiesto, ya con la forma que espera el
+ * resto del importador: sin campos ausentes y sin nada que no sea del tipo que
+ * dice ser.
+ */
+export type EscenaLimpia = {
+  id: string
+  name: string
+  archivo: string
+  miniatura?: string
+  initialYaw: number
+  hotspots: Hotspot[]
+  origin?: SceneOrigin
+  coverageDeg?: number
+  createdAt: number
+}
+
+/** Un punto del manifiesto. Devuelve `undefined` si no se puede salvar. */
+function limpiarPunto(crudo: unknown): Hotspot | undefined {
+  if (!crudo || typeof crudo !== 'object') return undefined
+  const h = crudo as Record<string, unknown>
+
+  const id = texto(h.id, 60)
+  const yaw = numero(h.yaw)
+  const pitch = numero(h.pitch)
+  /* Sin id no se puede usar como llave de React, y sin dirección no se puede
+     colocar en la esfera. Los tres son la identidad del punto: si falta uno, no
+     hay punto que arreglar. */
+  if (!id || yaw === undefined || pitch === undefined) return undefined
+
+  const base = {
+    id,
+    label: texto(h.label, 80) ?? '',
+    yaw: wrap360(yaw),
+    // El mismo ±85 que documenta `src/lib/types.ts`: en el polo la proyección
+    // se degenera y el marcador se va al infinito.
+    pitch: clamp(pitch, -85, 85),
+  }
+
+  if (h.kind === 'link') {
+    const to = texto(h.to, 60)
+    if (!to) return undefined
+    const arriveYaw = numero(h.arriveYaw)
+    return arriveYaw === undefined
+      ? { ...base, kind: 'link', to }
+      : { ...base, kind: 'link', to, arriveYaw: wrap360(arriveYaw) }
+  }
+  if (h.kind === 'info') {
+    const body = texto(h.body, 600)
+    return body ? { ...base, kind: 'info', body } : { ...base, kind: 'info' }
+  }
+  // Un `kind` que no es ninguno de los dos no se puede dibujar de ninguna forma.
+  return undefined
+}
+
+/**
+ * Limpia una habitación que viene de un archivo.
+ *
+ * ── Por qué existe, que es la parte que hay que recordar ──────────────────
+ *
+ * `marca` y `ficha` se filtraban campo por campo desde el primer día, y los
+ * campos numéricos de la escena entraban TAL CUAL, dos líneas más abajo. Un
+ * manifiesto con `"initialYaw": "90"` se guardaba como string, sobrevivía a las
+ * recargas —IndexedDB guarda strings igual de bien que números— y el fallo
+ * aparecía lejos de la causa: en el rig, `'90' + 0` no es 90 sino `'900'`, así
+ * que la habitación abría mirando a un ángulo que no existe.
+ *
+ * Es el mismo tipo de agujero que el de los `href` de la portada, y por el mismo
+ * motivo: un `.tour` llega por WhatsApp de un tercero. La diferencia es que este
+ * no se ve, y por eso duró más.
+ *
+ * ── Y por qué está aquí y no en `normalizar.ts` ───────────────────────────
+ *
+ * Por peso, y está medido: `normalizar.ts` lo llama `getTour()`, o sea la
+ * pantalla "Mis recorridos", así que todo lo que viva ahí entra en el chunk de
+ * arranque. `migrar.ts` solo lo carga el importador. Esta es la frontera por
+ * donde un valor mal tipado puede ENTRAR; los registros que ya estén mal dentro
+ * de la base necesitan la estampa de versión que todavía no existe.
+ *
+ * Devuelve `undefined` cuando no hay nada que importar (sin nombre de archivo no
+ * hay foto que buscar en el ZIP).
+ */
+export function limpiarEscena(crudo: unknown): EscenaLimpia | undefined {
+  if (!crudo || typeof crudo !== 'object') return undefined
+  const e = crudo as Record<string, unknown>
+
+  const archivo = texto(e.archivo, 255)
+  if (!archivo) return undefined
+
+  const escena: EscenaLimpia = {
+    id: texto(e.id, 60) ?? '',
+    name: texto(e.name, 80) ?? 'Habitación',
+    archivo,
+    initialYaw: wrap360(numero(e.initialYaw) ?? 0),
+    hotspots: (Array.isArray(e.hotspots) ? e.hotspots : [])
+      .map(limpiarPunto)
+      .filter((h): h is Hotspot => h !== undefined),
+    createdAt: numero(e.createdAt) ?? Date.now(),
+  }
+
+  const miniatura = texto(e.miniatura, 255)
+  if (miniatura) escena.miniatura = miniatura
+  if (e.origin === 'captura' || e.origin === 'foto') escena.origin = e.origin
+
+  /* Cobertura: 0 grados no es una foto y más de 360 no es una esfera. Fuera de
+     ese rango se omite en vez de corregirse, porque el aviso de "foto parcial"
+     que la UI pinta con este número es peor si el número está inventado. */
+  const cobertura = numero(e.coverageDeg)
+  if (cobertura !== undefined && cobertura > 0 && cobertura <= 360) {
+    escena.coverageDeg = cobertura
+  }
+
+  /* Una fecha de creación que no es una fecha se cambia por ahora, no por cero:
+     el listado ordena por ella, y un cero manda la habitación al año 1970. */
+  if (escena.createdAt <= 0) escena.createdAt = Date.now()
+
+  return escena
 }
 
 /**

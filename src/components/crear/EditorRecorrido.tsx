@@ -44,7 +44,10 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const [ficha, setFicha] = useState<Record<string, string> | null>(null)
   const [confirmarBorrado, setConfirmarBorrado] = useState<StoredScene | null>(null)
   const [paquete, setPaquete] = useState<
-    { estado: 'armando' } | { estado: 'listo'; blob: Blob; nombre: string } | { estado: 'error'; mensaje: string } | null
+    | { estado: 'armando' }
+    | { estado: 'listo'; blob: Blob; nombre: string; faltantes: string[] }
+    | { estado: 'error'; mensaje: string }
+    | null
   >(null)
 
   const cargar = useCallback(async () => {
@@ -108,8 +111,8 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const prepararArchivo = async () => {
     setPaquete({ estado: 'armando' })
     try {
-      const { blob, nombre } = await exportarTour(tour.id)
-      setPaquete({ estado: 'listo', blob, nombre })
+      const { blob, nombre, faltantes } = await exportarTour(tour.id)
+      setPaquete({ estado: 'listo', blob, nombre, faltantes })
     } catch (e) {
       setPaquete({
         estado: 'error',
@@ -228,6 +231,17 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
               )}
               {paquete?.estado === 'error' && (
                 <p className="mt-2 text-sm text-red-300">{paquete.mensaje}</p>
+              )}
+              {/* El archivo se arma aunque a una habitación le falte su foto —el
+                  respaldo importa justo cuando el navegador ya borró cosas— pero
+                  hay que DECIR qué se quedó fuera, o el agente cree que tiene una
+                  copia completa y la tiene incompleta. */}
+              {paquete?.estado === 'listo' && paquete.faltantes.length > 0 && (
+                <p className="mt-2 text-sm text-amber-300">
+                  {paquete.faltantes.length === 1
+                    ? `No se pudo incluir "${paquete.faltantes[0]}": su foto ya no está en el teléfono.`
+                    : `No se pudieron incluir ${paquete.faltantes.length} habitaciones (${paquete.faltantes.join(', ')}): sus fotos ya no están en el teléfono.`}
+                </p>
               )}
             </Tarjeta>
           </>

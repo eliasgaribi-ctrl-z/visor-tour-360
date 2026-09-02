@@ -113,7 +113,13 @@ export async function deleteTour(id: string): Promise<void> {
   const tour = await getTour(id)
   if (!tour) return
 
-  const imageIds = tour.scenes.flatMap((s) => [s.imageId, s.thumbId]).filter(Boolean) as string[]
+  /* El logo entra en la lista igual que las fotos: desde que viaja dentro del
+     `.tour` hay un blob de logo por cada recorrido importado, y sin esto cada
+     borrado dejaba uno huérfano ocupando espacio que nadie iba a reclamar. */
+  const imageIds = [
+    ...tour.scenes.flatMap((s) => [s.imageId, s.thumbId]),
+    tour.marca?.logoId,
+  ].filter(Boolean) as string[]
   for (const imageId of imageIds) releaseBlobUrl(imageId)
 
   await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
