@@ -120,6 +120,16 @@ await page.getByRole('button', { name: 'Ajustes' }).click()
 await page.waitForTimeout(400)
 await auditar('hoja: ajustes')
 
+/* Y la lista OTRA VEZ, ahora que sí hay un recorrido: la fila trae dos botones
+   —el lápiz y el bote de basura— que en la lista vacía no existen, así que la
+   primera pasada por esta pantalla no los medía. Los dos van pegados al borde
+   derecho y son los dos que más molesta errar con el pulgar. */
+await page.getByRole('button', { name: 'Cerrar' }).click().catch(() => {})
+await page.waitForTimeout(300)
+await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(900)
+await auditar('mis recorridos con uno dentro')
+
 console.log(`\n${bien ? 'TODO SE PUEDE TOCAR' : 'HAY CONTROLES DEMASIADO CHICOS'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')
 await browser.close()

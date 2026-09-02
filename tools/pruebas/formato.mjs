@@ -318,6 +318,16 @@ const vuelta = await page.evaluate(async (id) => {
     entradas: dentro.map((x) => x.name),
     manifiesto,
     reimportado: JSON.parse(JSON.stringify(reimportado)),
+    /* El tamaño de cada foto guardada de nuevo. Con solo comparar las llaves,
+       la aserción no podía fallar nunca —`newId()` siempre devuelve una nueva—,
+       o sea que era de las que se leen bien y no prueban nada. Lo que de verdad
+       importa es que la foto ESTÉ bajo la llave nueva. */
+    pesos: await Promise.all(
+      reimportado.scenes.map(async (s) => {
+        const b = await (await import('/src/lib/store/tours.ts')).getImage(s.imageId)
+        return b ? b.size : 0
+      }),
+    ),
   }
 }, v2Guardado.id)
 
@@ -346,11 +356,16 @@ revisar(
 )
 
 /* Las fotos SÍ cambian de llave, y tiene que ser así: son blobs nuevos en este
-   teléfono. Lo que no puede pasar es que se queden apuntando a las viejas. */
+   teléfono. Lo que no puede pasar es que se queden apuntando a las viejas ni que
+   la llave nueva no tenga nada detrás. */
 const llavesNuevas = vuelta.reimportado.scenes.every(
   (s, i) => s.imageId && s.imageId !== v2Guardado.scenes[i].imageId,
 )
-revisar('las fotos se vuelven a guardar con llave nueva', llavesNuevas)
+revisar(
+  'las fotos se vuelven a guardar con llave nueva',
+  llavesNuevas && vuelta.pesos.every((n) => n > 0),
+  vuelta.pesos.join(' / ') + ' B',
+)
 
 /* Y el recorrido reimportado tiene que ser OTRO, no una sobrescritura: el caso
    real es "me pasaron el recorrido y yo ya tenía mi versión". */
