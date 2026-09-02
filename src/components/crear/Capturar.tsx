@@ -48,6 +48,8 @@ import {
   miniatura,
   soltarLienzo,
 } from '../../lib/capture/frames'
+import { medirDeriva, type Deriva } from '../../lib/capture/anillo'
+import { conGPano } from '../../lib/capture/xmp'
 import { planDeCaptura, puntoMasCercano, type PuntoGuia } from '../../lib/capture/plan'
 import { mantenerPantallaEncendida } from '../../lib/capture/pantalla'
 import { PanoramaStitcher } from '../../lib/capture/stitcher'
@@ -75,6 +77,11 @@ type Toma = {
   brillo: number
   yaw: number
   pitch: number
+  /** Miniatura en gris del fotograma, para medir la deriva al cerrar el anillo. */
+  grises: Float32Array
+  /** Tamaño del fotograma. De ahí sale su campo de visión con el lente ya medido. */
+  ancho: number
+  alto: number
 }
 
 /** Miniatura en gris del video, con la dirección a la que apuntaba. */
@@ -175,6 +182,9 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const perdidaAtendida = useRef(0)
   /** La URL del fantasma, para poder revocarla sin depender del estado. */
   const urlFantasma = useRef<string | null>(null)
+  /* Si la cámara aceptó congelar la exposición. Safari en iOS suele decir que
+     no, y saberlo vale para quien mire los metadatos de la foto después. */
+  const exposicionFijada = useRef(false)
 
 
   useEffect(() => {
@@ -332,6 +342,13 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       const lienzo = capturarFotograma(v)
       const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovLargo.current)
       const brillo = brilloDe(lienzo)
+      /* La misma miniatura en gris que ya se saca durante el barrido para medir
+         el lente, pero la del INSTANTE del disparo, que es la que sirve para
+         cerrar el anillo al terminar (ver ../../lib/capture/anillo.ts). Cuesta
+         96 × 72 × 4 = 27 kB por toma: con treinta tomas, 0.8 MB al lado de los
+         33 MB del lienzo del costurero. Se saca aquí y no en el `toBlob` porque
+         para entonces el lienzo ya está soltado. */
+      const grises = grisesReducidos(lienzo, GRIS.ancho, GRIS.alto)
 
       // Al mundo de la panorámica: la primera dirección del plan queda al frente.
       const corregida = new THREE.Quaternion()
@@ -350,6 +367,9 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
               brillo,
               yaw,
               pitch,
+              grises,
+              ancho: lienzo.width,
+              alto: lienzo.height,
             })
             setTomadas(tomas.current.length)
             if (manual) mostrarFantasma(blob)
@@ -547,7 +567,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       }
 
       sesion.current = abierta
-      await fijarExposicion(abierta)
+      exposicionFijada.current = await fijarExposicion(abierta)
 
       const v = video.current
       if (!v) throw new CameraError('desconocido', 'No se encontró el visor de la cámara.')
@@ -637,7 +657,15 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   }, [fase.nombre])
 
   /* ------------------------------------------------------- DESHACER Y CERRAR */
-  const recoser = useCallback(async (fovFinal: number) => {
+  /**
+   * Vuelve a pegar todas las tomas desde sus JPEG.
+   *
+   * `deriva` solo llega desde `terminar()`: es la corrección del cierre del
+   * anillo, y solo tiene sentido con la vuelta completa en la mano. Recoser a
+   * media captura —al deshacer, o al recuperarse de una pérdida de contexto—
+   * pasa `null` y pega las tomas donde dice el sensor, igual que siempre.
+   */
+  const recoser = useCallback(async (fovFinal: number, deriva: Deriva | null = null) => {
     const st = stitcher.current
     if (!st) return
     st.limpiar()
@@ -645,7 +673,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     const ctx = lienzo.getContext('2d', { alpha: false })
 
     try {
-      for (const toma of tomas.current) {
+      for (const [indice, toma] of tomas.current.entries()) {
         const bitmap = await createImageBitmap(toma.blob)
         // Recoser 25 tomas tarda segundos; si el usuario se sale a media
         // operación, seguir dibujando sobre un costurero ya destruido explota.
@@ -659,8 +687,19 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
         bitmap.close()
 
         const { hfov, vfov } = fovDe(lienzo.width, lienzo.height, fovFinal)
+        /* La corrección de la deriva entra por el mismo sitio que el giro de
+           base, sumándose: las dos son giros del MUNDO alrededor de la vertical
+           y el orden entre ellas no cambia nada.
+
+           El `?? 0` no es adorno: `correcciones` se midió sobre la lista de
+           tomas de ESE momento, y si alguna vez creciera entre la medición y el
+           recosido el índice se saldría del arreglo. `baseYaw + undefined` es
+           NaN, `setFromAxisAngle` con NaN devuelve un cuaternión NaN, y eso
+           entra al costurero y se lleva la panorámica entera por delante. Cero
+           es la respuesta correcta para una toma sin corrección medida. */
+        const ajuste = deriva ? (deriva.correcciones[indice] ?? 0) : 0
         const corregida = new THREE.Quaternion()
-          .setFromAxisAngle(Y, baseYaw.current * DEG)
+          .setFromAxisAngle(Y, (baseYaw.current + ajuste) * DEG)
           .multiply(toma.orientacion)
         st.agregar({ fuente: lienzo, orientacion: corregida, hfov, vfov, brillo: toma.brillo })
       }
@@ -682,9 +721,9 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
    * `tomas.current`, que es memoria normal y no se fue a ninguna parte.
    */
   const recoserTodo = useCallback(
-    async (fov: number) => {
+    async (fov: number, deriva: Deriva | null = null) => {
       if (!stitcher.current || stitcher.current.perdido) montarCosturero()
-      await recoser(fov)
+      await recoser(fov, deriva)
     },
     [montarCosturero, recoser],
   )
@@ -811,17 +850,43 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
          que en el reintento desde la pantalla de error. */
       const sinContexto = !stitcher.current || stitcher.current.perdido
 
-      if (hayQueCalibrar || sinContexto) {
+      /* CERRAR EL ANILLO. Se mide con el lente ya calibrado, porque la
+         medición proyecta las miniaturas y para eso necesita el campo de visión
+         de verdad; por eso `fovLargo` se actualiza aquí arriba y no dentro del
+         `if`. La medición no toca nada: solo mira las miniaturas en gris que se
+         guardaron al disparar y devuelve, o no, cuánto girar cada toma. Todo lo
+         que puede salir mal está atendido allá dentro y termina en el mismo
+         sitio: `deriva` en null y se cose como siempre.
+
+         La forma del fotograma sale de la PRIMERA toma. Si el teléfono cambió
+         la calidad de la cámara a media captura —cosa que ya avisa la
+         vigilancia— las demás tendrían otra forma y las mediciones no cuadran
+         entre sí; el resultado de eso es que no se corrige nada, que es
+         exactamente lo que hay que hacer con una captura así. */
+      if (hayQueCalibrar && calibrado !== null) fovLargo.current = calibrado
+      const primera = tomas.current[0]
+      const medicion = primera
+        ? medirDeriva({
+            tomas: tomas.current,
+            ancho: GRIS.ancho,
+            alto: GRIS.alto,
+            ...fovDe(primera.ancho, primera.alto, fovLargo.current),
+          })
+        : null
+      const deriva = medicion?.deriva ?? null
+
+      if (hayQueCalibrar || sinContexto || deriva) {
         setFase({
           nombre: 'procesando',
           mensaje: sinContexto
             ? 'El teléfono soltó la memoria de la tarjeta gráfica. Volviendo a unir las fotos…'
-            : 'Midiendo el lente y volviendo a unir las fotos. Tarda unos segundos…',
+            : deriva
+              ? 'Cuadrando el cierre de la vuelta y volviendo a unir las fotos. Tarda unos segundos…'
+              : 'Midiendo el lente y volviendo a unir las fotos. Tarda unos segundos…',
         })
-        if (hayQueCalibrar && calibrado !== null) fovLargo.current = calibrado
         mezclado.current = false
         try {
-          await recoserTodo(fovLargo.current)
+          await recoserTodo(fovLargo.current, deriva)
         } catch {
           // Si no se pudo recoser, lo que ya está en el lienzo sigue sirviendo.
           setAvisoGuardado({
@@ -842,7 +907,40 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       }
 
       setFase({ nombre: 'procesando', mensaje: 'Armando la foto 360…' })
-      const foto = await st.exportar(0.86)
+      /* Y con los metadatos puestos, que es lo que hace que la foto se abra
+         sola en modo esfera en Google Fotos, Facebook o Pannellum en vez de
+         verse como una tira deformada. `conGPano` no lanza nunca: ante
+         cualquier problema devuelve el JPEG tal cual (ver ../../lib/capture/xmp.ts). */
+
+      /* El rumbo que pide GPano es el del CENTRO de la equirectangular, y ESE
+         NO es `offsetNorte` tal cual. La cadena, escrita entera para que no se
+         vuelva a romper:
+
+           · `offsetNorte` (../../lib/capture/orientation.ts) es la mediana de
+             `rumbo de brújula − yaw CRUDO del giroscopio`. O sea que convierte
+             yaw crudo en rumbo: `rumbo = yawCrudo + offsetNorte`.
+           · El centro del lienzo NO es el yaw crudo 0. Cada toma se pega girada
+             por `Ry(baseYaw)` (ver `tomarFoto` y `recoser` aquí arriba), y en
+             three.js `yaw(Ry(θ)·q) = yaw(q) − θ`, así que el yaw 0 de la
+             panorámica corresponde al yaw crudo `baseYaw`.
+           · `baseYaw` es el yaw crudo que tenía el teléfono al empezar, o sea
+             el cero arbitrario de `alpha`: cualquier valor de (−180, 180].
+
+         Luego el rumbo del centro es `baseYaw + offsetNorte`. Sin la suma se
+         escribiría un rumbo girado por un número cualquiera, y eso es PEOR que
+         no escribirlo: cuando no hay brújula el campo se omite y quien abra la
+         foto sabe que no lo sabemos, mientras que un rumbo inventado con dos
+         decimales se lee como un dato. `grados()` normaliza a [0, 360). */
+      const rumboDelCentro =
+        seguidor.offsetNorte === null ? null : baseYaw.current + seguidor.offsetNorte
+
+      const foto = await conGPano(await st.exportar(0.86), {
+        ancho: st.width,
+        alto: st.height,
+        norte: rumboDelCentro,
+        tomas: tomas.current.length,
+        exposicionFijada: exposicionFijada.current,
+      })
 
       /* La miniatura se saca pidiéndole al navegador que decodifique la foto YA
          reducida. Decodificarla completa aquí sumaría 33 MB de bitmap más otro
@@ -873,7 +971,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
          nada, que es peor que no ofrecerlo. */
       ocupado.current = false
     }
-  }, [recoserTodo, sceneId, tour])
+  }, [recoserTodo, sceneId, seguidor, tour])
 
   const guardar = useCallback(async () => {
     if (fase.nombre !== 'nombrar' || !tour) return
