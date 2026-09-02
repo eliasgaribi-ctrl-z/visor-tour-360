@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import { useWheelZoom } from '../lib/useDragLook'
 import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
+import { useGyroLook } from '../lib/useGyroLook'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
@@ -73,12 +74,23 @@ export function TourViewer({
   )
 
   useKeyboardLook(engine)
+  /* Mirar moviendo el teléfono. Devuelve `disponible: false` en cuanto queda
+     claro que este aparato no tiene sensores, y entonces el botón ni aparece. */
+  const giro = useGyroLook(engine)
 
   const dismissHint = useCallback(() => {
     if (hintDismissed.current) return
     hintDismissed.current = true
     setHintVisible(false)
   }, [])
+
+  /* El botón del sensor tiene que salir de un gesto real: iOS solo abre el
+     diálogo de permiso si la llamada nace de un click. Por eso está colgado
+     aquí y no de un useEffect. */
+  const alternarGiro = useCallback(() => {
+    dismissHint()
+    giro.alternar()
+  }, [dismissHint, giro])
 
   /** El joystick escribe aquí. Es la única línea que conecta UI y cámara. */
   const handleAxis = useCallback(
@@ -220,6 +232,43 @@ export function TourViewer({
             </div>
             <div className="flex shrink-0 items-start gap-2">
               {accion}
+              {/* Mirar moviendo el teléfono. Solo aparece si el aparato puede
+                  de verdad: en un escritorio no hay sensores y un botón que no
+                  hace nada es peor que no tener botón. */}
+              {giro.disponible && (
+                <button
+                  type="button"
+                  onClick={alternarGiro}
+                  aria-pressed={giro.activo}
+                  aria-label={
+                    giro.activo
+                      ? 'Dejar de mirar moviendo el teléfono'
+                      : 'Mirar moviendo el teléfono'
+                  }
+                  className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center
+                              rounded-2xl transition-colors active:bg-white/15 ${
+                                giro.activo ? 'text-brand-400' : 'text-ink-50'
+                              }`}
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    className="h-5 w-5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    aria-hidden
+                  >
+                    <g transform="rotate(-12 12 12)">
+                      <rect x="8.5" y="4" width="7" height="16" rx="1.6" />
+                      <path d="M11 6.6h2" strokeLinecap="round" />
+                    </g>
+                    <path
+                      d="M4.6 8.8a8 8 0 0 0 0 6.4M19.4 8.8a8 8 0 0 1 0 6.4"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              )}
               <Compass className="relative shrink-0" />
             </div>
           </div>
@@ -253,15 +302,31 @@ export function TourViewer({
             <ZoomControls />
           </div>
 
-          {/* Pista de arranque · por encima de la fila de controles */}
+          {/* Pista de arranque · por encima de la fila de controles.
+              El mismo hueco lo reutiliza el sensor de movimiento para decir qué
+              pasó —que se encendió, que Safari negó el permiso, que este
+              aparato no tiene sensores—. Reutilizarlo y no inventar un segundo
+              cartel es a propósito: los dos textos dicen lo mismo, "así se mira
+              alrededor", y nunca hacen falta al mismo tiempo. El aviso gana
+              porque es respuesta a un botón que la persona acaba de tocar.
+
+              La píldora se cuadra cuando lleva un aviso: los avisos son de dos
+              renglones y en una forma redonda las esquinas se comen el texto. */}
           <div
             className={`absolute bottom-[calc(env(safe-area-inset-bottom)+12rem)] left-1/2 w-[min(20rem,90vw)]
                         -translate-x-1/2 transition-opacity duration-500 ${
-                          hintVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+                          hintVisible || giro.mensaje
+                            ? 'opacity-100'
+                            : 'pointer-events-none opacity-0'
                         }`}
           >
-            <p className="hud-glass rounded-full px-4 py-2 text-center text-xs text-ink-200">
-              {pista}
+            <p
+              role="status"
+              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-ink-200 ${
+                giro.mensaje ? 'rounded-2xl' : 'rounded-full'
+              }`}
+            >
+              {giro.mensaje ?? pista}
             </p>
           </div>
 

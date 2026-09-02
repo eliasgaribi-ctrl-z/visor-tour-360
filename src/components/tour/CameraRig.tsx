@@ -5,6 +5,7 @@ import { useEffect, useRef } from 'react'
 import type { PerspectiveCamera } from 'three'
 import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
+import { desfaseHacia, desfaseInicial } from '../../lib/useGyroLook'
 import { menosMovimiento } from '../../lib/movimiento'
 
 export type CameraRigProps = {
@@ -33,10 +34,14 @@ export type CameraRigProps = {
  * Único dueño de la orientación de la cámara. Nadie más toca camera.rotation.
  *
  * Cada frame:
- *   1. lee el objeto mutable LookInput (joystick + arrastre + zoom),
+ *   1. lee el objeto mutable LookInput (joystick + arrastre + zoom + sensor),
  *   2. lo integra sobre un yaw/pitch OBJETIVO,
  *   3. suaviza la cámara real hacia ese objetivo (inercia),
  *   4. escribe la orientación y publica el estado para el HUD.
+ *
+ * El giroscopio es la excepción a los pasos 2 y 3: no aporta velocidad ni
+ * deltas sino una posición, y se planta en ella sin inercia. Ver el bloque
+ * GIROSCOPIO más abajo y src/lib/useGyroLook.ts.
  *
  * ── La matemática, en corto ────────────────────────────────────────────────
  *
@@ -95,6 +100,14 @@ export function CameraRig({
   const targetFov = useRef(fov)
   const currentFov = useRef(fov)
 
+  /* Giroscopio. `desfaseGiro` son los grados que hay que sumarle a la lectura
+     del sensor para que caiga sobre la habitación (el cero del giroscopio es
+     arbitrario), y `sesionGiro` es la identidad del objeto que publica
+     useGyroLook: cuando cambia es que el sensor se acaba de encender y el
+     desfase de la sesión anterior ya no sirve. Ver src/lib/useGyroLook.ts. */
+  const desfaseGiro = useRef(0)
+  const sesionGiro = useRef<object | null>(null)
+
   useFrame((state, delta) => {
     const camera = state.camera as PerspectiveCamera
     const { input, readout } = engine
@@ -119,10 +132,24 @@ export function CameraRig({
       camera.updateProjectionMatrix()
     }
 
-    /* ------------------------------------------------- CANCELAR ANIMACIÓN */
+    /* ------------------------------------------------- CANCELAR ANIMACIÓN
+     * Y, de paso, resolver quién manda: si la persona está conduciendo —dedo,
+     * joystick o teclado— el giroscopio se apaga aquí mismo. Es el único sitio
+     * donde vive esa regla, para que no pueda quedarse a medias en uno de los
+     * tres caminos; el porqué está en `soltarGiroscopio` (src/lib/tourEngine.ts).
+     *
+     * El pellizco de zoom no entra en la cuenta a propósito: mueve `dFov` y no
+     * la dirección, así que acercarse mientras se mira con el teléfono es un
+     * gesto perfectamente compatible y no tiene por qué apagar nada. */
     const userIsDriving =
       input.axis.x !== 0 || input.axis.y !== 0 || input.dragYaw !== 0 || input.dragPitch !== 0
-    if (userIsDriving) input.goto = null
+    if (userIsDriving) {
+      input.goto = null
+      if (input.absoluto !== null) {
+        input.absoluto = null
+        engine.soltarGiroscopio()
+      }
+    }
 
     /* ------------------------------------------ JOYSTICK → VELOCIDAD ANGULAR
      * El joystick NO da una posición absoluta: da una velocidad. Mantenerlo
@@ -140,15 +167,63 @@ export function CameraRig({
     input.dragYaw = 0
     input.dragPitch = 0
 
+    /* ------------------------------------------------ ¿MANDA EL GIROSCOPIO?
+     * Un objeto distinto al de la vuelta pasada significa sesión nueva: el
+     * sensor se acaba de encender y hay que anotar cuántos grados separan su
+     * cero arbitrario de la dirección que la cámara ya tenía, o la vista daría
+     * un latigazo de hasta media vuelta al tocar el botón. */
+    const absoluto = input.absoluto
+    if (absoluto === null) {
+      sesionGiro.current = null
+    } else if (sesionGiro.current !== absoluto) {
+      sesionGiro.current = absoluto
+      desfaseGiro.current = desfaseInicial(targetYaw.current, absoluto.yaw)
+    }
+
     /* -------------------------------------------------- DESTINO PROGRAMADO
      * Un solo disparo: movemos el OBJETIVO por el camino corto y dejamos que
-     * el suavizado de abajo haga la animación. */
+     * el suavizado de abajo haga la animación.
+     *
+     * Con el giroscopio al mando el destino no puede mover la cámara: su
+     * orientación la dicta un teléfono que está donde está, y un cuadro después
+     * la lectura del sensor volvería a pisar el destino. Lo que se mueve es la
+     * habitación debajo, o sea el desfase. La persona entra al cuarto nuevo
+     * mirando a su frente sin haber girado el cuerpo, que es justo lo que
+     * espera de un enlace. El pitch del destino se ignora: la inclinación la
+     * decide el teléfono. */
     if (input.goto) {
-      targetYaw.current += shortestDelta(targetYaw.current, input.goto.yaw)
-      targetPitch.current = input.goto.pitch
+      if (absoluto !== null) {
+        desfaseGiro.current = desfaseHacia(absoluto.yaw, desfaseGiro.current, input.goto.yaw)
+      } else {
+        targetYaw.current += shortestDelta(targetYaw.current, input.goto.yaw)
+        targetPitch.current = input.goto.pitch
+      }
       input.goto = null
     }
 
+    /* --------------------------------------------- GIROSCOPIO → POSICIÓN
+     * No es una velocidad como el joystick ni un delta como el arrastre: es la
+     * dirección en la que está apuntando el teléfono, y la cámara se planta
+     * ahí. Por el camino corto, porque el yaw interno crece sin límite y el
+     * del sensor vive en (-180, 180]: sin esto, cruzar el sur daría una vuelta
+     * completa de latigazo.
+     *
+     * El pitch NO lleva desfase, y es a propósito: el yaw del giroscopio
+     * arranca en un cero arbitrario, pero el pitch lo da la gravedad y
+     * significa algo de verdad —cero es el horizonte—. Corregirlo rompería lo
+     * único que hace que esto se sienta como una ventana: que enderezar el
+     * teléfono te deje mirando al frente. El precio es que al encender, la
+     * vista salta a la inclinación en la que ya venía el teléfono en la mano.
+     * Es el mismo precio que pagan Photo Sphere Viewer, Pannellum y view360. */
+    if (absoluto !== null) {
+      targetYaw.current += shortestDelta(targetYaw.current, absoluto.yaw + desfaseGiro.current)
+      targetPitch.current = absoluto.pitch
+    }
+
+    /* El tope de inclinación se aplica igual al sensor: con el teléfono
+       apuntando al piso la lectura llega a −90, y ahí la equirectangular se
+       retuerce en el polo. La vista se queda en el tope mientras el teléfono
+       sigue bajando, que es el comportamiento normal de un visor 360. */
     targetPitch.current = clamp(targetPitch.current, -maxPitchDeg, maxPitchDeg)
 
     /* ------------------------------------------------------------ SUAVIZADO
@@ -161,8 +236,14 @@ export function CameraRig({
      *
      * Va DESPUÉS del clamp a propósito: copiar el objetivo antes de toparlo
      * dejaría el pitch pasarse de los 85° y la panorámica se retorcería en el
-     * polo, que es exactamente lo que el clamp está evitando. */
-    if (menosMovimiento()) {
+     * polo, que es exactamente lo que el clamp está evitando.
+     *
+     * Con el giroscopio tampoco hay inercia, y por un motivo distinto: la
+     * lectura ya viene filtrada por el OrientationTracker, con un lambda que
+     * se adapta a la velocidad del giro (6 quieto, hasta 25 girando). Suavizar
+     * dos veces una señal que ya viene suave no se siente como suavidad, se
+     * siente como que el teléfono va tarde. */
+    if (absoluto !== null || menosMovimiento()) {
       yaw.current = targetYaw.current
       pitch.current = targetPitch.current
     } else {
@@ -187,7 +268,12 @@ export function CameraRig({
      *
      * Los umbrales son una décima de grado y de FOV: por debajo de eso el
      * movimiento ya no se ve, y perseguirlo hasta el cero exacto dejaría la
-     * animación viva para siempre, que es justo lo que se quiere evitar. */
+     * animación viva para siempre, que es justo lo que se quiere evitar.
+     *
+     * Con el giroscopio la cuenta da falso casi siempre —la cámara se planta
+     * en su objetivo sin inercia— y está bien: ahí el que pide cuadro es el
+     * bucle de useGyroLook, y solo cuando llega una lectura NUEVA. Con el
+     * teléfono apoyado en la mesa el visor se duerme igual que sin sensor. */
     const enMovimiento =
       input.axis.x !== 0 ||
       input.axis.y !== 0 ||
