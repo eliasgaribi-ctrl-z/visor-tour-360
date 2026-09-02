@@ -84,6 +84,16 @@ jobs:
       - name: La cuenta del contraste
         run: node --experimental-strip-types tools/pruebas/contraste.mjs
 
+      # La brújula del visor apuntaba al frente arbitrario de la foto y decía
+      # "N". Al arreglarlo, el plan traía el signo AL REVÉS —guardar
+      # `offsetNorte - baseYaw` en vez de `baseYaw + offsetNorte`— y con ese
+      # signo el norte queda a 180° de donde está. Eso no se ve como un error:
+      # se ve como que "la brújula anda raro", nadie lo reporta y nadie lo
+      # encuentra. La prueba compara contra escenarios físicos descritos en
+      # palabras, no contra la fórmula, que es lo único que caza un signo.
+      - name: La brújula apunta al norte de verdad
+        run: node --experimental-strip-types tools/pruebas/rumbo.mjs
+
       # El presupuesto de descarga es una decisión medida del proyecto (README
       # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
       # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —

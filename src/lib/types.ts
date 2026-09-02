@@ -40,6 +40,12 @@ export type TourScene = {
   thumbnail?: string
   /** Yaw al entrar por primera vez a la escena. Default 0. */
   initialYaw?: number
+  /**
+   * Rumbo real del frente de la panorámica (0 = norte). Ausente cuando la foto
+   * no trae dato de brújula, y entonces la brújula del visor no dice "N".
+   * Ver `src/lib/rumbo.ts`.
+   */
+  rumbo?: number
   hotspots: Hotspot[]
 }
 

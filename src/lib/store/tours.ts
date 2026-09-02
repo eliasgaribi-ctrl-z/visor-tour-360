@@ -183,6 +183,7 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
       image,
       thumbnail,
       initialYaw: scene.initialYaw ?? 0,
+      rumbo: scene.rumbo,
       // Un hotspot que apunta a una habitación que ya no existe se cae aquí:
       // dejarlo mostraría un botón que no lleva a ningún lado.
       hotspots: scene.hotspots.filter(
@@ -276,8 +277,9 @@ export async function reemplazarFoto(params: {
   miniatura?: Blob
   origin?: StoredScene['origin']
   coverageDeg?: number
+  rumbo?: number
 }): Promise<StoredTour> {
-  const { tour, sceneId, foto, miniatura, origin, coverageDeg } = params
+  const { tour, sceneId, foto, miniatura, origin, coverageDeg, rumbo } = params
   const anterior = tour.scenes.find((s) => s.id === sceneId)
   if (!anterior) throw new Error('Esa habitación ya no está en el recorrido.')
 
@@ -294,6 +296,11 @@ export async function reemplazarFoto(params: {
             thumbId,
             origin: origin ?? s.origin,
             coverageDeg: coverageDeg ?? s.coverageDeg,
+            /* El rumbo de la foto NUEVA reemplaza al de la vieja, y si la nueva
+               no trae —foto importada sobre una capturada— se BORRA en vez de
+               conservarse. Un rumbo heredado de otra foto apunta a donde miraba
+               otra panorámica, o sea a ningún lado. */
+            rumbo,
           }
         : s,
     ),
@@ -339,6 +346,7 @@ export function createScene(params: {
   thumbId?: string
   origin?: StoredScene['origin']
   coverageDeg?: number
+  rumbo?: number
 }): StoredScene {
   return {
     id: params.id,
@@ -347,6 +355,7 @@ export function createScene(params: {
     thumbId: params.thumbId,
     origin: params.origin,
     coverageDeg: params.coverageDeg,
+    rumbo: params.rumbo,
     initialYaw: 0,
     hotspots: [],
     createdAt: Date.now(),

@@ -361,6 +361,69 @@ revisar(
 await page.setViewportSize({ width: 390, height: 844 })
 
 /* ==========================================================================
+ * Y EN PANTALLA: "N" solo cuando de verdad se sabe dónde está el norte
+ *
+ * Una foto importada no trae dato de brújula, y ahí el disco NO puede decir "N":
+ * el frente de esa panorámica es donde el agente tenía el teléfono, no el norte.
+ * Dice "frente", que es la verdad y sigue sirviendo para saber cuánto se giró.
+ * Una brújula que miente vale menos que ninguna.
+ * ========================================================================== */
+console.log('\n=== El disco solo dice "N" cuando lo sabe ===')
+
+const idV1 = (await leerGuardado('Casa de prueba v1')).id
+
+const discoDe = async (id) => {
+  await page.goto(`${BASE}#/ver/${id}`, { waitUntil: 'networkidle' })
+  await page.waitForTimeout(2200)
+  const entrar = page.getByRole('button', { name: /Ver el recorrido/ })
+  if (await entrar.isVisible().catch(() => false)) {
+    await entrar.click()
+    await page.waitForTimeout(3500)
+  }
+  return page.evaluate(() => {
+    /* Acotado a la brújula: `.will-change-transform` a secas también lo llevan
+       los marcadores de los enlaces, y la primera versión de esta línea leía un
+       marcador —devolvía "→" y un `translate3d`— y daba tres fallos que no
+       existían. El disco es el hijo del único `hud-glass` redondo. */
+    const discos = document.querySelectorAll('.hud-glass.rounded-full .will-change-transform')
+    const disco = discos[0]
+    const etiqueta = disco?.firstElementChild
+    return {
+      cuantos: discos.length,
+      arriba: etiqueta?.textContent ?? null,
+      giro: disco instanceof HTMLElement ? disco.style.transform : null,
+      /* "frente" es más ancho que "N", y el disco mide 52 px. Se mide en vez de
+         suponerlo: una etiqueta que se sale del vidrio se ve como un defecto de
+         maquetación, y el ancho depende de la fuente del sistema. */
+      cabe: etiqueta && disco
+        ? etiqueta.getBoundingClientRect().width <= disco.getBoundingClientRect().width
+        : null,
+      ancho: etiqueta ? Math.round(etiqueta.getBoundingClientRect().width) : null,
+      disco: disco ? Math.round(disco.getBoundingClientRect().width) : null,
+    }
+  })
+}
+
+const conRumbo = await discoDe(v2Guardado.id)
+revisar('hay una sola brújula en pantalla', conRumbo.cuantos === 1, `${conRumbo.cuantos}`)
+revisar('con rumbo el disco dice N', conRumbo.arriba === 'N', JSON.stringify(conRumbo))
+/* Y el disco está GIRADO, no en cero: el frente de esta panorámica mira al
+   rumbo 40, así que el norte no puede quedar arriba. */
+revisar(
+  'y el disco no apunta al frente de la foto',
+  /rotate\(-?\d/.test(conRumbo.giro ?? '') && !/rotate\(-?0(\.0+)?deg\)/.test(conRumbo.giro ?? ''),
+  String(conRumbo.giro),
+)
+
+const sinRumbo = await discoDe(idV1)
+revisar('sin rumbo dice "frente"', sinRumbo.arriba === 'frente', JSON.stringify(sinRumbo))
+revisar(
+  'y "frente" cabe dentro del disco',
+  sinRumbo.cabe === true,
+  `${sinRumbo.ancho} px de ${sinRumbo.disco}`,
+)
+
+/* ==========================================================================
  * LA BARRA DEL NAVEGADOR TAMBIÉN ES DE LA MARCA
  *
  * `theme-color` no es una propiedad de CSS sino un `<meta>`, así que reasignar
@@ -374,15 +437,30 @@ console.log('\n=== La barra del navegador sigue a la marca ===')
 const barra = async () =>
   page.evaluate(() => document.querySelector('meta[name="theme-color"]')?.content ?? null)
 
+/* Se ESPERA el valor en vez de dormir un rato fijo. La marca se aplica en un
+   efecto, después de leer el recorrido de IndexedDB, así que un `waitForTimeout`
+   es una apuesta: la primera versión de esto pasaba sola y empezó a fallar en
+   cuanto le puse delante una sección que deja un contexto WebGL abierto —este
+   contenedor renderiza por software y todo lo de después se vuelve más lento—.
+   Un fallo por timing en una prueba que mide otra cosa cuesta más que el rato
+   que se ahorra. */
+const esperarBarra = async (valor) => {
+  await page
+    .waitForFunction(
+      (v) => document.querySelector('meta[name="theme-color"]')?.content === v,
+      valor,
+      { timeout: 10000 },
+    )
+    .catch(() => {})
+  return barra()
+}
+
 await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
-await page.waitForTimeout(1000)
-const barraSinMarca = await barra()
+const barraSinMarca = await esperarBarra('#0b0f19')
 await page.goto(`${BASE}#/ver/${v2Guardado.id}`, { waitUntil: 'networkidle' })
-await page.waitForTimeout(2000)
-const barraConMarca = await barra()
+const barraConMarca = await esperarBarra('#0a0a12')
 await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
-await page.waitForTimeout(1200)
-const barraTrasSalir = await barra()
+const barraTrasSalir = await esperarBarra('#0b0f19')
 
 /* El fondo del `body` y no el acento: esta franja tiene que DESAPARECER contra
    la página, no resaltar. Se comprueba que sean el mismo color. */
@@ -403,7 +481,6 @@ revisar('y al salir vuelve', barraTrasSalir === '#0b0f19', String(barraTrasSalir
  * ========================================================================== */
 console.log('\n=== El segundo recorrido también tiene portada ===')
 
-const idV1 = (await leerGuardado('Casa de prueba v1')).id
 await page.goto(`${BASE}#/ver/${idV1}`, { waitUntil: 'networkidle' })
 await page.waitForTimeout(2200)
 await page.getByRole('button', { name: /Ver el recorrido/ }).click()
@@ -493,6 +570,41 @@ revisar(
 )
 
 /* ==========================================================================
+ * EL NORTE DE VERDAD, DESDE EL ARCHIVO HASTA LA BRÚJULA
+ *
+ * `rumbo` es el rumbo real al que mira el frente de la panorámica. Se calculaba
+ * en cada captura y se tiraba: `offsetNorte` no lo leía nadie en todo `src/`, así
+ * que la brújula del visor ponía su "N" en el frente arbitrario de la foto.
+ *
+ * La geometría y el signo se prueban en `tools/pruebas/rumbo.mjs`, sin
+ * navegador. Aquí se prueba lo otro: que el número CRUCE toda la cadena —archivo,
+ * saneado, IndexedDB, el visor— y que llegue al disco.
+ * ========================================================================== */
+console.log('\n=== El rumbo llega del archivo a la brújula ===')
+
+const rumbos = v2Guardado.scenes.map((e) => e.rumbo)
+revisar('el rumbo de la sala se conserva', rumbos[0] === 70, JSON.stringify(rumbos))
+/* La segunda escena lo trae como texto Y fuera del círculo (`"400"`): 400 y 40
+   son el mismo rumbo, así que se normaliza en vez de rechazarse. Lo que no se
+   acepta es que no sea un número, porque entonces la brújula diría "N"
+   apuntando a cualquier lado. */
+revisar('un "400" de texto se vuelve 40', rumbos[1] === 40, `${typeof rumbos[1]} ${rumbos[1]}`)
+
+const conBrujula = await page.evaluate(async () => {
+  const mod = await import('/src/lib/store/migrar.ts')
+  return [
+    mod.limpiarEscena({ id: 'a', name: 'A', archivo: 'x.jpg', rumbo: 'norte' })?.rumbo,
+    mod.limpiarEscena({ id: 'a', name: 'A', archivo: 'x.jpg', rumbo: null })?.rumbo,
+    mod.limpiarEscena({ id: 'a', name: 'A', archivo: 'x.jpg' })?.rumbo,
+  ]
+})
+revisar(
+  'un rumbo que no es número no se guarda',
+  conBrujula.every((r) => r === undefined),
+  JSON.stringify(conBrujula),
+)
+
+/* ==========================================================================
  * LA IDA Y VUELTA: lo que el visor escribe, el visor lo vuelve a leer
  *
  * Se hace DENTRO de la página, llamando a las funciones de verdad: `exportarTour`
@@ -535,7 +647,7 @@ const CAMPOS_TOUR = ['title', 'subtitle', 'startSceneId', 'createdAt', 'marca', 
 const distintos = diferencias(v2Guardado, vuelta.reimportado, CAMPOS_TOUR)
 revisar('el recorrido vuelve idéntico', distintos.length === 0, distintos.join(', '))
 
-const CAMPOS_ESCENA = ['id', 'name', 'initialYaw', 'hotspots', 'origin', 'coverageDeg', 'createdAt']
+const CAMPOS_ESCENA = ['id', 'name', 'initialYaw', 'hotspots', 'origin', 'coverageDeg', 'rumbo', 'createdAt']
 const escenasIguales =
   v2Guardado.scenes.length === vuelta.reimportado.scenes.length &&
   v2Guardado.scenes.every(

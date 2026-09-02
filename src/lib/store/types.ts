@@ -40,6 +40,16 @@ export type StoredScene = {
   origin?: SceneOrigin
   /** Grados de círculo que cubre la foto: 360 = esfera completa. */
   coverageDeg?: number
+  /**
+   * Rumbo real al que mira el FRENTE de la panorámica: 0 = norte, creciendo a
+   * la derecha, igual que `webkitCompassHeading`.
+   *
+   * Solo lo traen las escenas capturadas en un teléfono con brújula. Una foto
+   * importada no tiene sensor detrás y aquí va `undefined`, que es distinto de
+   * cero: la brújula del visor lo detecta y etiqueta su disco "frente" en vez de
+   * "N". Ver `src/lib/rumbo.ts`, incluido de dónde sale el signo.
+   */
+  rumbo?: number
   createdAt: number
 }
 

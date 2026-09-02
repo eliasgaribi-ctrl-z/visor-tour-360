@@ -276,7 +276,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
                   : `${escena.hotspots.length} ${escena.hotspots.length === 1 ? 'punto' : 'puntos'}`}
               </p>
             </div>
-            <Compass className="relative shrink-0" />
+            <Compass className="relative shrink-0" rumbo={escena.rumbo} />
           </div>
 
           {guardado && (

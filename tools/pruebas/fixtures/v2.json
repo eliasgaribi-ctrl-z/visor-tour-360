@@ -63,7 +63,8 @@
             "pitch": -20
           }
         ],
-        "createdAt": 1772000000000
+        "createdAt": 1772000000000,
+        "rumbo": 70
       },
       {
         "id": "patio",
@@ -80,7 +81,8 @@
             "pitch": 0
           }
         ],
-        "createdAt": 1772000001000
+        "createdAt": 1772000001000,
+        "rumbo": "400"
       }
     ]
   }

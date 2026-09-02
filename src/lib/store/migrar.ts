@@ -211,6 +211,7 @@ export type EscenaLimpia = {
   hotspots: Hotspot[]
   origin?: SceneOrigin
   coverageDeg?: number
+  rumbo?: number
   createdAt: number
 }
 
@@ -308,6 +309,14 @@ export function limpiarEscena(crudo: unknown): EscenaLimpia | undefined {
   if (cobertura !== undefined && cobertura > 0 && cobertura <= 360) {
     escena.coverageDeg = cobertura
   }
+
+  /* El rumbo se normaliza al círculo en vez de rechazarse fuera de rango: 400 y
+     40 son el mismo rumbo, y un archivo escrito a mano con grados acumulados
+     dice algo perfectamente válido. Lo que no se acepta es algo que no sea un
+     número, porque entonces la brújula diría "N" apuntando a cualquier lado —y
+     un `undefined` la hace decir "frente", que es la verdad. */
+  const rumbo = numero(e.rumbo)
+  if (rumbo !== undefined) escena.rumbo = wrap360(rumbo)
 
   /* Una fecha de creación que no es una fecha se cambia por ahora, no por cero:
      el listado ordena por ella, y un cero manda la habitación al año 1970. */

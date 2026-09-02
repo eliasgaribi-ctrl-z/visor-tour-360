@@ -195,7 +195,7 @@ export function TourViewer({
             </div>
             <div className="flex shrink-0 items-start gap-2">
               {accion}
-              <Compass className="relative shrink-0" />
+              <Compass className="relative shrink-0" rumbo={scene.rumbo} />
             </div>
           </div>
 
