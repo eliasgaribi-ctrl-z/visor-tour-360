@@ -72,11 +72,26 @@ export function TourViewer({
 
   useKeyboardLook(engine)
 
+  /* El modo kiosco viene del recorrido, no del visor: un recorrido de feria gira
+     solo y el mismo visor con otro recorrido no. Tocar el timbre arranca el
+     primer cuadro; de ahí en adelante el rig se sostiene solo mientras gira. */
+  useEffect(() => {
+    engine.input.autogiro = tour.autogiro === true
+    engine.invalidar()
+  }, [engine, tour.autogiro])
+
   const dismissHint = useCallback(() => {
     if (hintDismissed.current) return
     hintDismissed.current = true
     setHintVisible(false)
   }, [])
+
+  /** Un dedo sobre la foto: se va la pista y, si la foto giraba sola, se detiene. */
+  const alTocar = useCallback(() => {
+    dismissHint()
+    engine.input.pausa = true
+    engine.invalidar()
+  }, [dismissHint, engine])
 
   /** El joystick escribe aquí. Es la única línea que conecta UI y cámara. */
   const handleAxis = useCallback(
@@ -183,7 +198,7 @@ export function TourViewer({
           webgl={webgl}
           onLoadingChange={setLoading}
           onError={() => setFailed(true)}
-          onPointerDownCapture={dismissHint}
+          onPointerDownCapture={alTocar}
         />
 
         {/* ───────────────────────────── CAPA 1 · HUD ───────────────────────────── */}

@@ -83,6 +83,7 @@ type Manifiesto = {
     /* Desde la v2. Los dos opcionales, así que un archivo v1 se lee igual. */
     marca?: MarcaManifiesto
     ficha?: Ficha
+    autogiro?: boolean
   }
 }
 
@@ -202,6 +203,9 @@ export async function exportarTour(
       scenes: escenas,
       marca,
       ficha: tour.ficha,
+      /* Solo si está encendido: un `false` explícito no dice nada que la
+         ausencia no diga, y un archivo v2 viejo no trae el campo. */
+      autogiro: tour.autogiro === true ? true : undefined,
     },
   }
 
@@ -417,6 +421,8 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     formato: FORMAT_VERSION,
     marca,
     ficha,
+    // Un booleano de verdad, o nada: `"sí"` o `1` en el archivo no encienden nada.
+    autogiro: manifiesto.recorrido.autogiro === true ? true : undefined,
     title: manifiesto.recorrido.title || 'Recorrido importado',
     subtitle: manifiesto.recorrido.subtitle,
     startSceneId: escenas.some((s) => s.id === manifiesto.recorrido.startSceneId)

@@ -7,6 +7,7 @@
     "title": "Casa de prueba v2",
     "subtitle": "Con marca, ficha y basura adentro",
     "startSceneId": "patio",
+    "autogiro": true,
     "createdAt": 1772000000000,
     "marca": {
       "nombre": "Inmobiliaria del Valle",

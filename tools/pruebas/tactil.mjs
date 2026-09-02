@@ -127,6 +127,13 @@ await auditar('editor con 1 cuarto')
 await page.getByRole('button', { name: 'Ajustes' }).click()
 await page.waitForTimeout(400)
 await auditar('hoja: ajustes')
+await page.getByRole('button', { name: 'Cerrar' }).click()
+await page.waitForTimeout(300)
+/* La hoja del recorrido trae el interruptor del modo kiosco: un `role=switch`
+   hecho a mano —la casilla nativa mide 16 px—, y lo hecho a mano se mide. */
+await page.getByRole('button', { name: 'Cambiar el nombre del recorrido' }).click()
+await page.waitForTimeout(400)
+await auditar('hoja: datos del recorrido')
 
 /* Y la lista OTRA VEZ, ahora que sí hay un recorrido: la fila trae dos botones
    —el lápiz y el bote de basura— que en la lista vacía no existen, así que la

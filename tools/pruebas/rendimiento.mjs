@@ -744,6 +744,117 @@ if (!pintoQuieta) bien = false
 
 await quieta.close()
 
+/* ============================================================================
+ *  EL AUTOGIRO (MODO KIOSCO) Y LOS CERO DIBUJOS POR SEGUNDO
+ * ============================================================================
+ *
+ * Autorrotar es dibujar sin parar: pelea de frente con la propiedad más valiosa
+ * del visor. Por eso está apagado por defecto —lo de arriba ya midió que la demo
+ * da 0 dibujos/s parada— y aquí se mide lo que pasa cuando SÍ está encendido:
+ *   · gira de verdad, a la velocidad que dice el rig (6°/s, una vuelta por minuto);
+ *   · un toque lo detiene y el visor vuelve a CERO dibujos mientras dura la pausa;
+ *   · a los cinco segundos sigue solo (es un temporizador, no un cuadro más);
+ *   · con la pestaña oculta no dibuja nada;
+ *   · con "reducir movimiento" no gira, punto.
+ *
+ * El recorrido kiosco se arma en IndexedDB con las mismas funciones del store que
+ * usa la app —no hay una ruta de prueba en el producto— y se abre por `#/ver/`. */
+console.log('\n=== Autogiro: el modo kiosco ===')
+const kiosco = await ctx.newPage()
+kiosco.on('pageerror', (e) => errores.push(e.message))
+await kiosco.goto(BASE + '#/inicio', { waitUntil: 'networkidle' })
+const idKiosco = await kiosco.evaluate(async () => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const foto = await (await fetch('/panoramas/sala.jpg')).blob()
+  const tour = tours.createTour('Kiosco')
+  const scene = tours.createScene({ id: 'sala', name: 'Sala', imageId: 'img-kiosco-sala' })
+  const guardado = await tours.guardarEscenaConFoto({ tour: { ...tour, autogiro: true }, scene, foto })
+  return guardado.id
+})
+await kiosco.goto(BASE + '#/ver/' + idKiosco, { waitUntil: 'domcontentloaded' })
+await kiosco.waitForSelector('canvas', { timeout: 40000 })
+await kiosco.waitForTimeout(4000)
+
+const muestrearEn = async (pg, etiqueta, ms) => {
+  await pg.evaluate(() => window.__RESET())
+  await pg.waitForTimeout(ms)
+  const s = await pg.evaluate(() => ({ ...window.__PERF }))
+  const draws = Math.round(s.draws / (ms / 1000))
+  console.log(`  ${etiqueta.padEnd(28)} ${String(draws).padStart(3)} dibujos/s`)
+  return draws
+}
+const wrap180 = (d) => ((((d + 180) % 360) + 360) % 360) - 180
+
+const girando = await muestrearEn(kiosco, 'kiosco: girando solo', 2000)
+const y0 = (await angulos(kiosco))?.yaw
+await kiosco.waitForTimeout(2000)
+const y1 = (await angulos(kiosco))?.yaw
+const avanzo = y0 !== undefined && y1 !== undefined ? wrap180(y1 - y0) : NaN
+/* 6°/s por 2 s son 12°. El margen cubre el muestreo del badge (que pinta por
+   pulso, no por cuadro) y algún cuadro largo; no cubre ni el doble ni la mitad. */
+const velocidadOk = avanzo >= 9 && avanzo <= 15
+console.log(`  ${'kiosco: avanza'.padEnd(28)} ${avanzo.toFixed(1)}° en 2 s ${velocidadOk ? '' : '← MAL: se esperaban ~12°'}`)
+if (girando === 0 || !velocidadOk) bien = false
+
+/* Un toque —sin arrastre— lo detiene. Se espera a que la cámara se asiente y se
+   mide dentro de la pausa: tiene que ser CERO, no "poco". */
+const puntoKiosco = await sobreLaFoto(kiosco)
+const toque = Date.now()
+await kiosco.mouse.click(puntoKiosco.x, puntoKiosco.y)
+await kiosco.waitForTimeout(1200)
+const enPausa = await muestrearEn(kiosco, 'kiosco: tocado, en pausa', 2500)
+if (enPausa > 0) {
+  console.log('     ↑ MAL: tocado tiene que quedarse en cero mientras dura la pausa')
+  bien = false
+}
+/* Y a los cinco segundos del toque sigue solo. Nadie ha pedido cuadro desde
+   entonces: si vuelve a girar es porque el despertador del rig tocó el timbre. */
+const faltan = 5000 + 700 - (Date.now() - toque)
+if (faltan > 0) await kiosco.waitForTimeout(faltan)
+const retomo = await muestrearEn(kiosco, 'kiosco: sigue solo a los 5 s', 2000)
+if (retomo === 0) {
+  console.log('     ↑ MAL: terminada la pausa tenía que volver a girar')
+  bien = false
+}
+
+/* Pestaña oculta. Chromium headless no se puede "ocultar", así que se finge lo
+   que el rig lee —`document.visibilityState`— y se avisa con el evento real. */
+await kiosco.evaluate(() => {
+  Object.defineProperty(Document.prototype, 'visibilityState', {
+    configurable: true,
+    get: () => window.__vis ?? 'visible',
+  })
+  window.__vis = 'hidden'
+  document.dispatchEvent(new Event('visibilitychange'))
+})
+await kiosco.waitForTimeout(600)
+const oculto = await muestrearEn(kiosco, 'kiosco: pestaña oculta', 2000)
+if (oculto > 0) {
+  console.log('     ↑ MAL: oculto no debería dibujarse nada')
+  bien = false
+}
+await kiosco.evaluate(() => {
+  window.__vis = 'visible'
+  document.dispatchEvent(new Event('visibilitychange'))
+})
+await kiosco.waitForTimeout(600)
+const deVuelta = await muestrearEn(kiosco, 'kiosco: vuelve a verse', 1500)
+if (deVuelta === 0) {
+  console.log('     ↑ MAL: al volver a verse tenía que retomar')
+  bien = false
+}
+
+/* Y con "reducir movimiento" no gira, sin excepción. El ajuste se cambia con la
+   pestaña abierta, como en iOS (Ajustes → Accesibilidad → Movimiento). */
+await kiosco.emulateMedia({ reducedMotion: 'reduce' })
+await kiosco.waitForTimeout(600)
+const menos = await muestrearEn(kiosco, 'kiosco: menos movimiento', 2000)
+if (menos > 0) {
+  console.log('     ↑ MAL: con "reducir movimiento" el autogiro no debe girar')
+  bien = false
+}
+await kiosco.close()
+
 console.log(`\n${bien ? 'TODO BIEN' : 'HAY ALGO MAL'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')
 await browser.close()

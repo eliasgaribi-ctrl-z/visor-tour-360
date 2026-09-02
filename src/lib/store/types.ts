@@ -98,6 +98,8 @@ export type StoredTour = {
   marca?: MarcaGuardada
   /** Los datos de la casa que se muestran en la portada. */
   ficha?: Ficha
+  /** Modo kiosco: gira solo al abrirlo. Opcional y aditivo, como `marca` y `ficha`. */
+  autogiro?: boolean
   createdAt: number
   updatedAt: number
 }

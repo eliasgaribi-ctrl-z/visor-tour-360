@@ -229,7 +229,7 @@ tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
 tools/pruebas/reordenar.mjs     Reordenar arrastrando guarda de verdad y revierte al cancelar
-tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (96 aserciones)
+tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (97 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
 
 .github/workflows/revision.yml  Los corre todos en cada push
@@ -900,7 +900,7 @@ node tools/pruebas/rendimiento.mjs http://localhost:5173/
 
 Apple pide **44 px** de lado como mínimo para cualquier cosa que se toque
 (Android pide 48). Debajo de eso el pulgar falla y la gente toca dos veces, o
-toca lo de junto. `tools/pruebas/tactil.mjs` recorre las trece pantallas en un
+toca lo de junto. `tools/pruebas/tactil.mjs` recorre las catorce pantallas en un
 iPhone SE simulado —la más chica que sigue siendo común— y mide cada control.
 
 La primera pasada encontró seis que no llegaban, y varios eran de los que más se
@@ -1000,11 +1000,11 @@ cada push, junto con `lint`, `typecheck`, `build` y el peso del arranque.
 | `contraste.mjs` | la cuenta WCAG contra razones **publicadas**, y qué paletas de marca entran | no |
 | `rumbo.mjs` | la brújula apunta al norte, con el signo correcto, en 2,860 combinaciones | no |
 | `nivel.mjs` | existe un nivel que endereza un ladeo conocido, y cada eje mueve lo que dice su etiqueta | no |
-| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, y todo lo tocable responde | sí |
+| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, todo lo tocable responde, y el modo kiosco gira, se detiene al tocar y vuelve a cero | sí |
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
-| `tactil.mjs` | los 13 recorridos de pantalla, todo ≥ 44 px | sí |
+| `tactil.mjs` | los 14 recorridos de pantalla, todo ≥ 44 px | sí |
 | `reordenar.mjs` | arrastrar reordena y el orden sobrevive a recargar; un roce no levanta la fila; cancelar revierte | sí |
-| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 96 aserciones | sí |
+| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 97 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
 
 **Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
@@ -1181,6 +1181,17 @@ cualquier hosting.
   correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
   reversible y gratis— y no en la costura, que obligaría a remuestrear y
   recomprimir una 4096×2048.
+- ✅ **Autogiro (modo kiosco), apagado por defecto** — y esa es la decisión. Girar
+  solo es dibujar sin parar, justo lo contrario de los 0 dibujos/s medidos, así
+  que es una opción por recorrido (el interruptor está en "Cambiar el nombre del
+  recorrido"), pensada para una pantalla en la oficina o en una feria. Da una
+  vuelta por minuto; cualquier toque lo detiene y a los cinco segundos sigue
+  solo; con la pestaña oculta no dibuja nada; y con `prefers-reduced-motion` no
+  gira, punto. Mientras dura la pausa el visor vuelve a cero dibujos y un único
+  temporizador lo despierta al terminar. `rendimiento.mjs` mide las cinco cosas,
+  y sigue exigiendo 0 dibujos/s en la configuración por defecto, sin excepción.
+  Los dos números (6°/s, 5 s) son provisionales hasta que la investigación de
+  transiciones diga qué usan los visores comerciales.
 - ✅ **Reordenar arrastrando**, a mano y sin librería: `dnd-kit` son ~40 kB que
   caerían en el chunk de arranque, y el proyecto ya tenía las primitivas
   (Pointer Events, `setPointerCapture`, `touch-action: none`, `transform` escrito

@@ -10,7 +10,7 @@ import { entregarArchivo, mensajeDePaquete } from '../../lib/store/entregar'
 import { limpiarFicha } from '../../lib/store/migrar'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { contextoSeguro } from '../../lib/capture/camera'
-import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
+import { Aviso, Boton, Campo, Cargando, Hoja, Interruptor, Pantalla, Tarjeta } from './ui'
 
 export type EditorRecorridoProps = {
   tourId: string
@@ -34,7 +34,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   /* El formulario del recorrido trabaja sobre su PROPIO borrador. Editar el
      estado compartido haría que cerrar la hoja sin guardar dejara el cambio a
      medio aplicar: visible en pantalla y persistido con la siguiente acción. */
-  const [datos, setDatos] = useState<{ title: string; subtitle: string } | null>(null)
+  const [datos, setDatos] = useState<{ title: string; subtitle: string; autogiro: boolean } | null>(null)
   /**
    * El borrador de la ficha de la casa.
    *
@@ -477,7 +477,9 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
         <Boton
           tipo="fantasma"
           ancho
-          onClick={() => setDatos({ title: tour.title, subtitle: tour.subtitle ?? '' })}
+          onClick={() =>
+            setDatos({ title: tour.title, subtitle: tour.subtitle ?? '', autogiro: tour.autogiro === true })
+          }
         >
           Cambiar el nombre del recorrido
         </Boton>
@@ -526,6 +528,12 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
               placeholder="3 recámaras · 120 m²"
               maxLength={80}
             />
+            <Interruptor
+              etiqueta="Gira solo al abrirlo (modo kiosco)"
+              ayuda="Para una pantalla en la oficina o en una feria: da una vuelta por minuto hasta que alguien lo toca, y sigue a los cinco segundos. No gira si el teléfono pide menos movimiento."
+              valor={datos.autogiro}
+              onChange={(autogiro) => setDatos({ ...datos, autogiro })}
+            />
             <Boton
               tipo="principal"
               ancho
@@ -535,6 +543,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   ...tour,
                   title: datos.title.trim(),
                   subtitle: datos.subtitle.trim() || undefined,
+                  autogiro: datos.autogiro || undefined,
                 })
                 setDatos(null)
               }}

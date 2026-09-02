@@ -37,6 +37,40 @@ import { useMenosMovimiento } from '../../lib/menosMovimiento'
 const EMPUJE = 40
 const DURACION_EMPUJE = 0.6
 
+/**
+ * ============================================================================
+ *  EL AUTOGIRO: EL MODO KIOSCO
+ * ============================================================================
+ *
+ * Con `input.autogiro` la cámara gira sola, despacio, como en una pantalla de
+ * oficina o de feria. Pelea de frente con el diseño del visor —girar es dibujar
+ * sin parar— y por eso está apagado por defecto, es una opción por recorrido, y
+ * se rinde ante tres cosas, en este orden de importancia:
+ *
+ *   · `prefers-reduced-motion`: nunca gira. Una foto a pantalla completa que se
+ *     mueve sola es exactamente lo que molesta a quien pidió menos movimiento.
+ *   · La pestaña oculta: no gira ni pide cuadro. Un kiosco en segundo plano
+ *     calentando el teléfono no le sirve a nadie.
+ *   · Cualquier interacción —un toque, el arrastre, el joystick, el zoom, un
+ *     cambio de habitación— lo pausa PAUSA_AUTOGIRO segundos. "Se detiene al
+ *     tocar, sigue solo a los cinco segundos" es lo que hacen los visores
+ *     comerciales, y es lo que espera quien toca una foto que gira.
+ *
+ * Mientras dura la pausa NO se pide ningún cuadro: el visor vuelve a cero
+ * dibujos por segundo como si el autogiro no existiera. Eso deja una pregunta
+ * que el resto del rig no tiene: ¿quién vuelve a llamar a `useFrame` cuando la
+ * pausa termine? Un solo `setTimeout` que toca el timbre en ese momento, y que
+ * solo se re-arma si el plazo cambió. `rendimiento.mjs` mide las tres cosas.
+ *
+ * Los dos números son provisionales, y así está escrito en el plan: 6°/s es
+ * una vuelta por minuto —lo bastante lento para leerse como "la casa se
+ * muestra" y no como un video—, y 5 s de pausa es lo que tarda alguien en
+ * decidir si quería mirar algo. Se ajustan con la investigación de la Pestaña 1
+ * (pregunta 15), no antes.
+ */
+const VELOCIDAD_AUTOGIRO = 6
+const PAUSA_AUTOGIRO = 5
+
 export type CameraRigProps = {
   /** Grados por segundo con el joystick a tope. 90 ≈ un cuarto de vuelta por segundo. */
   maxSpeedDeg?: number
@@ -130,6 +164,34 @@ export function CameraRig({
   const direccionEmpuje = useRef(new Vector3())
   const tiempoEmpuje = useRef(Infinity)
 
+  /* El autogiro: hasta cuándo dura la pausa, y el despertador que la termina. */
+  const pausaHasta = useRef(0)
+  const despertador = useRef<{ id: number; para: number } | null>(null)
+  const despertarEn = (cuando: number) => {
+    if (despertador.current?.para === cuando) return
+    if (despertador.current) window.clearTimeout(despertador.current.id)
+    const id = window.setTimeout(() => {
+      despertador.current = null
+      engine.invalidar()
+    }, Math.max(0, cuando - performance.now()))
+    despertador.current = { id, para: cuando }
+  }
+  useEffect(
+    () => () => {
+      if (despertador.current) window.clearTimeout(despertador.current.id)
+    },
+    [],
+  )
+  /* La pestaña que vuelve a verse: mientras estuvo oculta no se pidió cuadro, así
+     que hay que tocar el timbre para que el autogiro retome. */
+  useEffect(() => {
+    const alCambiar = () => {
+      if (document.visibilityState === 'visible') engine.invalidar()
+    }
+    document.addEventListener('visibilitychange', alCambiar)
+    return () => document.removeEventListener('visibilitychange', alCambiar)
+  }, [engine])
+
   useFrame((state, delta) => {
     const camera = state.camera as PerspectiveCamera
     const { input, readout } = engine
@@ -142,6 +204,29 @@ export function CameraRig({
     // porque se descartaría parte del tiempo transcurrido. Con 100 ms aguanta
     // hasta 10 fps sin penalizar, y sigue evitando el salto de la pestaña.
     const dt = Math.min(delta, 1 / 10)
+
+    /* ------------------------------------------------------------ AUTOGIRO
+     * Va ANTES de consumir nada: aquí todavía se ve todo lo que la persona hizo
+     * en este cuadro, y cualquier cosa que haya hecho pausa el giro. */
+    const ahora = performance.now()
+    const interaccion =
+      input.pausa ||
+      input.axis.x !== 0 ||
+      input.axis.y !== 0 ||
+      input.dragYaw !== 0 ||
+      input.dragPitch !== 0 ||
+      input.dFov !== 0 ||
+      input.gotoFov !== null ||
+      input.goto !== null ||
+      input.empuje !== null
+    input.pausa = false
+    if (interaccion) pausaHasta.current = ahora + PAUSA_AUTOGIRO * 1000
+    const girando =
+      input.autogiro &&
+      !menosMovimiento.current &&
+      document.visibilityState === 'visible' &&
+      ahora >= pausaHasta.current
+    if (girando) targetYaw.current += VELOCIDAD_AUTOGIRO * dt
 
     /* ---------------------------------------------------------------- ZOOM */
     if (input.dFov !== 0) {
@@ -246,8 +331,14 @@ export function CameraRig({
       Math.abs(targetPitch.current - pitch.current) > 0.05 ||
       Math.abs(targetFov.current - currentFov.current) > 0.05 ||
       // El empuje es una animación: mientras dure hay que seguir pidiendo.
-      tiempoEmpuje.current < DURACION_EMPUJE
+      tiempoEmpuje.current < DURACION_EMPUJE ||
+      // Y el autogiro es la única que no termina sola.
+      girando
     if (enMovimiento) engine.invalidar()
+    else if (input.autogiro && !menosMovimiento.current && ahora < pausaHasta.current) {
+      // En pausa: nadie pide cuadro. El despertador toca el timbre al terminar.
+      despertarEn(pausaHasta.current)
+    }
   })
 
   return null

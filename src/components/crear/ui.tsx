@@ -154,6 +154,52 @@ export function Campo({
   )
 }
 
+/**
+ * Un sí/no que se toca. `role="switch"` con `aria-checked`, y no un
+ * `<input type=checkbox>`: la casilla nativa mide 16 px y no se puede estirar
+ * sin dibujarla desde cero; aquí el botón entero es el control, mide 48 de alto
+ * y el pulgar acierta. `tactil.mjs` lo mide en la hoja del recorrido.
+ */
+export function Interruptor({
+  etiqueta,
+  ayuda,
+  valor,
+  onChange,
+}: {
+  etiqueta: string
+  ayuda?: string
+  valor: boolean
+  onChange: (valor: boolean) => void
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={valor}
+      onClick={() => onChange(!valor)}
+      className="flex min-h-12 w-full items-center justify-between gap-4 rounded-2xl border
+                 border-white/10 bg-black/30 px-4 py-3 text-left"
+    >
+      <span className="min-w-0">
+        <span className="block text-sm font-medium text-ink-50">{etiqueta}</span>
+        {ayuda && <span className="mt-0.5 block text-xs text-ink-200/70">{ayuda}</span>}
+      </span>
+      <span
+        aria-hidden="true"
+        className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
+          valor ? 'bg-brand-500' : 'bg-white/20'
+        }`}
+      >
+        <span
+          className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-white transition-transform ${
+            valor ? 'translate-x-5' : ''
+          }`}
+        />
+      </span>
+    </button>
+  )
+}
+
 export function Aviso({
   tono = 'info',
   titulo,

@@ -226,6 +226,7 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
     scenes,
     marca,
     ficha: stored.ficha,
+    autogiro: stored.autogiro,
   }
 }
 

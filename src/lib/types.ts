@@ -133,4 +133,6 @@ export type Tour = {
   scenes: TourScene[]
   marca?: Marca
   ficha?: Ficha
+  /** Modo kiosco: el recorrido gira solo hasta que alguien lo toca. Apagado si falta. */
+  autogiro?: boolean
 }

@@ -262,6 +262,7 @@ const v2Guardado = await leerGuardado('Casa de prueba v2')
 revisar('el .tour v2 se importa', v2Guardado !== null)
 revisar('con sus 2 habitaciones', v2Guardado?.scenes.length === 2)
 revisar('la entrada es el patio, no la primera', v2Guardado?.startSceneId === 'patio')
+revisar('el modo kiosco llega del archivo', v2Guardado?.autogiro === true, String(v2Guardado?.autogiro))
 
 const m = v2Guardado?.marca
 revisar('la marca llega con su nombre', m?.nombre === 'Inmobiliaria del Valle')
@@ -668,7 +669,7 @@ revisar('el nombre del archivo sale de su título', vuelta.nombre === 'casa-de-p
 revisar('el manifiesto sale con version 2', vuelta.manifiesto.version === 2)
 revisar('y el ZIP lo lee su propio lector', vuelta.entradas.includes('recorrido.json'))
 
-const CAMPOS_TOUR = ['title', 'subtitle', 'startSceneId', 'createdAt', 'marca', 'ficha']
+const CAMPOS_TOUR = ['title', 'subtitle', 'startSceneId', 'createdAt', 'marca', 'ficha', 'autogiro']
 const distintos = diferencias(v2Guardado, vuelta.reimportado, CAMPOS_TOUR)
 revisar('el recorrido vuelve idéntico', distintos.length === 0, distintos.join(', '))
 

@@ -78,6 +78,24 @@ export type LookInput = {
    * porque ahí no hay puerta que cruzar. Ver `CameraRig`.
    */
   empuje: { yaw: number; pitch: number } | null
+
+  /**
+   * "Este recorrido gira solo": el modo kiosco. Estado CONTINUO, no de un solo
+   * uso: mientras sea true, el rig gira la cámara despacio y sigue pidiendo
+   * cuadro. Lo escribe `TourViewer` desde `tour.autogiro`; el editor de puntos
+   * no lo toca nunca, porque para colocar un punto hace falta un encuadre
+   * quieto. Apagado por defecto: encendido pelea de frente con los cero dibujos
+   * por segundo del visor parado, y esa propiedad no se regala. Ver `CameraRig`.
+   */
+  autogiro: boolean
+
+  /**
+   * "Alguien tocó la foto": un solo uso. El rig lo lee, pausa el autogiro unos
+   * segundos y lo pone en false. Existe porque un toque sin arrastre no deja
+   * ningún otro rastro en este objeto —no mueve `dragYaw` ni `axis`— y quien
+   * toca una foto que gira sola espera que se detenga.
+   */
+  pausa: boolean
 }
 
 /** Lo que la cámara le cuenta a la UI. El CameraRig lo escribe cada frame. */
@@ -165,6 +183,8 @@ export const createTourEngine = (): TourEngine => {
       gotoFov: null,
       goto: null,
       empuje: null,
+      autogiro: false,
+      pausa: false,
     },
     readout: { yaw: 0, pitch: 0, fov: 75, avance: 0 },
     invalidar,
