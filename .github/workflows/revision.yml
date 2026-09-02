@@ -94,6 +94,13 @@ jobs:
       - name: La brújula apunta al norte de verdad
         run: node --experimental-strip-types tools/pruebas/rumbo.mjs
 
+      # La corrección de nivel rota la esfera con dos ángulos, y un signo al
+      # revés se ve como "se ve peor y nadie sabe por qué". Sin GPU: se ladea una
+      # panorámica sintética con una rotación conocida y se busca el nivel que la
+      # endereza, en vez de suponer el signo.
+      - name: La corrección de nivel endereza
+        run: node --experimental-strip-types tools/pruebas/nivel.mjs
+
       # El presupuesto de descarga es una decisión medida del proyecto (README
       # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
       # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —

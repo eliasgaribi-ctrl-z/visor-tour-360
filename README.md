@@ -74,13 +74,14 @@ Con el servidor de desarrollo corriendo hay dos páginas de diagnóstico:
 | `/prueba.html`                  | Abrirla **en el celular**: dice si hay https, cámara, sensores, WebGL y espacio |
 | `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 12) |
 
-Y los arneses, que se corren desde la terminal. Cuatro no necesitan navegador y
+Y los arneses, que se corren desde la terminal. Cinco no necesitan navegador y
 tardan milisegundos:
 
 ```bash
 node --experimental-strip-types tools/pruebas/damp.mjs        # `damp` idéntica a la de three
 node --experimental-strip-types tools/pruebas/contraste.mjs   # la cuenta WCAG y las paletas
 node --experimental-strip-types tools/pruebas/rumbo.mjs       # la brújula apunta al norte
+node --experimental-strip-types tools/pruebas/nivel.mjs       # la corrección de nivel endereza
 node tools/pruebas/patrones.mjs                               # patrones que no deben volver
 ```
 
@@ -95,7 +96,7 @@ node tools/pruebas/formato.mjs http://localhost:5173/       # el .tour abre lo v
 node tools/pruebas/marca.mjs http://localhost:5173/         # la marca reviste el visor
 ```
 
-**Los nueve corren solos en cada push** (`.github/workflows/revision.yml`), junto
+**Los diez corren solos en cada push** (`.github/workflows/revision.yml`), junto
 con `lint`, `typecheck`, `build` y la medición del peso del arranque, que falla
 arriba de 400 kB. Playwright se instala ahí con `--no-save`: no está en las
 `devDependencies` a propósito, para no obligar a nadie a bajarlo, y por eso los
@@ -170,6 +171,7 @@ src/
 │   ├── marca.ts                * Vestir el visor con la marca de otra inmobiliaria
 │   ├── contraste.ts            * Que una marca ajena no lo deje ilegible (WCAG)
 │   ├── rumbo.ts                * El norte de verdad: de dónde sale y con qué signo
+│   ├── nivel.ts                * Enderezar el horizonte al ver, rotando la esfera
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -218,13 +220,14 @@ tools/pruebas/damp.mjs          `damp` es idéntica bit a bit a la de three
 tools/pruebas/patrones.mjs      Formas de escribir algo que ya se demostraron malas
 tools/pruebas/contraste.mjs     La cuenta WCAG y qué paletas de marca entran
 tools/pruebas/rumbo.mjs         La brújula apunta al norte, con el signo correcto
+tools/pruebas/nivel.mjs         La corrección de nivel endereza, y en el sentido que dice
 tools/pruebas/zipito.mjs        Escritor de ZIP independiente, para fabricar fixtures
 
   -- con Playwright --
 tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
-tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (90 aserciones)
+tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (96 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
 
 .github/workflows/revision.yml  Los corre todos en cada push
@@ -978,7 +981,7 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Los nueve arneses, y por qué son arneses y no un framework
+### Los diez arneses, y por qué son arneses y no un framework
 
 No hay Jest ni Vitest, y es deliberado: lo que este proyecto necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
@@ -994,10 +997,11 @@ cada push, junto con `lint`, `typecheck`, `build` y el peso del arranque.
 | `patrones.mjs` | formas de escribir algo que ya se demostraron malas no volvieron | no |
 | `contraste.mjs` | la cuenta WCAG contra razones **publicadas**, y qué paletas de marca entran | no |
 | `rumbo.mjs` | la brújula apunta al norte, con el signo correcto, en 2,860 combinaciones | no |
+| `nivel.mjs` | existe un nivel que endereza un ladeo conocido, y cada eje mueve lo que dice su etiqueta | no |
 | `rendimiento.mjs` | parado dibuja **0 cuadros/s**, y todo lo tocable responde | sí |
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
 | `tactil.mjs` | los 12 recorridos de pantalla, todo ≥ 44 px | sí |
-| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 90 aserciones | sí |
+| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 96 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
 
 **Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
@@ -1175,6 +1179,13 @@ cualquier hosting.
   correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
   reversible y gratis— y no en la costura, que obligaría a remuestrear y
   recomprimir una 4096×2048.
+- ✅ **Corrección de nivel al ver** (`src/lib/nivel.ts`): en el editor de puntos,
+  la hoja "Nivel" endereza el horizonte rotando la esfera —dos ejes, ±10°— con
+  vista previa en vivo, y los puntos se recolocan para seguir sobre el mismo
+  detalle de la foto. Sin semilla automática desde las tomas, a propósito: el
+  costurero ya aplica su ladeo y sembrar con él lo duplicaría. El signo lo fija
+  `tools/pruebas/nivel.mjs`, que ladea una panorámica sintética con una rotación
+  conocida y busca el nivel que la endereza.
 - ✅ **La brújula apunta al norte de verdad** (`src/lib/rumbo.ts`). Antes su "N"
   señalaba el frente arbitrario de la foto: `offsetNorte` se calculaba en cada
   captura y no lo leía nadie en todo `src/`.

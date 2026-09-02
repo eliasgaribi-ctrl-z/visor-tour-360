@@ -64,7 +64,11 @@
           }
         ],
         "createdAt": 1772000000000,
-        "rumbo": 70
+        "rumbo": 70,
+        "nivel": {
+          "tiltX": 2,
+          "tiltZ": -1.5
+        }
       },
       {
         "id": "patio",
@@ -82,7 +86,11 @@
           }
         ],
         "createdAt": 1772000001000,
-        "rumbo": "400"
+        "rumbo": "400",
+        "nivel": {
+          "tiltX": "3",
+          "tiltZ": 40
+        }
       }
     ]
   }

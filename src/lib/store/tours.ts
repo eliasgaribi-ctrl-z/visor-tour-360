@@ -184,6 +184,7 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
       thumbnail,
       initialYaw: scene.initialYaw ?? 0,
       rumbo: scene.rumbo,
+      nivel: scene.nivel,
       // Un hotspot que apunta a una habitación que ya no existe se cae aquí:
       // dejarlo mostraría un botón que no lleva a ningún lado.
       hotspots: scene.hotspots.filter(

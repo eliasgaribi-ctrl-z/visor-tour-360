@@ -179,6 +179,7 @@ export function TourViewer({
           engine={engine}
           url={scene.image}
           initialYaw={scene.initialYaw ?? 0}
+          nivel={scene.nivel}
           webgl={webgl}
           onLoadingChange={setLoading}
           onError={() => setFailed(true)}

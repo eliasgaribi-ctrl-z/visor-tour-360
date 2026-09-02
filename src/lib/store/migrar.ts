@@ -212,6 +212,7 @@ export type EscenaLimpia = {
   origin?: SceneOrigin
   coverageDeg?: number
   rumbo?: number
+  nivel?: { tiltX: number; tiltZ: number }
   createdAt: number
 }
 
@@ -317,6 +318,21 @@ export function limpiarEscena(crudo: unknown): EscenaLimpia | undefined {
      un `undefined` la hace decir "frente", que es la verdad. */
   const rumbo = numero(e.rumbo)
   if (rumbo !== undefined) escena.rumbo = wrap360(rumbo)
+
+  /* El nivel se acota en vez de rechazarse: ±15° es el rango del control, y un
+     valor fuera de él no es un nivel, es otra foto. Se guarda solo si los DOS
+     ejes son números; un nivel a medias no significa nada. Y cero en los dos es
+     lo mismo que ninguno, así que no se guarda. */
+  if (e.nivel && typeof e.nivel === 'object') {
+    const n = e.nivel as Record<string, unknown>
+    const tiltX = numero(n.tiltX)
+    const tiltZ = numero(n.tiltZ)
+    if (tiltX !== undefined && tiltZ !== undefined) {
+      const x = clamp(tiltX, -15, 15)
+      const z = clamp(tiltZ, -15, 15)
+      if (x !== 0 || z !== 0) escena.nivel = { tiltX: x, tiltZ: z }
+    }
+  }
 
   /* Una fecha de creación que no es una fecha se cambia por ahora, no por cero:
      el listado ordena por ella, y un cero manda la habitación al año 1970. */

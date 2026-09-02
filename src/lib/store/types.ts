@@ -50,6 +50,13 @@ export type StoredScene = {
    * "N". Ver `src/lib/rumbo.ts`, incluido de dónde sale el signo.
    */
   rumbo?: number
+  /**
+   * Corrección de nivel al VER, en grados: `tiltX` sube/baja el horizonte del
+   * frente, `tiltZ` lo ladea a los costados. Ausente = cero. Se aplica rotando la
+   * esfera, no la foto; ver `src/lib/nivel.ts`, incluido por qué no hay semilla
+   * automática desde las tomas.
+   */
+  nivel?: { tiltX: number; tiltZ: number }
   createdAt: number
 }
 

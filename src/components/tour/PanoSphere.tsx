@@ -5,6 +5,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useEquirectTexture } from '../../lib/useEquirectTexture'
 import { useMenosMovimiento } from '../../lib/menosMovimiento'
+import { cuaternionDeNivel, type Nivel } from '../../lib/nivel'
 
 /**
  * Rotación inicial de la esfera.
@@ -18,6 +19,8 @@ const PHI_START = Math.PI / 2
 
 export type PanoSphereProps = {
   url: string
+  /** Corrección de nivel de ESTA foto. Ver src/lib/nivel.ts. */
+  nivel?: Nivel
   radius?: number
   /** Duración del fundido al cambiar de habitación, en segundos. */
   fadeSeconds?: number
@@ -72,6 +75,7 @@ const FUNDIDO_REDUCIDO = 0.12
  */
 export function PanoSphere({
   url,
+  nivel,
   radius = 500,
   fadeSeconds = 0.55,
   onLoadingChange,
@@ -81,10 +85,31 @@ export function PanoSphere({
   const invalidate = useThree((s) => s.invalidate)
   const menosMovimiento = useMenosMovimiento()
 
-  const [base, setBase] = useState<THREE.Texture | null>(null)
-  const [incoming, setIncoming] = useState<THREE.Texture | null>(null)
+  /* Cada esfera lleva SU nivel, no uno compartido: durante el fundido conviven
+     la foto vieja y la nueva, y cada una necesita el suyo. Con un solo nivel para
+     las dos, cambiar de habitación aplicaba el nivel nuevo a la foto vieja
+     durante medio segundo. Por eso el estado guarda la textura junto con el
+     nivel con el que se mostró, y el nivel de la entrante se congela al
+     empezar el fundido. */
+  const [base, setBase] = useState<{ texture: THREE.Texture; nivel?: Nivel } | null>(null)
+  const [incoming, setIncoming] = useState<{ texture: THREE.Texture; nivel?: Nivel } | null>(null)
   const fade = useRef(0)
   const overlayMaterial = useRef<THREE.MeshBasicMaterial>(null)
+  /* El nivel vigente, para leerlo desde el efecto de la textura sin meterlo en
+     sus dependencias: ese efecto arranca un fundido, y un cambio de nivel no
+     debe arrancar ninguno. Se escribe en un efecto y no durante el render —la
+     regla de refs de este proyecto— y va declarado ANTES del efecto que lo lee,
+     porque los efectos corren en orden de declaración: cuando textura y nivel
+     cambian en el mismo commit (al cambiar de habitación), el ref ya está al
+     día cuando la textura llega. */
+  const nivelRef = useRef(nivel)
+  useEffect(() => {
+    nivelRef.current = nivel
+    /* Y ajustar el nivel en el editor mueve la esfera con la cámara quieta: hay
+       que pedir cuadro, o el cambio se queda sin pintar hasta que alguien la
+       mueva. La foto que ya está de base sigue al nivel en vivo. */
+    invalidate()
+  }, [nivel, invalidate])
 
   useEffect(() => {
     onLoadingChange?.(loading)
@@ -95,16 +120,16 @@ export function PanoSphere({
   }, [error, onError])
 
   useEffect(() => {
-    if (!texture || texture === base) return
+    if (!texture || texture === base?.texture) return
     // El canvas dibuja a pedido: una foto nueva es justamente un motivo.
     invalidate()
     if (base === null) {
       // Primera carga: no hay de dónde venir, se muestra directo.
-      setBase(texture)
+      setBase({ texture, nivel: nivelRef.current })
       return
     }
     fade.current = 0
-    setIncoming(texture)
+    setIncoming({ texture, nivel: nivelRef.current })
   }, [texture, base, invalidate])
 
   useFrame((_state, delta) => {
@@ -144,29 +169,38 @@ export function PanoSphere({
     }
   })
 
+  /* La esfera de base sigue el nivel EN VIVO (es la que se ajusta en el editor);
+     la entrante conserva el que traía al empezar el fundido. Rotar el <group>
+     que envuelve la malla —y no la cámara— es lo que deja intactos a los
+     marcadores del HUD y al rig: la cámara y los puntos siguen viviendo en el
+     mundo, y una dirección d pasa a muestrear la textura en Q⁻¹·d. */
   return (
     <group>
       {base && (
-        <mesh scale={[-1, 1, 1]} renderOrder={0}>
-          <sphereGeometry args={[radius, 64, 40, PHI_START]} />
-          <meshBasicMaterial map={base} side={THREE.BackSide} toneMapped={false} />
-        </mesh>
+        <group quaternion={cuaternionDeNivel(incoming ? base.nivel : nivel)}>
+          <mesh scale={[-1, 1, 1]} renderOrder={0}>
+            <sphereGeometry args={[radius, 64, 40, PHI_START]} />
+            <meshBasicMaterial map={base.texture} side={THREE.BackSide} toneMapped={false} />
+          </mesh>
+        </group>
       )}
 
       {incoming && (
-        <mesh scale={[-1, 1, 1]} renderOrder={1}>
-          <sphereGeometry args={[radius, 64, 40, PHI_START]} />
-          <meshBasicMaterial
-            ref={overlayMaterial}
-            map={incoming}
-            side={THREE.BackSide}
-            toneMapped={false}
-            transparent
-            opacity={0}
-            depthWrite={false}
-            depthTest={false}
-          />
-        </mesh>
+        <group quaternion={cuaternionDeNivel(incoming.nivel)}>
+          <mesh scale={[-1, 1, 1]} renderOrder={1}>
+            <sphereGeometry args={[radius, 64, 40, PHI_START]} />
+            <meshBasicMaterial
+              ref={overlayMaterial}
+              map={incoming.texture}
+              side={THREE.BackSide}
+              toneMapped={false}
+              transparent
+              opacity={0}
+              depthWrite={false}
+              depthTest={false}
+            />
+          </mesh>
+        </group>
       )}
     </group>
   )

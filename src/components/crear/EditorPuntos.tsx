@@ -18,6 +18,7 @@ import { BASE_FOV, Escena360, detectWebGL } from '../tour/Escena360'
 import { Compass } from '../ui/Compass'
 import { LoadingVeil } from '../ui/LoadingVeil'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
+import { corregirPunto, hayNivel, type Nivel } from '../../lib/nivel'
 import { PuntosEditables } from './PuntosEditables'
 
 export type EditorPuntosProps = {
@@ -66,6 +67,13 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
   const [borrador, setBorrador] = useState<Borrador | null>(null)
   const [modoTocar, setModoTocar] = useState(false)
   const [guardado, setGuardado] = useState<string | null>(null)
+  /**
+   * La hoja de nivel abierta, con la foto TAL COMO ESTABA al abrirla. Los puntos
+   * se recolocan siempre desde ese original y no desde el paso anterior: así
+   * mover el control diez veces no acumula diez redondeos, y "Quitar" vuelve
+   * exactamente a lo que había.
+   */
+  const [nivelando, setNivelando] = useState<{ nivel?: Nivel; hotspots: StoredScene['hotspots'] } | null>(null)
 
   const capa = useRef<HTMLDivElement>(null)
 
@@ -116,6 +124,38 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
     },
     [aplicar, sceneId, tour],
   )
+
+  /**
+   * Vista previa del nivel: solo en memoria. La esfera lo sigue en vivo porque
+   * `escena.nivel` baja hasta PanoSphere, y los puntos se mueven con ella para
+   * seguir sobre el mismo detalle de la foto (ver `corregirPunto`). Se guarda al
+   * cerrar la hoja, una sola vez.
+   */
+  const previsualizarNivel = (nuevo: Nivel | undefined) => {
+    if (!tour || tour === 'no-existe' || !nivelando) return
+    const nivel = hayNivel(nuevo) ? nuevo : undefined
+    setTour({
+      ...tour,
+      scenes: tour.scenes.map((s) =>
+        s.id === sceneId
+          ? {
+              ...s,
+              nivel,
+              hotspots: nivelando.hotspots.map((h) => {
+                const c = corregirPunto(h.yaw, h.pitch, nivelando.nivel, nivel)
+                return { ...h, yaw: wrap180(c.yaw), pitch: c.pitch }
+              }),
+            }
+          : s,
+      ),
+    })
+  }
+
+  const cerrarNivel = () => {
+    setNivelando(null)
+    // Lo que hay en memoria ya es lo bueno: solo hay que persistirlo.
+    void aplicar((s) => s, 'Nivel guardado')
+  }
 
   const nuevoBorrador = (yaw: number, pitch: number): Borrador => ({
     id: newId('punto'),
@@ -223,6 +263,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             engine={engine}
             url={url}
             initialYaw={escena.initialYaw ?? 0}
+            nivel={escena.nivel}
             webgl={webgl}
             onLoadingChange={setCargando}
           />
@@ -338,9 +379,75 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
               >
                 Centrar
               </Boton>
+              <Boton onClick={() => setNivelando({ nivel: escena.nivel, hotspots: escena.hotspots })}>
+                Nivel
+              </Boton>
             </div>
           </div>
         </div>
+
+        {/* ── La hoja de nivel ──────────────────────────────────────────────
+            Se endereza AL VER, rotando la esfera, y no en la foto: es reversible,
+            gratis, y sirve igual para una foto importada que no tiene tomas que
+            recoser. Dos ejes y no uno, porque un error de referencia de gravedad
+            tiene dos grados de libertad. Sin semilla automática a propósito: el
+            costurero ya aplica el ladeo de cada toma, y sembrar con él lo
+            duplicaría. Ver src/lib/nivel.ts. */}
+        {nivelando && (
+          <Hoja titulo="Nivel del horizonte" onCerrar={cerrarNivel}>
+            <p className="mb-4 text-sm text-ink-200">
+              Mueve los controles hasta que el horizonte de la foto quede recto. La foto se
+              endereza en vivo; los puntos se quedan sobre lo mismo.
+            </p>
+            <div className="flex flex-col gap-4">
+              {(
+                [
+                  ['tiltX', 'Adelante y atrás', 'Con + el frente sube'],
+                  ['tiltZ', 'Izquierda y derecha', 'Con + la derecha sube'],
+                ] as const
+              ).map(([eje, etiqueta, ayuda]) => {
+                const valor = escena.nivel?.[eje] ?? 0
+                return (
+                  <label key={eje} className="block">
+                    <span className="mb-1.5 flex items-center justify-between text-xs font-medium text-ink-200">
+                      <span>{etiqueta}</span>
+                      <span className="text-ink-50 tabular-nums">
+                        {valor > 0 ? '+' : ''}
+                        {valor.toFixed(2)}°
+                      </span>
+                    </span>
+                    {/* h-11: el control mide 44 px de alto, el mínimo para el
+                        pulgar que audita tactil.mjs; un range sin altura mide 20. */}
+                    <input
+                      type="range"
+                      min={-10}
+                      max={10}
+                      step={0.25}
+                      value={valor}
+                      aria-label={etiqueta}
+                      onChange={(e) =>
+                        previsualizarNivel({
+                          tiltX: eje === 'tiltX' ? Number(e.target.value) : (escena.nivel?.tiltX ?? 0),
+                          tiltZ: eje === 'tiltZ' ? Number(e.target.value) : (escena.nivel?.tiltZ ?? 0),
+                        })
+                      }
+                      className="h-11 w-full accent-brand-500"
+                    />
+                    <span className="mt-1 block text-xs text-ink-200/70">{ayuda}</span>
+                  </label>
+                )
+              })}
+              <div className="flex gap-2">
+                <Boton ancho onClick={() => previsualizarNivel(undefined)} disabled={!hayNivel(escena.nivel)}>
+                  Quitar nivel
+                </Boton>
+                <Boton tipo="principal" ancho onClick={cerrarNivel}>
+                  Listo
+                </Boton>
+              </div>
+            </div>
+          </Hoja>
+        )}
 
         <LoadingVeil visible={cargando && !!url} />
         {!url && <LoadingVeil visible label="Abriendo la habitación…" />}

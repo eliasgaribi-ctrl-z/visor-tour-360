@@ -8,6 +8,7 @@ import { useDragLook } from '../../lib/useDragLook'
 
 import { CameraRig } from './CameraRig'
 import { PanoSphere } from './PanoSphere'
+import type { Nivel } from '../../lib/nivel'
 import { detectWebGL, ViewerBoundary, ViewerFallback, type Deteccion } from './ViewerGuard'
 import { aparato } from '../../lib/dispositivo'
 
@@ -18,6 +19,8 @@ export type Escena360Props = {
   /** URL de la equirectangular. */
   url: string
   initialYaw?: number
+  /** Corrección de nivel de la foto. Ver src/lib/nivel.ts. */
+  nivel?: Nivel
   webgl: Deteccion
   onLoadingChange?: (loading: boolean) => void
   onError?: () => void
@@ -51,6 +54,7 @@ export function Escena360({
   engine,
   url,
   initialYaw = 0,
+  nivel,
   webgl,
   onLoadingChange,
   onError,
@@ -119,7 +123,7 @@ export function Escena360({
                 React, así que el provider se vuelve a colocar aquí adentro. */}
             <TourEngineProvider value={engine}>
               <CameraRig fov={BASE_FOV} initialYaw={initialYaw} />
-              <PanoSphere url={url} onLoadingChange={onLoadingChange} onError={onError} />
+              <PanoSphere url={url} nivel={nivel} onLoadingChange={onLoadingChange} onError={onError} />
               {children}
             </TourEngineProvider>
           </Canvas>

@@ -107,6 +107,14 @@ await auditar('subir foto (cargada)')
 await page.getByRole('button', { name: 'Guardar habitación' }).click()
 await page.waitForTimeout(3000)
 await auditar('editor de puntos')
+/* La hoja de nivel trae dos controles deslizantes: un `<input type=range>` sin
+   altura mide 20 px, y esta es la única pantalla del proyecto que los tiene a la
+   vista (los de "subir foto" solo aparecen con una foto que no es 2:1). */
+await page.getByRole('button', { name: 'Nivel' }).click()
+await page.waitForTimeout(400)
+await auditar('hoja: nivel')
+await page.getByRole('button', { name: 'Listo' }).click()
+await page.waitForTimeout(600)
 await page.getByRole('button', { name: 'Poner punto en la mira' }).click()
 await page.waitForTimeout(500)
 await auditar('hoja: punto nuevo')

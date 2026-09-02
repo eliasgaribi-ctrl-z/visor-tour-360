@@ -590,6 +590,31 @@ revisar('el rumbo de la sala se conserva', rumbos[0] === 70, JSON.stringify(rumb
    apuntando a cualquier lado. */
 revisar('un "400" de texto se vuelve 40', rumbos[1] === 40, `${typeof rumbos[1]} ${rumbos[1]}`)
 
+/* Y el nivel, que también es un par de números que viene de fuera: se acota a
+   ±15 en vez de rechazarse, se acepta como texto si es un número, y cero en los
+   dos ejes es lo mismo que ninguno. */
+const niveles = v2Guardado.scenes.map((e) => e.nivel)
+revisar(
+  'el nivel de la sala se conserva',
+  niveles[0]?.tiltX === 2 && niveles[0]?.tiltZ === -1.5,
+  JSON.stringify(niveles[0]),
+)
+revisar(
+  'un nivel con texto y fuera de rango se normaliza',
+  niveles[1]?.tiltX === 3 && niveles[1]?.tiltZ === 15,
+  JSON.stringify(niveles[1]),
+)
+const nivelesMalos = await page.evaluate(async () => {
+  const mod = await import('/src/lib/store/migrar.ts')
+  const base = { id: 'a', name: 'A', archivo: 'x.jpg' }
+  return [
+    mod.limpiarEscena({ ...base, nivel: { tiltX: 0, tiltZ: 0 } })?.nivel,
+    mod.limpiarEscena({ ...base, nivel: { tiltX: 2 } })?.nivel,
+    mod.limpiarEscena({ ...base, nivel: 'plano' })?.nivel,
+  ]
+})
+revisar('cero, a medias o basura: sin nivel', nivelesMalos.every((n) => n === undefined), JSON.stringify(nivelesMalos))
+
 const conBrujula = await page.evaluate(async () => {
   const mod = await import('/src/lib/store/migrar.ts')
   return [
@@ -647,7 +672,7 @@ const CAMPOS_TOUR = ['title', 'subtitle', 'startSceneId', 'createdAt', 'marca', 
 const distintos = diferencias(v2Guardado, vuelta.reimportado, CAMPOS_TOUR)
 revisar('el recorrido vuelve idéntico', distintos.length === 0, distintos.join(', '))
 
-const CAMPOS_ESCENA = ['id', 'name', 'initialYaw', 'hotspots', 'origin', 'coverageDeg', 'rumbo', 'createdAt']
+const CAMPOS_ESCENA = ['id', 'name', 'initialYaw', 'hotspots', 'origin', 'coverageDeg', 'rumbo', 'nivel', 'createdAt']
 const escenasIguales =
   v2Guardado.scenes.length === vuelta.reimportado.scenes.length &&
   v2Guardado.scenes.every(
@@ -863,6 +888,136 @@ revisar(
 )
 revisar('uno viejo sin estampa se sigue leyendo', estampas.sinEstampaSeLee)
 revisar('y al reguardarlo queda estampado', estampas.trasReguardar === 2, String(estampas.trasReguardar))
+
+/* Esta sección va AQUÍ a propósito, y las dos vecinas fijan el sitio: edita el
+   recorrido v2 en IndexedDB, así que va DESPUÉS de la ida y vuelta —que compara
+   ese recorrido con lo que se importó; puesta antes reportaba "hotspots, nivel"
+   distintos, que eran los cambios de esta prueba y no un defecto— y ANTES de
+   "Preparar el archivo", que le borra la foto a la sala para probar el aviso de
+   habitación fuera: sin foto no hay canvas, y esta prueba necesita el editor. */
+/* ==========================================================================
+ * EL NIVEL SE AJUSTA EN EL EDITOR Y LOS PUNTOS SIGUEN A LA FOTO
+ *
+ * La matemática —qué rotación endereza qué ladeo, y con qué signo— la prueba
+ * `tools/pruebas/nivel.mjs` sin navegador. Aquí se prueba el cableado: que el
+ * control del editor escriba `nivel` en el recorrido, que al cerrar se guarde en
+ * IndexedDB, y que los puntos se muevan exactamente como dice `corregirPunto`
+ * para seguir sobre el mismo detalle de la foto. Se compara contra la función
+ * real, importada, no contra un número escrito a mano.
+ * ========================================================================== */
+console.log('\n=== El nivel se ajusta en el editor ===')
+
+await page.goto(`${BASE}#/puntos/${v2Guardado.id}/sala`, { waitUntil: 'networkidle' })
+try {
+  await page.waitForSelector('canvas', { timeout: 20000 })
+} catch (e) {
+  /* Un "timeout" a secas no dice nada: qué había en pantalla, sí. */
+  const texto = await page.locator('body').innerText().catch(() => '(sin texto)')
+  console.log(`  sin canvas en ${page.url()}\n  en pantalla: ${texto.slice(0, 400).replace(/\n+/g, ' | ')}`)
+  console.log(`  errores hasta aquí: ${JSON.stringify(errores)}`)
+  throw e
+}
+await page.waitForTimeout(2500)
+const salaAntes = (await leerGuardado('Casa de prueba v2')).scenes.find((e) => e.id === 'sala')
+await page.getByRole('button', { name: 'Nivel' }).click()
+await page.waitForTimeout(500)
+/* `fill` sobre un range fija el valor y dispara `input`/`change`, como el dedo. */
+await page.getByRole('slider', { name: 'Adelante y atrás' }).fill('5')
+await page.waitForTimeout(400)
+await page.getByRole('slider', { name: 'Izquierda y derecha' }).fill('-2.5')
+await page.waitForTimeout(400)
+const enPantalla = await page.evaluate(() =>
+  [...document.querySelectorAll('input[type=range]')].map((i) => i.value),
+)
+await page.getByRole('button', { name: 'Listo' }).click()
+await page.waitForTimeout(1500)
+
+const salaDespues = (await leerGuardado('Casa de prueba v2')).scenes.find((e) => e.id === 'sala')
+revisar('los controles muestran lo que se movió', enPantalla.join('/') === '5/-2.5', enPantalla.join('/'))
+revisar(
+  'al cerrar, el nivel queda guardado',
+  salaDespues?.nivel?.tiltX === 5 && salaDespues?.nivel?.tiltZ === -2.5,
+  JSON.stringify(salaDespues?.nivel),
+)
+
+/* Los puntos: cada uno tiene que estar donde `corregirPunto` dice que queda el
+   mismo detalle de la foto con el nivel nuevo, partiendo del nivel que tenía. */
+const puntos = await page.evaluate(
+  async ({ antes, despues }) => {
+    const { corregirPunto } = await import('/src/lib/nivel.ts')
+    const wrap180 = (d) => ((((d + 180) % 360) + 360) % 360) - 180
+    return antes.hotspots.map((h, i) => {
+      const c = corregirPunto(h.yaw, h.pitch, antes.nivel, despues.nivel)
+      const real = despues.hotspots[i]
+      return {
+        id: h.id,
+        desvio: Math.max(Math.abs(wrap180(real.yaw - c.yaw)), Math.abs(real.pitch - c.pitch)),
+        seMovio: Math.abs(wrap180(real.yaw - h.yaw)) + Math.abs(real.pitch - h.pitch),
+      }
+    })
+  },
+  { antes: salaAntes, despues: salaDespues },
+)
+revisar(
+  'los puntos siguen a la foto, como dice corregirPunto',
+  puntos.length === 2 && puntos.every((p) => p.desvio < 1e-6),
+  puntos.map((p) => `${p.id} desvío ${p.desvio.toExponential(1)}`).join(' · '),
+)
+revisar('y de verdad se movieron', puntos.every((p) => p.seMovio > 0.5), puntos.map((p) => `${p.id} ${p.seMovio.toFixed(2)}°`).join(' · '))
+
+/* "Quitar nivel" NO devuelve los puntos a donde estaban: la sala del fixture
+   traía nivel (2, -1.5), y sin nivel la foto se muestra SIN enderezar, así que
+   los puntos tienen que irse con ella para seguir sobre el mismo detalle. La
+   primera versión de esta aserción esperaba los puntos del fixture y estaba mal
+   —el producto hacía lo correcto—. Lo que sí tiene que ser exacto es volver a
+   PONER el nivel del fixture: tres cambios de nivel encadenados tienen que
+   dejar cada punto donde empezó, o `corregirPunto` acumula error. */
+await page.getByRole('button', { name: 'Nivel' }).click()
+await page.waitForTimeout(500)
+await page.getByRole('button', { name: 'Quitar nivel' }).click()
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Listo' }).click()
+await page.waitForTimeout(1500)
+const salaQuitada = (await leerGuardado('Casa de prueba v2')).scenes.find((e) => e.id === 'sala')
+revisar('quitar el nivel lo borra', salaQuitada?.nivel === undefined, JSON.stringify(salaQuitada?.nivel))
+const siguenSinNivel = await page.evaluate(
+  async ({ antes, despues }) => {
+    const { corregirPunto } = await import('/src/lib/nivel.ts')
+    const wrap180 = (d) => ((((d + 180) % 360) + 360) % 360) - 180
+    return antes.hotspots.every((h, i) => {
+      const c = corregirPunto(h.yaw, h.pitch, antes.nivel, undefined)
+      const r = despues.hotspots[i]
+      return Math.abs(wrap180(r.yaw - c.yaw)) < 1e-6 && Math.abs(r.pitch - c.pitch) < 1e-6
+    })
+  },
+  { antes: salaAntes, despues: salaQuitada },
+)
+revisar('y los puntos siguen a la foto sin nivel', siguenSinNivel)
+
+await page.getByRole('button', { name: 'Nivel' }).click()
+await page.waitForTimeout(500)
+await page.getByRole('slider', { name: 'Adelante y atrás' }).fill(String(salaAntes.nivel.tiltX))
+await page.waitForTimeout(300)
+await page.getByRole('slider', { name: 'Izquierda y derecha' }).fill(String(salaAntes.nivel.tiltZ))
+await page.waitForTimeout(300)
+await page.getByRole('button', { name: 'Listo' }).click()
+await page.waitForTimeout(1500)
+const salaVuelta = (await leerGuardado('Casa de prueba v2')).scenes.find((e) => e.id === 'sala')
+/* El yaw se compara MÓDULO una vuelta: el importador guarda 200 (wrap360) y el
+   editor escribe -160 (wrap180). Es la misma dirección, y sin envolver esta
+   aserción daba 360° de "desvío" en un punto que no se había movido. */
+const wrap180 = (d) => ((((d + 180) % 360) + 360) % 360) - 180
+const peorVuelta = Math.max(
+  ...salaAntes.hotspots.map((h, i) => {
+    const r = salaVuelta.hotspots[i]
+    return Math.max(Math.abs(wrap180(r.yaw - h.yaw)), Math.abs(r.pitch - h.pitch))
+  }),
+)
+revisar(
+  'volver al nivel original devuelve los puntos exactos',
+  JSON.stringify(salaVuelta?.nivel) === JSON.stringify(salaAntes.nivel) && peorVuelta < 1e-6,
+  `peor desvío ${peorVuelta.toExponential(1)}° tras tres cambios`,
+)
 
 /* ==========================================================================
  * "PREPARAR ARCHIVO" Y "COMPARTIR", POR LA INTERFAZ

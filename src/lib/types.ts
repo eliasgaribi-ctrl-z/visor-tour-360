@@ -46,6 +46,8 @@ export type TourScene = {
    * Ver `src/lib/rumbo.ts`.
    */
   rumbo?: number
+  /** Corrección de nivel al ver, en grados. Ver `src/lib/nivel.ts`. */
+  nivel?: { tiltX: number; tiltZ: number }
   hotspots: Hotspot[]
 }
 

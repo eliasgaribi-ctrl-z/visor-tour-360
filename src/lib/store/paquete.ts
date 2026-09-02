@@ -53,8 +53,9 @@ type EscenaManifiesto = {
   hotspots: Hotspot[]
   origin?: StoredScene['origin']
   coverageDeg?: number
-  /* Desde la v2, junto con marca y ficha. Opcional: un archivo v1 se lee igual. */
+  /* Desde la v2, junto con marca y ficha. Opcionales: un archivo v1 se lee igual. */
   rumbo?: number
+  nivel?: { tiltX: number; tiltZ: number }
   createdAt: number
 }
 
@@ -167,6 +168,7 @@ export async function exportarTour(
       origin: scene.origin,
       coverageDeg: scene.coverageDeg,
       rumbo: scene.rumbo,
+      nivel: scene.nivel,
       createdAt: scene.createdAt,
     })
 
@@ -369,6 +371,7 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
       origin: escena.origin,
       coverageDeg: escena.coverageDeg,
       rumbo: escena.rumbo,
+      nivel: escena.nivel,
       createdAt: escena.createdAt,
     })
   }
