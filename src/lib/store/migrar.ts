@@ -1,6 +1,7 @@
 import type { Ficha, Hotspot, Marca } from '../types'
 import type { MarcaGuardada, SceneOrigin } from './types'
 import { clamp, wrap360 } from '../math'
+import { revisarPaleta } from '../contraste'
 
 /**
  * ============================================================================
@@ -88,12 +89,33 @@ export function limpiarMarca(crudo: unknown): MarcaGuardada | undefined {
     const c = color(colores[clave])
     if (c) paleta[clave] = c
   }
-  if (Object.keys(paleta).length > 0) limpia.colores = paleta
-
   const hud = color(m.hudFondo)
-  if (hud) limpia.hudFondo = hud
   const fondo = color(m.fondoApp)
-  if (fondo) limpia.fondoApp = fondo
+
+  /* ── Que un hex válido no baste ──────────────────────────────────────────
+   *
+   * Hasta aquí el filtro solo preguntaba "¿es un color que el navegador
+   * entiende?", y `#111111` lo es. Medido midiendo los píxeles del navegador:
+   * un `.tour` con `"ink50": "#111111"` deja la portada a **1.05 de contraste**
+   * —texto casi negro sobre el fondo casi negro de la app, o sea invisible— y no
+   * hace falta mala fe: una inmobiliaria que llene "ink" pensando "tinta =
+   * oscuro" produce eso exacto.
+   *
+   * `revisarPaleta` mide cada tinta contra cada superficie con el umbral que le
+   * toca (4.5 para letras, 3 para formas grandes) y devuelve los pares que no
+   * llegan. Si hay uno, se descarta la PALETA COMPLETA y no el token culpable:
+   * mezclar media marca con medio tema base da un resultado peor que cualquiera
+   * de los dos —el respaldo casi blanco de `ink50` sobre un `fondoApp` claro de
+   * marca es justo eso—, y sin paleta el visor se ve como se ve hoy, que es
+   * legible por construcción. Un tema claro coherente pasa entero.
+   *
+   * El nombre, la tipografía y el logo sobreviven: no pintan nada encima de
+   * nada. */
+  if (revisarPaleta({ colores: paleta, hudFondo: hud, fondoApp: fondo }).length === 0) {
+    if (Object.keys(paleta).length > 0) limpia.colores = paleta
+    if (hud) limpia.hudFondo = hud
+    if (fondo) limpia.fondoApp = fondo
+  }
 
   if (m.tipografia === 'sistema' || m.tipografia === 'serif' || m.tipografia === 'geometrica') {
     limpia.tipografia = m.tipografia

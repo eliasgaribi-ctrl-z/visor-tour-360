@@ -1,4 +1,5 @@
 import type { Marca } from './types'
+import { tintaPara } from './contraste'
 
 /**
  * ============================================================================
@@ -102,64 +103,18 @@ export function aplicarMarca(marca: Marca | undefined): void {
 
 /* ------------------------------------------------------------------ CONTRASTE */
 
-/** "#e19100" o "#e91" → [225, 145, 0]. */
-function canales(hex: string): [number, number, number] | null {
-  const limpio = hex.trim().replace(/^#/, '')
-  const largo = limpio.length === 3 ? 1 : limpio.length === 6 ? 2 : 0
-  if (!largo || !/^[0-9a-f]+$/i.test(limpio)) return null
-  const leer = (i: number) => {
-    const trozo = limpio.slice(i * largo, i * largo + largo)
-    return parseInt(largo === 1 ? trozo + trozo : trozo, 16)
-  }
-  return [leer(0), leer(1), leer(2)]
-}
-
 /**
- * Luminancia relativa según WCAG 2.
+ * La matemática de color se mudó a `./contraste`: la necesitan dos capas que no
+ * se conocen —el filtro del importador de `.tour` y esta— y tenerla aquí metía
+ * todo `marca.ts` en el chunk de arranque por una función de veinte líneas.
  *
- * No es el promedio de los canales ni el brillo del HSL: el ojo humano ve el
- * verde muchísimo más que el azul, y esos coeficientes (0.2126 / 0.7152 / 0.0722)
- * son justamente esa diferencia. Con un promedio, un azul saturado pasaría por
- * "claro" y el texto negro encima quedaría ilegible.
+ * Se reexporta desde aquí para no romper a quien ya la importaba de este módulo.
  */
-function luminancia(rgb: [number, number, number]): number {
-  const [r, g, b] = rgb.map((c) => {
-    const n = c / 255
-    return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4)
-  })
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-/** Razón de contraste WCAG entre dos colores: de 1 (igual) a 21 (negro/blanco). */
-export function contraste(a: string, b: string): number {
-  const ca = canales(a)
-  const cb = canales(b)
-  if (!ca || !cb) return 1
-  const la = luminancia(ca)
-  const lb = luminancia(cb)
-  const [claro, oscuro] = la > lb ? [la, lb] : [lb, la]
-  return (claro + 0.05) / (oscuro + 0.05)
-}
-
-/** Negro o blanco: el que se lea mejor encima de `fondo`. */
-export function tintaPara(fondo: string): '#000000' | '#ffffff' {
-  return contraste(fondo, '#000000') >= contraste(fondo, '#ffffff') ? '#000000' : '#ffffff'
-}
-
-/**
- * ¿Este color de acento se ve sobre el vidrio del HUD?
- *
- * El umbral es 3:1 y no el 4.5:1 de WCAG para texto normal, a propósito: lo que
- * se pinta con el color de acento en el visor son elementos GRANDES —el aro del
- * joystick, el aro de un marcador, el relleno de un botón—, y para eso WCAG
- * 1.4.11 (componentes de interfaz y gráficos) pide 3:1. Exigir 4.5 dejaría fuera
- * marcas perfectamente legibles.
- *
- * El editor de marca lo usa para no dejar guardar un color con el que el visor
- * se vuelve inusable. Es la diferencia entre "personalizable" y "roto".
- */
-export const CONTRASTE_MINIMO = 3
-
-export function contrasteOk(acento: string, fondoHud = '#0c1016'): boolean {
-  return contraste(acento, fondoHud) >= CONTRASTE_MINIMO
-}
+export {
+  CONTRASTE_MINIMO,
+  CONTRASTE_TEXTO,
+  contraste,
+  contrasteOk,
+  revisarPaleta,
+  tintaPara,
+} from './contraste'

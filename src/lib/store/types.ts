@@ -52,6 +52,27 @@ export type MarcaGuardada = Omit<Marca, 'logo'> & { logoId?: string }
 
 export type StoredTour = {
   id: string
+  /**
+   * Con qué versión del formato se escribió este registro.
+   *
+   * ── Por qué un número guardado y no uno deducido ──────────────────────────
+   *
+   * `.tour` tiene `version` dentro del manifiesto desde el principio; IndexedDB
+   * no tenía nada. Y el `.tour` es el respaldo: **el trabajo real vive en
+   * IndexedDB**, así que ahí faltaba justo donde más importa. El escenario es
+   * concreto: cuando llegue la v3, los archivos suben por su peldaño `de2a3` y
+   * los cuarenta recorridos que el agente ya tiene en el teléfono no suben por
+   * ninguno, porque no hay número al que preguntarle qué forma tienen.
+   *
+   * Un registro SIN estampa se toma como 2, y eso no es una suposición
+   * cómoda: el salto de 1 a 2 fue puramente aditivo (`marca` y `ficha`, las dos
+   * opcionales), así que un registro escrito por el código v1 y uno escrito por
+   * el v2 tienen la misma forma. Leerlos como 2 es correcto para los dos.
+   *
+   * `DB_VERSION` de `idb.ts` es otra cosa y no se confunde con esta: esa dice
+   * qué ALMACENES existen, esta dice qué forma tienen los registros de dentro.
+   */
+  formato?: number
   title: string
   subtitle?: string
   startSceneId: string

@@ -404,6 +404,10 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
   const ahora = Date.now()
   const tour: StoredTour = {
     id: tourId,
+    /* El importador escribe con `idbPut` directo y no con `saveTour`, así que la
+       estampa se pone a mano: sin esto, cada recorrido que entra por un archivo
+       quedaría sin versión. Ver el comentario de `formato` en ./types.ts. */
+    formato: FORMAT_VERSION,
     marca,
     ficha,
     title: manifiesto.recorrido.title || 'Recorrido importado',

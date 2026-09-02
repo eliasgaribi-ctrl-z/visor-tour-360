@@ -1,5 +1,6 @@
 import type { Tour, TourScene } from '../types'
 import type { StoredScene, StoredTour, TourSummary } from './types'
+import { FORMAT_VERSION } from './types'
 import { normalizarTour } from './normalizar'
 import {
   STORE_BLOBS,
@@ -103,8 +104,28 @@ export async function getTour(id: string): Promise<StoredTour | null> {
   return tour ? normalizarTour(tour) : null
 }
 
+/**
+ * Lo último que le pasa a un recorrido antes de escribirse: la estampa de
+ * versión y la fecha.
+ *
+ * Existe porque no hay UN camino de escritura, hay tres: `saveTour`,
+ * `guardarEscenaConFoto` y `reemplazarFoto`, y las dos últimas usan `idbPut`
+ * directo porque escriben el recorrido y sus blobs en la MISMA transacción.
+ * Los tres ponían `updatedAt: Date.now()` por su cuenta, y al agregarle la
+ * estampa de versión al modelo se me olvidaron dos de los tres — o sea que
+ * cualquier recorrido hecho con la cámara se habría quedado sin ella, en
+ * silencio, y el problema no aparecería hasta la migración a la v3.
+ *
+ * Así que la sella una sola función, y `tools/pruebas/patrones.mjs` se pone rojo
+ * si aparece un escritor nuevo del almacén de recorridos. Ver el comentario de
+ * `formato` en ./types.ts.
+ */
+function paraGuardar(tour: StoredTour): StoredTour {
+  return { ...tour, formato: FORMAT_VERSION, updatedAt: Date.now() }
+}
+
 export async function saveTour(tour: StoredTour): Promise<StoredTour> {
-  const next: StoredTour = { ...tour, updatedAt: Date.now() }
+  const next = paraGuardar(tour)
   await tx(STORE_TOURS, 'readwrite', (t) => idbPut(t, STORE_TOURS, next))
   return next
 }
@@ -223,12 +244,11 @@ export async function guardarEscenaConFoto(params: {
   miniatura?: Blob
 }): Promise<StoredTour> {
   const { tour, scene, foto, miniatura } = params
-  const siguiente: StoredTour = {
+  const siguiente = paraGuardar({
     ...tour,
     scenes: [...tour.scenes.filter((s) => s.id !== scene.id), scene],
     startSceneId: tour.startSceneId || scene.id,
-    updatedAt: Date.now(),
-  }
+  })
 
   await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
     await idbPut(t, STORE_BLOBS, { id: scene.imageId, blob: foto })
@@ -264,7 +284,7 @@ export async function reemplazarFoto(params: {
   const imageId = newId('img')
   const thumbId = miniatura ? newId('img') : undefined
 
-  const siguiente: StoredTour = {
+  const siguiente = paraGuardar({
     ...tour,
     scenes: tour.scenes.map((s) =>
       s.id === sceneId
@@ -277,8 +297,7 @@ export async function reemplazarFoto(params: {
           }
         : s,
     ),
-    updatedAt: Date.now(),
-  }
+  })
 
   await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
     await idbPut(t, STORE_BLOBS, { id: imageId, blob: foto })

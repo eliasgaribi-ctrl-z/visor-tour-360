@@ -297,6 +297,74 @@ revisar(
 )
 
 /* ==========================================================================
+ * UNA MARCA QUE DEJARÍA EL VISOR ILEGIBLE
+ *
+ * `#111111` es un hex perfectamente válido, y como `ink50` deja la portada a
+ * 1.01 de contraste: texto casi negro sobre el fondo casi negro de la app. No
+ * hace falta mala fe — una inmobiliaria que llene "ink" pensando "tinta =
+ * oscuro" produce exactamente eso.
+ *
+ * La paleta se descarta COMPLETA y no el token culpable, porque media marca
+ * mezclada con medio tema base da algo peor que cualquiera de las dos. El
+ * nombre sobrevive: no pinta nada encima de nada.
+ * ========================================================================== */
+console.log('\n=== Una marca ilegible no entra ===')
+
+const ilegible = tourito(
+  {
+    formato: 'visor-tour-360',
+    version: 2,
+    exportadoEn: '2026-03-01T12:00:00.000Z',
+    recorrido: {
+      id: 'tour-ciego',
+      title: 'Casa con marca ciega',
+      startSceneId: 'sala',
+      createdAt: 1772000000000,
+      marca: {
+        nombre: 'Tinta Oscura S.A.',
+        colores: { ink50: '#111111', ink200: '#161616', brand500: '#0d0d0d' },
+        fondoApp: '#0a0a0a',
+      },
+      ficha: { precio: '$1' },
+      scenes: [{ id: 'sala', name: 'Sala', archivo: 'fotos/a.jpg', hotspots: [], createdAt: 1 }],
+    },
+  },
+  [{ name: 'fotos/a.jpg', data: SALA }],
+)
+
+await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+await meterArchivo('ciega.tour', ilegible, 3500)
+
+const ciega = await leerGuardado('Casa con marca ciega')
+revisar('el recorrido entra igual', ciega !== null)
+revisar('la paleta ilegible se descarta entera', ciega?.marca?.colores === undefined, JSON.stringify(ciega?.marca?.colores))
+revisar('y su fondo también', ciega?.marca?.fondoApp === undefined, String(ciega?.marca?.fondoApp))
+revisar('el nombre de la inmobiliaria se queda', ciega?.marca?.nombre === 'Tinta Oscura S.A.')
+
+/* Y lo que de verdad importa: que en pantalla se lea. Se mide el contraste real
+   entre el color del texto y el fondo, con los píxeles que reporta el navegador,
+   no las variables de CSS. */
+await page.goto(`${BASE}#/ver/${ciega.id}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(2500)
+const legible = await page.evaluate(() => {
+  const cuerpo = getComputedStyle(document.body)
+  const rgb = (s) => (s.match(/\d+/g) ?? []).slice(0, 3).map(Number)
+  const lum = ([r, g, b]) =>
+    [r, g, b]
+      .map((c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : Math.pow((c / 255 + 0.055) / 1.055, 2.4)))
+      .reduce((a, v, i) => a + v * [0.2126, 0.7152, 0.0722][i], 0)
+  const [a, b] = [lum(rgb(cuerpo.color)), lum(rgb(cuerpo.backgroundColor))]
+  const [claro, oscuro] = a > b ? [a, b] : [b, a]
+  return { razon: (claro + 0.05) / (oscuro + 0.05), color: cuerpo.color, fondo: cuerpo.backgroundColor }
+})
+revisar(
+  'la portada se lee en pantalla',
+  legible.razon >= 4.5,
+  `${legible.razon.toFixed(2)}:1 · ${legible.color} sobre ${legible.fondo}`,
+)
+
+/* ==========================================================================
  * LA IDA Y VUELTA: lo que el visor escribe, el visor lo vuelve a leer
  *
  * Se hace DENTRO de la página, llamando a las funciones de verdad: `exportarTour`
@@ -508,6 +576,53 @@ const sinNinguna = await page.evaluate(async (titulo) => {
   }
 }, 'Casa con ids repetidos')
 revisar('y sin ninguna foto sí avisa', /ninguna foto|ninguna habitación/i.test(sinNinguna), sinNinguna)
+
+/* ==========================================================================
+ * LA ESTAMPA DE VERSIÓN EN INDEXEDDB
+ *
+ * El `.tour` trae `version` en su manifiesto desde el principio; los registros
+ * de IndexedDB no traían nada. Y el `.tour` es el RESPALDO: el trabajo real vive
+ * en IndexedDB, o sea que faltaba justo donde más importa. Cuando llegue la v3,
+ * los archivos suben por su peldaño y los cuarenta recorridos del teléfono del
+ * agente no suben por ninguno.
+ * ========================================================================== */
+console.log('\n=== Todo lo que se guarda lleva su versión ===')
+
+const estampas = await page.evaluate(async () => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const idb = await import('/src/lib/store/idb.ts')
+  const lista = await tours.listTours()
+
+  // Todos los que hay ahora: unos entraron por el importador, otros por saveTour.
+  const todos = await idb.tx([idb.STORE_TOURS], 'readonly', (t) =>
+    idb.idbGetAll(t, idb.STORE_TOURS),
+  )
+
+  /* Y un registro VIEJO, escrito a mano sin estampa, como los que ya están en
+     el teléfono de quien usó la app antes de este cambio. Tiene que leerse. */
+  const viejo = { ...(await tours.getTour(lista[0].id)), id: 'tour-sin-estampa' }
+  delete viejo.formato
+  await idb.tx([idb.STORE_TOURS], 'readwrite', (t) => idb.idbPut(t, idb.STORE_TOURS, viejo))
+  const leido = await tours.getTour('tour-sin-estampa')
+
+  // Y que al volver a guardarlo sí quede estampado.
+  const reguardado = await tours.saveTour(leido)
+
+  return {
+    total: todos.length,
+    conEstampa: todos.filter((t) => t.formato === 2).length,
+    sinEstampaSeLee: leido !== null && leido.scenes.length > 0,
+    trasReguardar: reguardado.formato,
+  }
+})
+
+revisar(
+  'cada recorrido guardado trae formato: 2',
+  estampas.total > 0 && estampas.conEstampa === estampas.total,
+  `${estampas.conEstampa} de ${estampas.total}`,
+)
+revisar('uno viejo sin estampa se sigue leyendo', estampas.sinEstampaSeLee)
+revisar('y al reguardarlo queda estampado', estampas.trasReguardar === 2, String(estampas.trasReguardar))
 
 /* ==========================================================================
  * ARCHIVOS HOSTILES: cada uno tiene que dar un MENSAJE, no una pantalla negra

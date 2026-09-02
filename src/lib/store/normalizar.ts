@@ -1,4 +1,5 @@
 import type { StoredScene, StoredTour } from './types'
+import { FORMAT_VERSION } from './types'
 
 /**
  * ============================================================================
@@ -32,6 +33,31 @@ import type { StoredScene, StoredTour } from './types'
  * en el costo, y las comparaciones por identidad de React siguen funcionando.
  */
 export function normalizarTour(tour: StoredTour): StoredTour {
+  /* ── La escalera de versiones de IndexedDB ────────────────────────────────
+   *
+   * Hoy tiene un solo peldaño y no hace nada, y aun así vale escribirla: es el
+   * lugar donde va lo que haga falta cuando llegue la v3, y tenerlo vacío ahora
+   * es lo que evita que el tercer salto se resuelva con `??` repartidos —el
+   * error que `migrar.ts` ya documenta para el lado de los archivos.
+   *
+   * Sin estampa se toma como 2. Ver el comentario de `formato` en ./types.ts:
+   * el salto de 1 a 2 fue puramente aditivo, así que un registro sin número
+   * tiene la misma forma que uno con el 2.
+   *
+   * Nótese que la estampa NO se escribe aquí. Esta función devuelve el mismo
+   * objeto cuando el registro ya está bien —es su propiedad más útil, la que
+   * permite llamarla en cada `getTour()` sin pensar en el costo y no romper las
+   * comparaciones por identidad de React— y añadir un campo la perdería. Quien
+   * estampa es `saveTour`, en el próximo guardado. */
+  const version = typeof tour.formato === 'number' ? tour.formato : 2
+  if (version > FORMAT_VERSION) {
+    /* Un registro más nuevo que este código. Pasa de verdad: dos pestañas
+       abiertas, una recién actualizada y la otra con el bundle de la semana
+       pasada. No se toca —cambiarlo sería tirar datos que esta versión no
+       entiende— y se deja pasar tal cual, que es lo mismo que hacía antes. */
+    return tour
+  }
+
   const escenas = tour.scenes
   const escenasOk =
     Array.isArray(escenas) &&
