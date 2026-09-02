@@ -288,17 +288,25 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
               </Aviso>
             )}
 
+            {/* aria-pressed y el ✓: cuál de las tres está elegida se decía solo
+                con el borde ámbar, y eso no llega ni a un lector de pantalla
+                (que leía tres botones idénticos) ni a quien no distingue ese
+                ámbar del gris. La palomita lo dice sin depender del color. */}
             <div className="flex flex-col gap-2">
               {(Object.keys(DESCRIPCIONES) as TipoDeFoto[]).map((opcion) => (
                 <button
                   key={opcion}
                   type="button"
                   onClick={() => setTipo(opcion)}
+                  aria-pressed={tipo === opcion}
                   className={`rounded-2xl border p-3 text-left ${
                     tipo === opcion ? 'border-brand-500 bg-brand-500/10' : 'border-white/10 bg-white/5'
                   }`}
                 >
-                  <b className="block text-sm">{DESCRIPCIONES[opcion].titulo}</b>
+                  <b className="block text-sm">
+                    {tipo === opcion && <span aria-hidden>✓ </span>}
+                    {DESCRIPCIONES[opcion].titulo}
+                  </b>
                   <span className="text-xs text-ink-200">{DESCRIPCIONES[opcion].texto}</span>
                 </button>
               ))}

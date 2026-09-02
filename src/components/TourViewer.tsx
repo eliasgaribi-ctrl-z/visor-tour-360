@@ -7,8 +7,9 @@ import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
+import { detectWebGL } from '../lib/webgl'
 
-import { BASE_FOV, Escena360, detectWebGL } from './tour/Escena360'
+import { BASE_FOV, Escena360 } from './tour/Escena360'
 
 import { Compass } from './ui/Compass'
 import { DebugAngles } from './ui/DebugAngles'
@@ -60,6 +61,7 @@ export function TourViewer({
   const [info, setInfo] = useState<{ title: string; body?: string } | null>(null)
   const [hintVisible, setHintVisible] = useState(true)
   const hintDismissed = useRef(false)
+  const cartelError = useRef<HTMLDivElement>(null)
 
   /* Se pregunta UNA vez, antes de montar el canvas: si el navegador no da WebGL
      preferimos un mensaje a una pantalla negra sin explicación. */
@@ -117,6 +119,14 @@ export function TourViewer({
     engine.input.dFov += BASE_FOV - engine.readout.fov
     engine.invalidar()
   }, [engine, scene.initialYaw])
+
+  /* El cartel de "no se pudo cargar la foto" tapa la pantalla entera pero no
+     recibía el foco, así que con teclado o lector de pantalla no había manera de
+     leerlo: el foco seguía en los controles de abajo, que quedaron debajo del
+     velo y ya no hacen nada. role="alert" lo anuncia y el focus() lleva ahí. */
+  useEffect(() => {
+    if (failed) cartelError.current?.focus()
+  }, [failed])
 
   /** Si nadie toca nada, la pista se retira sola a los 7 segundos. */
   useEffect(() => {
@@ -177,6 +187,21 @@ export function TourViewer({
           onError={() => setFailed(true)}
           onPointerDownCapture={dismissHint}
         />
+
+        {/* Un lector de pantalla no ve la esfera ni el velo de carga: pasar de
+            un cuarto a otro no anunciaba absolutamente nada, así que la app
+            parecía congelada justo cuando más está pasando. Este párrafo es lo
+            único que la persona oye al cambiar de habitación. Se queda fuera del
+            HUD para que no lo alcance el pointer-events-none ni el z-30. */}
+        <p className="sr-only" aria-live="polite" aria-atomic="true">
+          {loading
+            ? `Cargando ${scene.name}…`
+            : `${scene.name}. ${
+                scene.hotspots.length === 0
+                  ? 'Sin puntos'
+                  : `${scene.hotspots.length} ${scene.hotspots.length === 1 ? 'punto' : 'puntos'}`
+              }.`}
+        </p>
 
         {/* ───────────────────────────── CAPA 1 · HUD ───────────────────────────── */}
         <div className="pointer-events-none absolute inset-0 z-30" onWheel={zoomRueda}>
@@ -251,7 +276,12 @@ export function TourViewer({
         <LoadingVeil visible={webgl.ok && loading && !failed} />
 
         {failed && (
-          <div className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center">
+          <div
+            ref={cartelError}
+            role="alert"
+            tabIndex={-1}
+            className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center outline-none"
+          >
             <div className="max-w-xs">
               <p className="text-sm font-semibold text-ink-50">
                 No se pudo cargar la foto de {scene.name}

@@ -45,6 +45,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const [paquete, setPaquete] = useState<
     { estado: 'armando' } | { estado: 'listo'; blob: Blob; nombre: string } | { estado: 'error'; mensaje: string } | null
   >(null)
+  /* Escribir en IndexedDB puede fallar —disco lleno, modo privado, otra pestaña
+     bloqueando la base— y hasta ahora ese fallo era una promesa rechazada que
+     nadie atrapaba: la hoja se cerraba igual y el cambio parecía hecho. */
+  const [escribiendo, setEscribiendo] = useState(false)
+  const [errorGuardado, setErrorGuardado] = useState<string | null>(null)
 
   const cargar = useCallback(async () => {
     const encontrado = await getTour(tourId)
@@ -55,9 +60,22 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     void cargar()
   }, [cargar])
 
-  const guardar = async (siguiente: StoredTour) => {
-    const guardado = await saveTour(siguiente)
-    setTour(guardado)
+  /** Devuelve si la escritura llegó al disco. Quien llama cierra su hoja solo si sí. */
+  const guardar = async (siguiente: StoredTour): Promise<boolean> => {
+    setEscribiendo(true)
+    setErrorGuardado(null)
+    try {
+      const guardado = await saveTour(siguiente)
+      setTour(guardado)
+      return true
+    } catch (e) {
+      setErrorGuardado(
+        e instanceof Error ? e.message : 'No se pudo guardar el cambio en este teléfono.',
+      )
+      return false
+    } finally {
+      setEscribiendo(false)
+    }
   }
 
   if (tour === null) {
@@ -87,21 +105,34 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     void guardar({ ...tour, scenes })
   }
 
-  const borrarEscena = async (scene: StoredScene) => {
+  const borrarEscena = async (scene: StoredScene): Promise<boolean> => {
     const scenes = tour.scenes.filter((s) => s.id !== scene.id)
     // Los puntos que llevaban a esa habitación quedarían sin destino.
     const limpias = scenes.map((s) => ({
       ...s,
       hotspots: s.hotspots.filter((h) => h.kind !== 'link' || h.to !== scene.id),
     }))
-    await guardar({
+    /* El orden es a propósito y no se toca: primero se escribe el recorrido sin
+       la habitación y SOLO si eso funcionó se borran sus fotos. Al revés, una
+       escritura fallida dejaría el recorrido entero apuntando a fotos que ya no
+       existen, y eso no se puede deshacer. */
+    const ok = await guardar({
       ...tour,
       scenes: limpias,
       startSceneId: tour.startSceneId === scene.id ? (limpias[0]?.id ?? '') : tour.startSceneId,
     })
-    await deleteImage(scene.imageId)
-    if (scene.thumbId) await deleteImage(scene.thumbId)
+    if (!ok) return false
+    /* Las fotos ya son huérfanas: el recorrido guardado no las menciona. Si su
+       borrado falla, lo único que pasa es que ocupan espacio, así que no vale la
+       pena asustar con un error por algo que la persona no puede arreglar. */
+    try {
+      await deleteImage(scene.imageId)
+      if (scene.thumbId) await deleteImage(scene.thumbId)
+    } catch {
+      /* espacio desperdiciado, nada más */
+    }
     setEditando(null)
+    return true
   }
 
   const prepararArchivo = async () => {
@@ -122,6 +153,15 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
 
   const listo = tour.scenes.length > 0
 
+  /* El mismo mensaje se enseña en dos sitios porque el fallo puede venir de dos
+     lados: de una hoja abierta (renombrar, ajustes, borrar) o de las flechas de
+     reordenar, que están en la lista. Cuando hay una hoja encima, la lista está
+     tapada, así que ahí no sirve de nada ponerlo. */
+  const hojaAbierta = agregando || datos !== null || confirmarBorrado !== null || editando !== null
+  const avisoError = errorGuardado ? (
+    <p className="text-sm leading-relaxed text-red-300">{errorGuardado}</p>
+  ) : null
+
   return (
     <Pantalla
       titulo={tour.title}
@@ -136,6 +176,12 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
       }
     >
       <div className="mx-auto flex w-full max-w-md flex-col gap-3">
+        {!hojaAbierta && errorGuardado && (
+          <Aviso tono="error" titulo="No se guardó">
+            {errorGuardado}
+          </Aviso>
+        )}
+
         {tour.scenes.length === 0 && (
           <Aviso titulo="Empieza por la sala">
             Párate en medio del cuarto, agrega la habitación y ve girando despacio sobre tu propio
@@ -173,7 +219,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   type="button"
                   aria-label={`Subir ${scene.name}`}
                   onClick={() => mover(indice, -1)}
-                  disabled={indice === 0}
+                  disabled={indice === 0 || escribiendo}
                   className="grid h-11 w-11 place-items-center rounded-lg bg-white/10 text-sm
                              active:bg-white/20 disabled:opacity-30"
                 >
@@ -183,7 +229,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   type="button"
                   aria-label={`Bajar ${scene.name}`}
                   onClick={() => mover(indice, 1)}
-                  disabled={indice === tour.scenes.length - 1}
+                  disabled={indice === tour.scenes.length - 1 || escribiendo}
                   className="grid h-11 w-11 place-items-center rounded-lg bg-white/10 text-sm
                              active:bg-white/20 disabled:opacity-30"
                 >
@@ -287,18 +333,19 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             <Boton
               tipo="principal"
               ancho
-              disabled={!datos.title.trim()}
+              disabled={!datos.title.trim() || escribiendo}
               onClick={async () => {
-                await guardar({
+                const ok = await guardar({
                   ...tour,
                   title: datos.title.trim(),
                   subtitle: datos.subtitle.trim() || undefined,
                 })
-                setDatos(null)
+                if (ok) setDatos(null)
               }}
             >
-              Guardar
+              {escribiendo ? 'Guardando…' : 'Guardar'}
             </Boton>
+            {avisoError}
           </div>
         </Hoja>
       )}
@@ -311,21 +358,24 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             manera de deshacerlo.
           </p>
           <div className="flex gap-2">
-            <Boton ancho onClick={() => setConfirmarBorrado(null)}>
+            <Boton ancho onClick={() => setConfirmarBorrado(null)} disabled={escribiendo}>
               Mejor no
             </Boton>
+            {/* La hoja se queda abierta hasta que el borrado esté escrito. Antes
+                se cerraba primero y se borraba después, así que un fallo dejaba
+                la habitación en la lista sin que nada lo explicara. */}
             <Boton
               tipo="peligro"
               ancho
+              disabled={escribiendo}
               onClick={async () => {
-                const escena = confirmarBorrado
-                setConfirmarBorrado(null)
-                await borrarEscena(escena)
+                if (await borrarEscena(confirmarBorrado)) setConfirmarBorrado(null)
               }}
             >
-              Sí, borrar
+              {escribiendo ? 'Borrando…' : 'Sí, borrar'}
             </Boton>
           </div>
+          {avisoError && <div className="mt-3">{avisoError}</div>}
         </Hoja>
       )}
 
@@ -341,15 +391,16 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             <Boton
               tipo="principal"
               ancho
+              disabled={escribiendo}
               onClick={async () => {
-                await guardar({
+                const ok = await guardar({
                   ...tour,
                   scenes: tour.scenes.map((s) => (s.id === editando.id ? editando : s)),
                 })
-                setEditando(null)
+                if (ok) setEditando(null)
               }}
             >
-              Guardar
+              {escribiendo ? 'Guardando…' : 'Guardar'}
             </Boton>
             <div className="flex gap-2">
               <Boton
@@ -373,9 +424,9 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             {editando.id !== tour.startSceneId && (
               <Boton
                 ancho
+                disabled={escribiendo}
                 onClick={async () => {
-                  await guardar({ ...tour, startSceneId: editando.id })
-                  setEditando(null)
+                  if (await guardar({ ...tour, startSceneId: editando.id })) setEditando(null)
                 }}
               >
                 Que el recorrido empiece aquí
@@ -392,6 +443,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             >
               Borrar la habitación
             </Boton>
+            {avisoError}
           </div>
         </Hoja>
       )}

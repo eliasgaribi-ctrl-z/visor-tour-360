@@ -66,8 +66,13 @@
 --------------------------------------------------------------------------- */
 /* rgba() en vez de color-mix(): color-mix llegó a Safari en la 16.2 y, igual que
    con oklch, lo que no se entiende no se pinta. */
+/* 0.72 y no 0.55: el cristal se pinta encima de la foto, y con una pared blanca
+   detrás el texto ink-200 se quedaba en 3.1:1, por debajo del 4.5:1 que pide
+   AA. Con 0.72 sube a ~5.4:1 en ese peor caso. Se probó también 0.82, que pasa
+   con más margen pero ya no parece cristal: se ve un panel opaco encima de la
+   casa. */
 @utility hud-glass {
-  background-color: rgba(12, 16, 22, 0.55);
+  background-color: rgba(12, 16, 22, 0.72);
   backdrop-filter: blur(12px) saturate(140%);
   -webkit-backdrop-filter: blur(12px) saturate(140%);
   border: 1px solid rgba(255, 255, 255, 0.14);
