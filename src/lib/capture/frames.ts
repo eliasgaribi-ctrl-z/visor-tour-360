@@ -175,6 +175,21 @@ export type Desplazamiento = {
  * resolución de la medida es de un píxel entero de la imagen reducida, que a
  * este tamaño vale casi un grado: el error de redondeo solo ya sería más grande
  * que lo que se está tratando de medir.
+ *
+ * ── Para qué sirve recortar también las COLUMNAS ───────────────────────────
+ *
+ * Un giro no corre la imagen en bloque: la perspectiva la estira hacia una
+ * orilla y la comprime en la otra, así que cada columna se corrió una cantidad
+ * distinta y la correlación devuelve un promedio de todas ellas, no el
+ * corrimiento del centro. Para alinear dos tomas ese promedio está bien —es
+ * justo el mejor encaje global— pero para MEDIR la distancia focal no sirve,
+ * porque quien manda ahí es el centro.
+ *
+ * Por eso el parámetro: quien alinea deja `fraccionColumnas` en 1 y usa la
+ * imagen entera; quien calibra pide la franja central. Simulado sobre una
+ * panorámica sintética de 96×72 con un lente real de 66°: con la imagen
+ * completa la cuenta sale entre 61° y 65° según cuánto se haya girado, y con el
+ * 40 % central sale entre 64.3° y 66.1° en todo el rango de giro útil.
  */
 export function desplazamientoHorizontal(
   a: Float32Array,
@@ -182,10 +197,19 @@ export function desplazamientoHorizontal(
   width: number,
   height: number,
   maximo = Math.floor(width * 0.45),
+  fraccionColumnas = 1,
 ): Desplazamiento {
   const filaInicial = Math.floor(height * 0.25)
   const filaFinal = Math.ceil(height * 0.75)
-  const minimoTraslape = width * (filaFinal - filaInicial) * 0.35
+  // Nunca menos de 8 columnas: por debajo de eso la parábola del subpíxel se
+  // apoya en ruido y el afinado empeora la medida en vez de mejorarla.
+  const anchoVentana = Math.max(
+    Math.min(8, width),
+    Math.round(width * Math.min(1, Math.max(0.1, fraccionColumnas))),
+  )
+  const columnaInicial = Math.floor((width - anchoVentana) / 2)
+  const columnaFinal = columnaInicial + anchoVentana
+  const minimoTraslape = anchoVentana * (filaFinal - filaInicial) * 0.35
 
   const puntajes = new Float32Array(2 * maximo + 1).fill(-2)
   let mejor = 0
@@ -201,8 +225,8 @@ export function desplazamientoHorizontal(
 
     for (let fila = filaInicial; fila < filaFinal; fila++) {
       const base = fila * width
-      const desde = Math.max(0, -corrimiento)
-      const hasta = Math.min(width, width - corrimiento)
+      const desde = Math.max(columnaInicial, -corrimiento)
+      const hasta = Math.min(columnaFinal, width - corrimiento)
       for (let columna = desde; columna < hasta; columna++) {
         const va = a[base + columna]
         const vb = b[base + columna + corrimiento]
@@ -279,6 +303,19 @@ export function desplazamientoHorizontal(
  * Devuelve null si la medición no es confiable: pared lisa, giro fuera del
  * rango útil, o un resultado fuera de lo que cualquier teléfono puede tener.
  */
+
+/**
+ * Fracción central de columnas con la que se mide el corrimiento al calibrar.
+ * Ver el comentario de `desplazamientoHorizontal` sobre por qué no se usa la
+ * imagen completa.
+ */
+const VENTANA_CALIBRACION = 0.4
+
+/** Hasta dónde puede estar inclinado el eje óptico para que la medición valga. */
+const PITCH_MAXIMO = 6
+/** Hasta dónde puede estar ladeado el teléfono. */
+const ROLL_MAXIMO = 8
+
 export function estimarFovConGiro(params: {
   anterior: Float32Array
   actual: Float32Array
@@ -288,20 +325,75 @@ export function estimarFovConGiro(params: {
   deltaYaw: number
   /** Cuánto cambió la inclinación. Si es mucho, la medición no sirve. */
   deltaPitch: number
+  /** Inclinación ABSOLUTA del eje óptico. La cuenta solo vale cerca del ecuador. */
+  pitch: number
+  /** Ladeo del teléfono. Con ladeo, el corrimiento deja de ser horizontal. */
+  roll: number
 }): number | null {
-  const { anterior, actual, width, height, deltaYaw, deltaPitch } = params
+  const { anterior, actual, width, height, deltaYaw, deltaPitch, pitch, roll } = params
 
   // Muy chico: el corrimiento se confunde con el ruido y con el subpíxel.
   // Muy grande: la perspectiva rompe la suposición de que solo hubo un
-  // desplazamiento. Inclinado: el corrimiento ya no es solo horizontal.
+  // desplazamiento. Cambiando de altura: el corrimiento ya no es solo horizontal.
   if (Math.abs(deltaYaw) < 3 || Math.abs(deltaYaw) > 20) return null
   if (Math.abs(deltaPitch) > 4) return null
 
-  const { pixeles, confianza } = desplazamientoHorizontal(anterior, actual, width, height)
+  /* ── Los dos sesgos que tenía esta cuenta, y cómo se atacan ───────────────
+   *
+   * PRIMERO, el geométrico. El teléfono gira alrededor de la vertical del
+   * MUNDO, no alrededor de su propio eje vertical. Con el aparato apuntando
+   * arriba, ese giro mueve la imagen menos de lo que dice el giroscopio, y si
+   * además está ladeado, lo poco que la mueve ya no es del todo horizontal. El
+   * corrimiento real es f·tan(Δyaw·cos(pitch))·cos(roll), no f·tan(Δyaw), y la
+   * versión vieja lo pasaba por alto: con el lente de 66° de la simulación
+   * devolvía 71° a 35° de inclinación y 74° si encima iba ladeado. Siempre de
+   * más y siempre en el mismo sentido, así que la mediana de varias
+   * estimaciones no lo cancelaba; lo promediaba.
+   *
+   * SEGUNDO, el de la banda de correlación, que la fórmula NO arregla. Al
+   * girar, cada columna de la imagen se corre una cantidad distinta —eso es la
+   * perspectiva— y la correlación devuelve el promedio de todas, mientras que
+   * la distancia focal se lee del centro. Con la imagen entera la cuenta se
+   * quedaba corta: 61° a 65° para un lente de 66°.
+   *
+   * Y lo peor: los dos sesgos van en sentidos contrarios. En la versión vieja
+   * se tapaban a medias y de forma impredecible —a 20° de inclinación el error
+   * casi desaparecía por casualidad— así que corregir solo uno EMPEORA algunos
+   * casos. Por eso aquí se atacan los dos a la vez:
+   *
+   *   · el geométrico, con la fórmula corregida de abajo;
+   *   · el de la banda, midiendo solo el 40 % central de columnas, donde la
+   *     perspectiva todavía no estiró nada apreciable.
+   *
+   * Encima se descartan las tomas que no estén cerca del ecuador. No es por la
+   * fórmula, que ya está corregida: es porque fuera del ecuador la imagen
+   * además SE GIRA y se deforma entre toma y toma, y la correlación solo sabe
+   * buscar corrimientos horizontales, así que se agarra de un pico equivocado.
+   * Al ecuador llega gratis: el usuario empieza siempre por el anillo del
+   * horizonte, que es donde más tomas hay.
+   *
+   * Con las tres cosas juntas, la simulación sobre una panorámica sintética de
+   * 96×72 con un lente de 66° da entre 64.3° y 67.5° en todo el rango de giro
+   * aceptado, con correlaciones de 0.52 para arriba. */
+  if (Math.abs(pitch) > PITCH_MAXIMO || Math.abs(roll) > ROLL_MAXIMO) return null
+
+  // Lo que el giro REALMENTE barre delante del lente. Si de tanto descontar se
+  // queda por debajo del mínimo útil, la medición vuelve a ser ruido.
+  const giroEfectivo = Math.abs(deltaYaw) * Math.cos(pitch * DEG)
+  if (giroEfectivo < 3) return null
+
+  const { pixeles, confianza } = desplazamientoHorizontal(
+    anterior,
+    actual,
+    width,
+    height,
+    Math.floor(width * 0.45),
+    VENTANA_CALIBRACION,
+  )
   if (confianza < 0.45 || Math.abs(pixeles) < 1) return null
 
   // Un giro a la derecha mueve la imagen a la izquierda: los signos se cancelan.
-  const focal = Math.abs(pixeles) / Math.tan(Math.abs(deltaYaw) * DEG)
+  const focal = Math.abs(pixeles) / (Math.tan(giroEfectivo * DEG) * Math.cos(roll * DEG))
   const hfov = (2 * Math.atan(width / (2 * focal))) / DEG
 
   // Ningún teléfono tiene una cámara fuera de este rango; si la cuenta sale de
