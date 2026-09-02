@@ -7,6 +7,15 @@ import type { StoredScene, StoredTour } from '../../lib/store/types'
 import { blobUrl, deleteImage, getTour, saveTour } from '../../lib/store/tours'
 import { entregarArchivo, exportarTour, PaqueteError } from '../../lib/store/paquete'
 import { contextoSeguro } from '../../lib/capture/camera'
+import {
+  PublicarError,
+  claveGuardada,
+  despublicar,
+  enlacePublico,
+  guardarClave,
+  publicarTour,
+  sePuedePublicar,
+} from '../../lib/publicar'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
 export type EditorRecorridoProps = {
@@ -42,6 +51,19 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
      medio aplicar: visible en pantalla y persistido con la siguiente acción. */
   const [datos, setDatos] = useState<{ title: string; subtitle: string } | null>(null)
   const [confirmarBorrado, setConfirmarBorrado] = useState<StoredScene | null>(null)
+  /* ── Publicar ───────────────────────────────────────────────────────────
+     Estados separados del paquete `.tour` porque son dos cosas distintas que
+     pueden estar en curso a la vez, y porque publicar puede tardar bastante:
+     son varias fotos de 1.5 MB subiendo por datos móviles. De ahí el avance. */
+  const [publicando, setPublicando] = useState<
+    | null
+    | { estado: 'subiendo'; hechas: number; total: number }
+    | { estado: 'error'; mensaje: string }
+  >(null)
+  const [pidiendoClave, setPidiendoClave] = useState(false)
+  const [claveEscrita, setClaveEscrita] = useState('')
+  const [copiado, setCopiado] = useState(false)
+
   const [paquete, setPaquete] = useState<
     { estado: 'armando' } | { estado: 'listo'; blob: Blob; nombre: string } | { estado: 'error'; mensaje: string } | null
   >(null)
@@ -151,13 +173,86 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     }
   }
 
+  /* ── Publicar la casa ────────────────────────────────────────────────────
+     Lo que convierte un recorrido en algo que se le puede enseñar a alguien:
+     hasta aquí vivía en este teléfono y solo se podía pasar como archivo.
+
+     La clave no está en el código de la app —es un sitio estático, cualquiera
+     leería su JavaScript— así que la escribe la persona una vez y se queda en
+     este navegador. Si no hay ninguna guardada, se pide antes de subir nada. */
+  const subir = async (clave: string) => {
+    setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
+    try {
+      const { llave } = await publicarTour(tour, clave, (avance) =>
+        setPublicando({ estado: 'subiendo', ...avance }),
+      )
+      /* Se guarda la llave ANTES de dar por buena la publicación: si esta
+         escritura fallara y no se guardara, la casa quedaría en línea y sin
+         forma de bajarla desde aquí. */
+      await guardar({ ...tour, publicadoComo: llave })
+      setPublicando(null)
+      setCopiado(false)
+    } catch (e) {
+      setPublicando({
+        estado: 'error',
+        mensaje:
+          e instanceof PublicarError
+            ? [e.message, e.consejo].filter(Boolean).join(' ')
+            : 'No se pudo publicar el recorrido.',
+      })
+    }
+  }
+
+  const publicar = () => {
+    const clave = claveGuardada()
+    if (!clave) {
+      setClaveEscrita('')
+      setPidiendoClave(true)
+      return
+    }
+    void subir(clave)
+  }
+
+  const bajar = async () => {
+    if (!tour.publicadoComo) return
+    setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
+    try {
+      await despublicar(tour.publicadoComo, claveGuardada())
+      await guardar({ ...tour, publicadoComo: undefined })
+      setPublicando(null)
+    } catch (e) {
+      setPublicando({
+        estado: 'error',
+        mensaje: e instanceof PublicarError ? e.message : 'No se pudo dar de baja el recorrido.',
+      })
+    }
+  }
+
+  const copiarEnlace = async () => {
+    if (!tour.publicadoComo) return
+    try {
+      await navigator.clipboard.writeText(enlacePublico(tour.publicadoComo))
+      setCopiado(true)
+      window.setTimeout(() => setCopiado(false), 2000)
+    } catch {
+      /* Safari solo deja escribir en el portapapeles desde un gesto y con
+         permiso; si dice que no, el link sigue a la vista para copiarlo a
+         mano, que es justo para lo que se enseña completo. */
+      setPublicando({
+        estado: 'error',
+        mensaje: 'No se pudo copiar solo. Mantén el dedo sobre el link para copiarlo.',
+      })
+    }
+  }
+
   const listo = tour.scenes.length > 0
 
   /* El mismo mensaje se enseña en dos sitios porque el fallo puede venir de dos
      lados: de una hoja abierta (renombrar, ajustes, borrar) o de las flechas de
      reordenar, que están en la lista. Cuando hay una hoja encima, la lista está
      tapada, así que ahí no sirve de nada ponerlo. */
-  const hojaAbierta = agregando || datos !== null || confirmarBorrado !== null || editando !== null
+  const hojaAbierta =
+    agregando || datos !== null || confirmarBorrado !== null || editando !== null || pidiendoClave
   const avisoError = errorGuardado ? (
     <p className="text-sm leading-relaxed text-red-300">{errorGuardado}</p>
   ) : null
@@ -249,6 +344,69 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           </Tarjeta>
         ))}
 
+        {listo && sePuedePublicar() && (
+          <>
+            <div className="mt-2 h-px bg-white/10" />
+            <Tarjeta>
+              <p className="mb-1 font-semibold">Enseñar por link</p>
+              <p className="mb-3 text-sm text-ink-200">
+                Sube la casa para poder mandarla por WhatsApp. Quien reciba el link la abre sin
+                instalar nada y sin cuenta. El link no aparece en Google: solo entra quien lo tenga.
+              </p>
+
+              {tour.publicadoComo ? (
+                <div className="flex flex-col gap-2">
+                  <p
+                    className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm
+                               break-all text-ink-50 select-all"
+                  >
+                    {enlacePublico(tour.publicadoComo)}
+                  </p>
+                  <Boton tipo="principal" ancho onClick={() => void copiarEnlace()}>
+                    {copiado ? 'Copiado' : 'Copiar el link'}
+                  </Boton>
+                  <Boton
+                    ancho
+                    onClick={() => void subir(claveGuardada())}
+                    disabled={publicando?.estado === 'subiendo'}
+                  >
+                    Volver a subir con los cambios
+                  </Boton>
+                  <Boton
+                    tipo="fantasma"
+                    ancho
+                    onClick={() => void bajar()}
+                    disabled={publicando?.estado === 'subiendo'}
+                  >
+                    Quitar de internet
+                  </Boton>
+                  <p className="text-xs text-ink-200/70">
+                    Los cambios que hagas aquí no se ven en el link hasta que vuelvas a subir.
+                  </p>
+                </div>
+              ) : (
+                <Boton
+                  tipo="principal"
+                  ancho
+                  onClick={publicar}
+                  disabled={publicando?.estado === 'subiendo'}
+                >
+                  Publicar y obtener el link
+                </Boton>
+              )}
+
+              {publicando?.estado === 'subiendo' && (
+                <p className="mt-2 text-sm text-ink-200" role="status" aria-live="polite">
+                  Subiendo {publicando.hechas} de {publicando.total} fotos…
+                </p>
+              )}
+              {publicando?.estado === 'error' && (
+                <p className="mt-2 text-sm text-red-300">{publicando.mensaje}</p>
+              )}
+            </Tarjeta>
+          </>
+        )}
+
         {listo && (
           <>
             <div className="mt-2 h-px bg-white/10" />
@@ -286,6 +444,37 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           Cambiar el nombre del recorrido
         </Boton>
       </div>
+
+      {pidiendoClave && (
+        <Hoja titulo="Clave para publicar" onCerrar={() => setPidiendoClave(false)}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-ink-200">
+              Es la clave del servidor donde se guardan las casas publicadas. Se escribe una sola
+              vez: queda guardada en este teléfono. No viene dentro de la app porque cualquiera
+              podría leerla.
+            </p>
+            <Campo
+              etiqueta="Clave"
+              valor={claveEscrita}
+              onChange={setClaveEscrita}
+              placeholder="La que configuraste en el servidor"
+            />
+            <Boton
+              tipo="principal"
+              ancho
+              disabled={!claveEscrita.trim()}
+              onClick={() => {
+                const clave = claveEscrita.trim()
+                guardarClave(clave)
+                setPidiendoClave(false)
+                void subir(clave)
+              }}
+            >
+              Guardar y publicar
+            </Boton>
+          </div>
+        </Hoja>
+      )}
 
       {agregando && (
         <Hoja titulo="¿Cómo quieres la foto?" onCerrar={() => setAgregando(false)}>

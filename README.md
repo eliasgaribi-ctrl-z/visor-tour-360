@@ -41,7 +41,11 @@ equirectangular; o se sube una foto 360 que ya se tenga. Después se nombran las
 habitaciones, se colocan los puntos tocando la escena y todo queda guardado en el
 teléfono, con un archivo `.tour` para respaldarlo o pasarlo a otro dispositivo.
 
-Sin servidor, sin cuenta y sin instalar nada: sigue siendo un sitio estático.
+Sin cuenta y sin instalar nada, y el visor es un sitio estático. Hay **una sola
+pieza opcional con servidor**: si quieres poder mandarle una casa a un cliente
+por link, la sección 14 monta un Worker de Cloudflare que la guarda. Sin
+configurarlo, todo lo demás funciona igual y los recorridos no salen del
+teléfono.
 
 Diseñado *mobile-first*: el pulgar izquierdo gira, el derecho hace zoom y
 reencuadra, y los cambios de habitación viven arriba para no estorbar.
@@ -1069,17 +1073,115 @@ cualquier hosting.
 
 ---
 
-## 14. Siguientes pasos naturales
+## 14. Enseñar una casa por link (Cloudflare)
+
+Hasta aquí, un recorrido armado en el celular vive **en ese celular**. La ruta
+`#/ver/<id>` parece compartible, pero el id se busca en el almacén de quien
+abre: al cliente le sale "no se encontró". La única forma de enseñar una casa
+era mandar el archivo `.tour` y pedirle al otro que lo importara — que nadie
+hace.
+
+Esta sección lo arregla. Es la **única parte del proyecto que tiene servidor**, y
+es opcional: si no la configuras, todo lo demás funciona exactamente igual.
+
+### Qué se monta
+
+Un Worker de Cloudflare con un bucket de R2 detrás (`worker/`). Guarda las casas
+publicadas y las entrega. Nada más: sin cuentas, sin base de datos, sin sesiones.
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npx wrangler r2 bucket create visor-tours
+npx wrangler secret put CLAVE_PUBLICACION     # inventa una larga y guárdala
+npx wrangler deploy
+```
+
+Wrangler imprime la dirección al terminar. Con esa dirección se compila el
+visor:
+
+```bash
+cd ..
+VITE_PUBLICAR_BASE=https://visor-tours.TU-CUENTA.workers.dev npm run build:pages
+```
+
+Y en `worker/wrangler.toml`, `APP_BASE` tiene que apuntar de vuelta a donde vive
+el visor (hoy, la URL de GitHub Pages). El Worker la necesita para rebotar a
+quien abra el link.
+
+Sin `VITE_PUBLICAR_BASE`, el botón de publicar **no aparece** y el visor se
+comporta como siempre.
+
+### Cómo se usa
+
+En el editor de un recorrido, **Enseñar por link → Publicar**. La primera vez
+pide la clave; queda guardada en ese teléfono. Al terminar sale el link, listo
+para pegar en WhatsApp.
+
+Cuando la casa se vende: **Quitar de internet**. El link deja de abrir y las
+fotos se borran del bucket.
+
+### Las tres decisiones, y por qué
+
+**Quién puede subir · una clave compartida.** Viaja en el encabezado
+`Authorization` y vive como secreto del Worker. **No está en el paquete de la
+app**, y eso no es un descuido: el JavaScript de un sitio estático lo lee
+cualquiera, así que una clave metida ahí sería pública el día uno. La escribe la
+persona una vez en su teléfono. Si se pierde un aparato, se cambia el secreto
+del Worker con `wrangler secret put` y listo.
+
+Sin esto, cualquiera que encuentre la dirección puede llenarte el bucket, y la
+cuenta la pagas tú.
+
+**Quién puede ver · quien tenga el link.** La llave son 128 bits de azar (26
+letras de un alfabeto sin caracteres que se confundan): no se llega probando.
+Todas las respuestas llevan `X-Robots-Tag: noindex, nofollow` y hay un
+`robots.txt` que cierra el sitio entero — una casa en venta puede estar
+habitada, y su interior no tiene por qué quedar en Google. Es lo mismo que hacen
+Matterport y Kuula.
+
+**Qué se puede subir · solo JPEG**, con tope por foto, por cantidad y por peso
+total. El manifiesto se vuelve a sanear en el Worker aunque el teléfono ya lo
+haya hecho: lo que llega por la red es de quien tenga la clave, y una clave
+compartida entre varios teléfonos acaba en más manos de las previstas.
+
+### El detalle que hace que WhatsApp enseñe la tarjeta
+
+El link que se comparte apunta al Worker (`/t/<llave>`), no directo al visor. El
+robot que arma la vista previa de WhatsApp **no ejecuta JavaScript**: si le
+mandáramos la app, leería un `index.html` vacío y enseñaría un link pelón. Esa
+ruta devuelve una página con el título, la descripción y la miniatura ya
+escritos en el HTML, y a una persona la rebota al visor.
+
+El rebote va en JavaScript y no con un 302 justamente porque un 302 se lo
+llevaría también el robot.
+
+### Qué cuesta
+
+El plan gratis de Cloudflare da 10 GB en R2 y 100 000 peticiones al día. Una
+casa de seis cuartos son unos 9 MB, así que caben más de mil casas antes de
+pagar nada.
+
+---
+
+## 15. Siguientes pasos naturales
 
 - Reordenar habitaciones arrastrando en vez de con flechas.
-- Planta arquitectónica con la posición de cada escena.
-- Giroscopio también al **ver** el recorrido, para mirar moviendo el teléfono
-  (la conversión de sensores ya está hecha en `src/lib/capture/orientation.ts`).
+- Planta arquitectónica con la posición de cada escena, con el cono de hacia
+  dónde se está mirando. Depende de tener un plano por casa.
 - Corrección de nivel: enderezar el horizonte de una panorámica capturada a
   pulso, ya que el ladeo de cada toma se conoce.
-- Alineación fina entre tomas por correlación, no solo por sensores, para
-  quitar el resto del error de paralaje.
+- Compensar la exposición contra la mediana de todas las tomas y no contra la
+  primera: hoy, si la primera foto apunta a la ventana, toda la panorámica
+  queda sesgada. En Safari no se puede bloquear la exposición por hardware, así
+  que el software es la única defensa.
+- Recoser en un Web Worker, para que armar la panorámica no congele la pantalla.
 - Mosaicos multirresolución si vas a usar panorámicas mayores a 8K.
+
+Dos que estaban en esta lista y **ya están hechas**: mirar moviendo el teléfono
+(sección 5) y la alineación por correlación entre tomas, que hoy corrige la
+deriva del giroscopio al cerrar la vuelta.
 
 ### Lo que se consideró y se dejó fuera, con su razón
 

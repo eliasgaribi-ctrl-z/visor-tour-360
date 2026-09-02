@@ -34,6 +34,15 @@ jobs:
       - run: npm run build          # incluye tsc -b
       - run: npm test
 
+      # El Worker que publica las casas se compila aparte: tiene sus propias
+      # dependencias y sus propios tipos (los del entorno de Cloudflare, que no
+      # son los del navegador). Si se rompe, el visor sigue funcionando pero
+      # nadie puede publicar, y eso conviene enterarse aquí.
+      - run: npm ci
+        working-directory: worker
+      - run: npm run typecheck
+        working-directory: worker
+
       # ¿Está docs/ al día con el código de este commit?
       #
       # El `git add -A` no es de adorno. Cada build renombra los archivos con

@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react'
  *   #/foto/<id>           subir una foto ya hecha
  *   #/puntos/<id>/<esc>   colocar los puntos de una habitación
  *   #/ver/<id>            ver un recorrido guardado
+ *   #/p/<llave>           ver una casa PUBLICADA (vive en el servidor, no aquí)
  *   #/demo                el recorrido de ejemplo
  */
 
@@ -27,6 +28,10 @@ export type Ruta =
   | { nombre: 'inicio' }
   | { nombre: 'demo' }
   | { nombre: 'ver'; tourId: string }
+  /* La única ruta que no habla con IndexedDB: el recorrido se descarga. Es la
+     que recibe quien no tiene la app ni nada guardado — un cliente al que le
+     pasaron un link por WhatsApp. */
+  | { nombre: 'publicado'; llave: string }
   | { nombre: 'editar'; tourId: string }
   /** Con `sceneId`, la foto nueva REEMPLAZA la de esa habitación. */
   | { nombre: 'capturar'; tourId: string; sceneId?: string }
@@ -46,6 +51,11 @@ export function leerRuta(hash: string): Ruta {
       return { nombre: 'demo' }
     case 'ver':
       return partes[1] ? { nombre: 'ver', tourId: partes[1] } : { nombre: 'inicio' }
+    case 'p':
+      /* Sin llave se cae al visor y no a 'inicio': quien llega por aquí suele
+         venir de un link cortado por WhatsApp y no tiene nada guardado que
+         enseñarle en "mis recorridos". */
+      return partes[1] ? { nombre: 'publicado', llave: partes[1] } : { nombre: 'visor' }
     case 'editar':
       return partes[1] ? { nombre: 'editar', tourId: partes[1] } : { nombre: 'inicio' }
     case 'capturar':
@@ -75,6 +85,8 @@ export function rutaAHash(ruta: Ruta): string {
       return '#/demo'
     case 'ver':
       return `#/ver/${encodeURIComponent(ruta.tourId)}`
+    case 'publicado':
+      return `#/p/${encodeURIComponent(ruta.llave)}`
     case 'editar':
       return `#/editar/${encodeURIComponent(ruta.tourId)}`
     case 'capturar':

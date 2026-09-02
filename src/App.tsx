@@ -41,6 +41,9 @@ const TourViewer = lazy(() =>
 const VisorGuardado = lazy(() =>
   import('./components/crear/VisorGuardado').then((m) => ({ default: m.VisorGuardado })),
 )
+const VisorPublicado = lazy(() =>
+  import('./components/crear/VisorPublicado').then((m) => ({ default: m.VisorPublicado })),
+)
 const EditorPuntos = lazy(() =>
   import('./components/crear/EditorPuntos').then((m) => ({ default: m.EditorPuntos })),
 )
@@ -148,6 +151,12 @@ export default function App() {
 
       case 'ver':
         return <VisorGuardado tourId={ruta.tourId} ir={ir} />
+
+      /* La casa publicada. A diferencia de 'ver', no se busca en el teléfono:
+         se descarga. Es la ruta por la que entra un cliente que nunca ha usado
+         esta app y que llegó por un link de WhatsApp. */
+      case 'publicado':
+        return <VisorPublicado llave={ruta.llave} ir={ir} />
 
       case 'demo':
         return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
