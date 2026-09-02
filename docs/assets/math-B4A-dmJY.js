@@ -1,0 +1,1 @@
+var e=Math.PI/180,t=(e,t,n)=>e<t?t:e>n?n:e,n=(e,t,n,r)=>{let i=1-Math.exp(-n*r);return e*(1-i)+t*i},r=e=>(e%360+360)%360,i=e=>{let t=r(e+180)-180;return t===-180?180:t},a=(e,t)=>i(t-e);export{i as a,a as i,t as n,r as o,n as r,e as t};

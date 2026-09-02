@@ -11,7 +11,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
     />
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#0b0f19" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Recorrido virtual 360</title>
@@ -45,10 +45,15 @@
          la raíz del dominio (la misma razón que explica src/lib/assets.ts).
     ────────────────────────────────────────────────────────────────────── -->
     <link rel="preload" as="image" href="./panoramas/sala.jpg" fetchpriority="high" />
-    <script type="module" crossorigin src="./assets/index-C6u53Z-n.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-8oSlEYP9.css">
+    <script type="module" crossorigin src="./assets/index-BxE0sAuf.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-ChPnnqfu.css">
   </head>
-  <body style="margin: 0; background: #0b0f19">
+  <!-- El fondo va aquí en línea, y no solo en index.css, porque tiene que estar
+       ANTES de que la hoja cargue: sin él se ve un flash blanco. Y como un estilo
+       inline gana a cualquier hoja, la regla de index.css nunca llegaba a aplicar.
+       Con la variable, la marca de una inmobiliaria puede cambiarlo y el valor de
+       respaldo sigue siendo el mismo de siempre. Ver src/lib/marca.ts. -->
+  <body style="margin: 0; background: var(--fondo-app, #0b0f19)">
     <div id="root"></div>
 
     <!-- ─────────────────────────────────────────────────────────────────────
