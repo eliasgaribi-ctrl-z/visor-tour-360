@@ -6,6 +6,7 @@ import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
 import { deleteImage, getTour, saveTour } from '../../lib/store/tours'
 import { entregarArchivo, exportarTour, PaqueteError } from '../../lib/store/paquete'
+import { limpiarFicha } from '../../lib/store/migrar'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { contextoSeguro } from '../../lib/capture/camera'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
@@ -33,6 +34,14 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
      estado compartido haría que cerrar la hoja sin guardar dejara el cambio a
      medio aplicar: visible en pantalla y persistido con la siguiente acción. */
   const [datos, setDatos] = useState<{ title: string; subtitle: string } | null>(null)
+  /**
+   * El borrador de la ficha de la casa.
+   *
+   * Todo se edita como TEXTO, incluidos recámaras y baños, y se convierte al
+   * guardar. Con `<input type=number>` un campo a medio escribir es `NaN` y el
+   * valor guardado se pierde; con texto, lo que se ve es lo que hay.
+   */
+  const [ficha, setFicha] = useState<Record<string, string> | null>(null)
   const [confirmarBorrado, setConfirmarBorrado] = useState<StoredScene | null>(null)
   const [paquete, setPaquete] = useState<
     { estado: 'armando' } | { estado: 'listo'; blob: Blob; nombre: string } | { estado: 'error'; mensaje: string } | null
@@ -224,6 +233,35 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           </>
         )}
 
+        {/* La ficha es lo que ve un comprador ANTES de entrar al recorrido, así
+            que va junto a lo de compartir y no escondida en los ajustes de una
+            habitación: es una decisión de venta, no de configuración. */}
+        <Tarjeta>
+          <p className="mb-1 font-semibold">Datos de la casa</p>
+          <p className="mb-3 text-sm text-ink-200">
+            Precio, metros y contacto. Es la portada que ve quien recibe el link, antes de entrar
+            al recorrido. Si la dejas vacía, el link abre directo al recorrido.
+          </p>
+          <Boton
+            ancho
+            onClick={() =>
+              setFicha({
+                precio: tour.ficha?.precio ?? '',
+                superficie: tour.ficha?.superficie ?? '',
+                recamaras: tour.ficha?.recamaras !== undefined ? String(tour.ficha.recamaras) : '',
+                banos: tour.ficha?.banos !== undefined ? String(tour.ficha.banos) : '',
+                direccion: tour.ficha?.direccion ?? '',
+                descripcion: tour.ficha?.descripcion ?? '',
+                agenteNombre: tour.ficha?.agente?.nombre ?? '',
+                agenteWhatsapp: tour.ficha?.agente?.whatsapp ?? '',
+                agenteTelefono: tour.ficha?.agente?.telefono ?? '',
+              })
+            }
+          >
+            {tour.ficha ? 'Cambiar los datos' : 'Agregar los datos'}
+          </Boton>
+        </Tarjeta>
+
         <Boton
           tipo="fantasma"
           ancho
@@ -291,6 +329,122 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             >
               Guardar
             </Boton>
+          </div>
+        </Hoja>
+      )}
+
+      {ficha && (
+        <Hoja titulo="Datos de la casa" onCerrar={() => setFicha(null)}>
+          <div className="flex flex-col gap-3">
+            <Campo
+              etiqueta="Precio"
+              valor={ficha.precio}
+              onChange={(precio) => setFicha({ ...ficha, precio })}
+              placeholder="$1,950,000  ·  o  Precio a consultar"
+              maxLength={40}
+              ayuda="Se muestra tal cual: puedes escribir «Desde $1.9M» o «A consultar»."
+            />
+            <Campo
+              etiqueta="Superficie"
+              valor={ficha.superficie}
+              onChange={(superficie) => setFicha({ ...ficha, superficie })}
+              placeholder="120 m² de construcción"
+              maxLength={40}
+            />
+            <div className="flex gap-3">
+              <Campo
+                etiqueta="Recámaras"
+                valor={ficha.recamaras}
+                onChange={(recamaras) => setFicha({ ...ficha, recamaras })}
+                placeholder="3"
+                maxLength={2}
+              />
+              <Campo
+                etiqueta="Baños"
+                valor={ficha.banos}
+                onChange={(banos) => setFicha({ ...ficha, banos })}
+                placeholder="2"
+                maxLength={2}
+              />
+            </div>
+            <Campo
+              etiqueta="Dirección"
+              valor={ficha.direccion}
+              onChange={(direccion) => setFicha({ ...ficha, direccion })}
+              placeholder="Fracc. Los Robles, Tlajomulco"
+              maxLength={160}
+            />
+            <Campo
+              etiqueta="Descripción (opcional)"
+              valor={ficha.descripcion}
+              onChange={(descripcion) => setFicha({ ...ficha, descripcion })}
+              placeholder="Dos plantas, patio y cochera para dos autos."
+              maxLength={600}
+            />
+
+            <div className="mt-1 h-px bg-white/10" />
+            <p className="text-sm font-semibold">Quién atiende</p>
+            <Campo
+              etiqueta="Nombre"
+              valor={ficha.agenteNombre}
+              onChange={(agenteNombre) => setFicha({ ...ficha, agenteNombre })}
+              maxLength={80}
+            />
+            <Campo
+              etiqueta="WhatsApp"
+              valor={ficha.agenteWhatsapp}
+              onChange={(agenteWhatsapp) => setFicha({ ...ficha, agenteWhatsapp })}
+              placeholder="52 33 1234 5678"
+              maxLength={20}
+              ayuda="Con lada de país. Se limpia solo: el botón abre wa.me."
+            />
+            <Campo
+              etiqueta="Teléfono para llamar"
+              valor={ficha.agenteTelefono}
+              onChange={(agenteTelefono) => setFicha({ ...ficha, agenteTelefono })}
+              placeholder="33 1234 5678"
+              maxLength={30}
+            />
+
+            <Boton
+              tipo="principal"
+              ancho
+              onClick={async () => {
+                /* Se arma y se limpia con la MISMA función que filtra lo que
+                   viene de un archivo `.tour`. Así el editor no puede guardar
+                   nada que el importador rechazaría, y la validación vive en un
+                   solo lugar. */
+                const armada = limpiarFicha({
+                  precio: ficha.precio,
+                  superficie: ficha.superficie,
+                  recamaras: ficha.recamaras ? Number(ficha.recamaras) : undefined,
+                  banos: ficha.banos ? Number(ficha.banos) : undefined,
+                  direccion: ficha.direccion,
+                  descripcion: ficha.descripcion,
+                  agente: {
+                    nombre: ficha.agenteNombre,
+                    whatsapp: ficha.agenteWhatsapp,
+                    telefono: ficha.agenteTelefono,
+                  },
+                })
+                await guardar({ ...tour, ficha: armada })
+                setFicha(null)
+              }}
+            >
+              Guardar
+            </Boton>
+            {tour.ficha && (
+              <Boton
+                tipo="peligro"
+                ancho
+                onClick={async () => {
+                  await guardar({ ...tour, ficha: undefined })
+                  setFicha(null)
+                }}
+              >
+                Quitar la portada
+              </Boton>
+            )}
           </div>
         </Hoja>
       )}

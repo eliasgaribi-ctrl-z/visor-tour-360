@@ -1,5 +1,5 @@
 import type { Ficha, Marca } from '../types'
-import type { MarcaGuardada, StoredScene, StoredTour } from './types'
+import type { MarcaGuardada } from './types'
 
 /**
  * ============================================================================
@@ -153,41 +153,3 @@ export function migrarRecorrido(
   return actual
 }
 
-/**
- * Deja un registro de IndexedDB en la forma que los componentes esperan.
- *
- * Barato a propósito: si el registro ya está bien —el caso normal— devuelve el
- * MISMO objeto, sin copiarlo. Así se puede llamar en cada `getTour()` sin pensar
- * en el costo, y las comparaciones por identidad de React siguen funcionando.
- */
-export function normalizarTour(tour: StoredTour): StoredTour {
-  const escenas = tour.scenes
-  const escenasOk =
-    Array.isArray(escenas) &&
-    escenas.every(
-      (s) => s && typeof s.id === 'string' && typeof s.name === 'string' && Array.isArray(s.hotspots),
-    )
-
-  if (escenasOk && typeof tour.startSceneId === 'string' && tour.startSceneId) {
-    return tour
-  }
-
-  const arregladas: StoredScene[] = (Array.isArray(escenas) ? escenas : [])
-    .filter((s): s is StoredScene => !!s && typeof s.imageId === 'string')
-    .map((s, i) => ({
-      ...s,
-      id: typeof s.id === 'string' && s.id ? s.id : `esc-${i}`,
-      name: typeof s.name === 'string' && s.name ? s.name : 'Habitación',
-      hotspots: Array.isArray(s.hotspots) ? s.hotspots : [],
-      createdAt: typeof s.createdAt === 'number' ? s.createdAt : 0,
-    }))
-
-  return {
-    ...tour,
-    scenes: arregladas,
-    startSceneId:
-      typeof tour.startSceneId === 'string' && arregladas.some((s) => s.id === tour.startSceneId)
-        ? tour.startSceneId
-        : (arregladas[0]?.id ?? ''),
-  }
-}

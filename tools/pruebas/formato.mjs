@@ -111,6 +111,72 @@ revisar('la habitación inicial se respeta', guardado?.inicial === 'sala')
 revisar('el subtítulo se conserva', !!guardado?.subtitulo)
 revisar('sin inventar marca ni ficha', guardado?.traeMarca === false && guardado?.traeFicha === false)
 
+/* ==========================================================================
+ * Y el camino nuevo completo: llenar la ficha de la casa y ver la PORTADA.
+ *
+ * Es el entregable de la fase, así que se prueba por donde de verdad se usa —la
+ * interfaz— y no llamando funciones por dentro. Si la hoja del editor deja de
+ * guardar, o el visor deja de mostrar la portada, esto lo dice.
+ * ========================================================================== */
+console.log('\n=== La ficha de la casa llega hasta la portada ===')
+
+await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+await page.getByText('Casa de prueba v1').first().click()
+await page.waitForTimeout(1500)
+
+await page.getByRole('button', { name: /Agregar los datos|Cambiar los datos/ }).click()
+await page.waitForTimeout(600)
+
+const PRECIO = '$1,950,000'
+const DIRECCION = 'Fracc. Los Robles, Tlajomulco'
+/* Por ROL y nombre accesible y no por placeholder: `getByPlaceholder` hace
+   coincidencia por subcadena, así que un placeholder "3" también encontraba
+   "52 33 1234 5678" y "33 1234 5678". Y de paso esto comprueba que cada campo
+   tenga su etiqueta bien asociada, que es lo que lee un lector de pantalla. */
+const campo = (nombre) => page.getByRole('textbox', { name: nombre })
+await campo(/^Precio/).fill(PRECIO)
+await campo(/^Superficie/).fill('132 m²')
+await campo(/^Recámaras/).fill('3')
+await campo(/^Baños/).fill('2')
+await campo(/^Dirección/).fill(DIRECCION)
+await campo(/^WhatsApp/).fill('52 33 1234 5678')
+await page.getByRole('button', { name: 'Guardar', exact: true }).click()
+await page.waitForTimeout(1500)
+
+/* Se entra por la ruta del visor, que es exactamente lo que abriría quien
+   recibe el link. */
+const idTour = await page.evaluate(() => location.hash.split('/')[2])
+await page.goto(`${BASE}#/ver/${idTour}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(2500)
+
+const enPortada = {
+  precio: await page.getByText(PRECIO).first().isVisible().catch(() => false),
+  direccion: await page.getByText(DIRECCION).first().isVisible().catch(() => false),
+  metros: await page.getByText('132 m²').first().isVisible().catch(() => false),
+  entrar: await page.getByRole('button', { name: /Ver el recorrido/ }).isVisible().catch(() => false),
+  whatsapp: await page.getByRole('link', { name: 'WhatsApp' }).isVisible().catch(() => false),
+}
+revisar('la portada muestra el precio', enPortada.precio)
+revisar('la dirección y los metros', enPortada.direccion && enPortada.metros)
+revisar('el botón de entrar', enPortada.entrar)
+revisar('y el contacto de WhatsApp', enPortada.whatsapp)
+
+/* El enlace de WhatsApp tiene que quedar con solo dígitos: `limpiarFicha` quita
+   los espacios, porque wa.me no los acepta. */
+const wa = await page.getByRole('link', { name: 'WhatsApp' }).getAttribute('href').catch(() => null)
+revisar('el link de WhatsApp va limpio', wa === 'https://wa.me/523312345678', String(wa))
+
+/* Y la portada NO puede necesitar WebGL: es su mayor valor en un iPhone viejo,
+   donde el visor 3D no puede funcionar. */
+const sinCanvas = await page.evaluate(() => document.querySelectorAll('canvas').length === 0)
+revisar('la portada monta sin WebGL', sinCanvas)
+
+await page.getByRole('button', { name: /Ver el recorrido/ }).click()
+await page.waitForTimeout(4000)
+const entro = await page.evaluate(() => document.querySelectorAll('canvas').length > 0)
+revisar('y al entrar sí aparece el visor 3D', entro)
+
 console.log(`\n${bien ? 'LO VIEJO SIGUE ABRIENDO' : 'HAY ALGO MAL'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')
 await browser.close()

@@ -1,6 +1,6 @@
 import type { Tour, TourScene } from '../types'
 import type { StoredScene, StoredTour, TourSummary } from './types'
-import { normalizarTour } from './migrar'
+import { normalizarTour } from './normalizar'
 import {
   STORE_BLOBS,
   STORE_TOURS,
@@ -172,9 +172,22 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
      una llave de Blob y el visor necesita como URL. Mismo puente que las fotos. */
   let marca: Tour['marca']
   if (stored.marca) {
-    const { logoId, ...resto } = stored.marca
-    const logo = logoId ? ((await blobUrl(logoId)) ?? undefined) : undefined
-    marca = logo ? { ...resto, logo } : resto
+    /* Se copian los campos a mano en vez de usar `const { logoId, ...resto }`.
+       El object rest es de ES2018 y el bundle se compila para Safari 13, así que
+       TypeScript emite un helper para bajarlo de nivel — y ese helper resultó ser
+       un chunk propio de 10 kB que se PRECARGABA en el arranque, subiendo el
+       peso de "Mis recorridos" de 236 a 243 kB. Por una línea más corta.
+       Medido con el mismo paso del CI que vigila ese presupuesto. */
+    const m = stored.marca
+    const logo = m.logoId ? ((await blobUrl(m.logoId)) ?? undefined) : undefined
+    marca = {
+      nombre: m.nombre,
+      colores: m.colores,
+      hudFondo: m.hudFondo,
+      fondoApp: m.fondoApp,
+      tipografia: m.tipografia,
+      logo,
+    }
   }
 
   return {
