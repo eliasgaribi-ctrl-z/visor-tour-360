@@ -1,6 +1,6 @@
 /* oxlint-disable react/set-state-in-effect -- Commit del fundido: el estado nuevo
    depende de una textura que terminó de cargar fuera de React. */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useEquirectTexture } from '../../lib/useEquirectTexture'
@@ -198,11 +198,32 @@ export function PanoSphere({
      la entrante conserva el que traía al empezar el fundido. Rotar el <group>
      que envuelve la malla —y no la cámara— es lo que deja intactos a los
      marcadores del HUD y al rig: la cámara y los puntos siguen viviendo en el
-     mundo, y una dirección d pasa a muestrear la textura en Q⁻¹·d. */
+     mundo, y una dirección d pasa a muestrear la textura en Q⁻¹·d.
+
+     Los dos cuaterniones se MEMOIZAN, y no es cosmético: un `Quaternion` nuevo
+     en cada render es, para R3F, una prop que cambió; la aplica y pide cuadro.
+     Como este componente se re-renderiza con cualquier estado del visor de
+     arriba —abrir una nota, retirar la pista—, cada uno de esos costaba un
+     dibujo con la cámara quieta. `rendimiento.mjs` lo mide: abrir y cerrar una
+     nota tiene que dar cero. Las dependencias son los dos números y no el
+     objeto, para que un `nivel` recreado con los mismos valores tampoco cuente. */
+  const nivelBase = incoming ? base?.nivel : nivel
+  const qBase = useMemo(
+    () => cuaternionDeNivel(nivelBase),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- por valor, ver arriba
+    [nivelBase?.tiltX, nivelBase?.tiltZ],
+  )
+  const nivelEntrante = incoming?.nivel
+  const qEntrante = useMemo(
+    () => cuaternionDeNivel(nivelEntrante),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- por valor, ver arriba
+    [nivelEntrante?.tiltX, nivelEntrante?.tiltZ],
+  )
+
   return (
     <group>
       {base && (
-        <group quaternion={cuaternionDeNivel(incoming ? base.nivel : nivel)}>
+        <group quaternion={qBase}>
           <mesh scale={[-1, 1, 1]} renderOrder={0}>
             <sphereGeometry args={[radius, 64, 40, PHI_START]} />
             <meshBasicMaterial map={base.texture} side={THREE.BackSide} toneMapped={false} />
@@ -211,7 +232,7 @@ export function PanoSphere({
       )}
 
       {incoming && (
-        <group quaternion={cuaternionDeNivel(incoming.nivel)}>
+        <group quaternion={qEntrante}>
           <mesh scale={[-1, 1, 1]} renderOrder={1}>
             <sphereGeometry args={[radius, 64, 40, PHI_START]} />
             <meshBasicMaterial

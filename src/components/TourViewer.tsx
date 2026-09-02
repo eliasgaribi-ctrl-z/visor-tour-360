@@ -115,6 +115,10 @@ export function TourViewer({
     setHintVisible(false)
   }, [])
 
+  /* Estable a propósito: `Escena360` está en `memo`, y una flecha nueva aquí lo
+     re-renderizaría —y con él al canvas— en cada estado del HUD. */
+  const alFallar = useCallback(() => setFailed(true), [])
+
   /** Un dedo sobre la foto: se va la pista y, si la foto giraba sola, se detiene. */
   const alTocar = useCallback(() => {
     dismissHint()
@@ -234,7 +238,7 @@ export function TourViewer({
           nivel={scene.nivel}
           webgl={webgl}
           onLoadingChange={setLoading}
-          onError={() => setFailed(true)}
+          onError={alFallar}
           onPointerDownCapture={alTocar}
         />
 

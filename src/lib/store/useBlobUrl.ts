@@ -27,22 +27,38 @@ import { blobUrl } from './tours'
  * evitar. Quien de verdad quiera soltarla usa `releaseBlobUrl()` de `tours.ts`,
  * que es para cuando la foto se reemplaza o se borra.
  */
-export function useBlobUrl(imageId: string | null | undefined): string | null {
-  const [url, setUrl] = useState<string | null>(null)
+export type EstadoBlobUrl = {
+  url: string | null
+  /** El Blob ya no está en la base. `false` también mientras se busca. */
+  falta: boolean
+}
+
+/**
+ * Como `useBlobUrl`, pero distingue "todavía no llegó" de "ya no existe".
+ *
+ * La diferencia importa en el editor de puntos: con `null` a secas, una
+ * habitación cuya foto borró el navegador se quedaba en "Abriendo la
+ * habitación…" para siempre, porque el canvas solo se monta con URL y no
+ * había forma de saber que no iba a llegar ninguna.
+ */
+export function useBlobUrlEstado(imageId: string | null | undefined): EstadoBlobUrl {
+  const [estado, setEstado] = useState<EstadoBlobUrl>({ url: null, falta: false })
 
   useEffect(() => {
-    if (!imageId) {
-      setUrl(null)
-      return
-    }
+    setEstado({ url: null, falta: false })
+    if (!imageId) return
     let vivo = true
     void blobUrl(imageId).then((u) => {
-      if (vivo) setUrl(u)
+      if (vivo) setEstado({ url: u, falta: u === null })
     })
     return () => {
       vivo = false
     }
   }, [imageId])
 
-  return url
+  return estado
+}
+
+export function useBlobUrl(imageId: string | null | undefined): string | null {
+  return useBlobUrlEstado(imageId).url
 }

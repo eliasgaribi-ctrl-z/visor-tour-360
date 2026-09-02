@@ -1085,6 +1085,15 @@ revisar(
   String(avisoFaltante),
 )
 
+/* Y el editor de puntos de esa habitación sin foto tiene que DECIRLO, no
+   quedarse en "Abriendo la habitación…" para siempre: así estaba, porque el
+   canvas solo se monta con URL y sin blob no había URL ni mensaje. */
+await page.goto(`${BASE}#/puntos/${v2Guardado.id}/sala`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1500)
+const sinFoto = await page.getByText(/ya no tiene foto/).isVisible().catch(() => false)
+const cambiarFoto = await page.getByRole('button', { name: 'Cambiar la foto' }).isVisible().catch(() => false)
+revisar('sin foto, el editor lo dice y ofrece cambiarla', sinFoto && cambiarFoto, `aviso ${sinFoto} · botón ${cambiarFoto}`)
+
 /* ==========================================================================
  * ARCHIVOS HOSTILES: cada uno tiene que dar un MENSAJE, no una pantalla negra
  * ========================================================================== */
@@ -1142,6 +1151,55 @@ await page.waitForTimeout(1200)
 await meterArchivo('roto.tour', Buffer.from('esto no es un zip'), 2500)
 const aviso = await page.getByText(/Algo salió mal/).isVisible().catch(() => false)
 revisar('el aviso aparece en la pantalla', aviso)
+
+/* ==========================================================================
+ * UNA FOTO CON NORTE EN SUS METADATOS ENTRA CON BRÚJULA
+ *
+ * La app escribe GPano:PoseHeadingDegrees al exportar (xmp.ts), igual que las
+ * cámaras 360 con brújula. Al subir esa foto, el rumbo tiene que llegar a la
+ * escena: antes se leía el resto del GPano y el norte se tiraba, así que una
+ * foto exportada por esta app volvía sin brújula. El escritor ya está probado
+ * contra un modelo físico aparte (xmp.test.ts); aquí se prueba el cableado.
+ * ========================================================================== */
+console.log('\n=== Una foto con norte en sus metadatos entra con brújula ===')
+const conNorte = await page.evaluate(async () => {
+  const { conGPano } = await import('/src/lib/capture/xmp.ts')
+  const blob = await (await fetch('/panoramas/cocina.jpg')).blob()
+  const bitmap = await createImageBitmap(blob)
+  const out = await conGPano(blob, { ancho: bitmap.width, alto: bitmap.height, norte: 123.5 })
+  bitmap.close()
+  const bytes = new Uint8Array(await out.arrayBuffer())
+  let s = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
+  return { b64: btoa(s), crecio: out.size > blob.size }
+})
+revisar('el escritor metió el paquete GPano', conNorte.crecio)
+await page.goto(`${BASE}#/editar/${v2Guardado.id}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+await page.getByRole('button', { name: 'Agregar habitación' }).click()
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Usar una foto que ya tengo' }).click()
+await page.waitForTimeout(400)
+await page
+  .locator('input[type=file]')
+  .first()
+  .setInputFiles({ name: 'con-norte.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(conNorte.b64, 'base64') })
+await page.waitForTimeout(3000)
+await page.getByRole('textbox', { name: 'Nombre de la habitación' }).fill('Con norte')
+await page.getByRole('button', { name: 'Guardar habitación' }).click()
+await page.waitForTimeout(3500)
+const escenaConNorte = await page.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const t = await tours.getTour(id)
+  return t?.scenes.find((e) => e.name === 'Con norte') ?? null
+}, v2Guardado.id)
+revisar(
+  'la habitación entra con su rumbo',
+  escenaConNorte !== null &&
+    typeof escenaConNorte.rumbo === 'number' &&
+    Math.abs(escenaConNorte.rumbo - 123.5) < 0.01,
+  `rumbo ${escenaConNorte?.rumbo}`,
+)
 
 /* ==========================================================================
  * SEGURIDAD: un .tour ajeno se abre en el telefono de un COMPRADOR.

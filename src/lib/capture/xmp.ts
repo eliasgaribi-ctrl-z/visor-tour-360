@@ -1,4 +1,5 @@
 import { leerBytes } from '../store/bytes'
+import { rumboDeEscena } from '../rumbo'
 import type { Bytes } from '../store/zip'
 
 /**
@@ -184,9 +185,11 @@ export class XmpError extends Error {
  *                    escribe: es mejor no decir nada que inventar un rumbo.
  */
 export function rumboDelCentro(baseYaw: number, offsetNorte: number | null): number | null {
-  if (offsetNorte === null || !Number.isFinite(offsetNorte)) return null
-  if (!Number.isFinite(baseYaw)) return null
-  return baseYaw + offsetNorte
+  /* La MISMA cuenta que la brújula del visor (`rumboDeEscena`, src/lib/rumbo.ts),
+     para que el norte escrito en el JPEG y el norte guardado en la escena no
+     puedan divergir nunca. Aquí se traduce `undefined` a `null`, que es la
+     convención de este módulo. */
+  return rumboDeEscena(baseYaw, offsetNorte) ?? null
 }
 
 export function paqueteGPano(opciones: OpcionesGPano): string {

@@ -182,13 +182,14 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
       /* Los metadatos van también en las fotos que se SUBEN, no solo en las
          que arma el costurero: aquí la equirectangular la acabamos de fabricar
          nosotros —el hueco que la foto no cubre se rellena de gris— así que el
-         archivo que sale es tan panorámica nuestra como la de la cámara. Del
-         rumbo no se dice nada: la foto vino de la galería y no hay giroscopio
-         que haya mirado al norte, y de con qué se tomó tampoco, porque no se
-         sabe. */
+         archivo que sale es tan panorámica nuestra como la de la cámara. El
+         rumbo solo si el archivo lo traía (una foto exportada por esta app, o
+         una cámara 360 con brújula): la galería no tiene giroscopio que haya
+         mirado al norte, y de con qué se tomó tampoco se sabe. */
       const foto = await conGPano(await aJpeg(lienzo, 0.86), {
         ancho: lienzo.width,
         alto: lienzo.height,
+        norte: gpano?.rumbo ?? null,
       })
       const mini = await miniatura(lienzo)
       soltarLienzo(lienzo)
@@ -204,6 +205,7 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
           miniatura: mini,
           origin: 'foto',
           coverageDeg: grados,
+          rumbo: gpano?.rumbo ?? undefined,
         })
         ir({ nombre: 'puntos', tourId: tour.id, sceneId })
         return
@@ -216,6 +218,7 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
         thumbId: newId('img'),
         origin: 'foto',
         coverageDeg: grados,
+        rumbo: gpano?.rumbo ?? undefined,
       })
       await guardarEscenaConFoto({ tour, scene, foto, miniatura: mini })
       ir({ nombre: 'puntos', tourId: tour.id, sceneId: scene.id })

@@ -9,7 +9,7 @@ import type { Hotspot } from '../../lib/types'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
 import { getTour, saveTour } from '../../lib/store/tours'
 import { newId } from '../../lib/store/ids'
-import { useBlobUrl } from '../../lib/store/useBlobUrl'
+import { useBlobUrlEstado } from '../../lib/store/useBlobUrl'
 import { TourEngineProvider, useCreateTourEngine } from '../../lib/tourEngine'
 import { wrap180 } from '../../lib/math'
 import { screenToYawPitch } from '../../lib/math3d'
@@ -76,6 +76,8 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
    */
   const [nivelando, setNivelando] = useState<{ nivel?: Nivel; hotspots: StoredScene['hotspots'] } | null>(null)
   const [falloFoto, setFalloFoto] = useState(false)
+  // Estable: `Escena360` está en `memo` (ver su encabezado).
+  const alFallarFoto = useCallback(() => setFalloFoto(true), [])
   /* Lo que no se pudo escribir, guardado entero para poder reintentarlo tal
      cual. No basta con un mensaje: si la escritura falló porque el disco estaba
      lleno un segundo, el trabajo de la persona se pierde a menos que quede algo
@@ -91,7 +93,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
   const escena: StoredScene | null =
     tour && tour !== 'no-existe' ? (tour.scenes.find((s) => s.id === sceneId) ?? null) : null
 
-  const url = useBlobUrl(escena?.imageId)
+  const { url, falta: sinFoto } = useBlobUrlEstado(escena?.imageId)
 
   useEffect(() => {
     void getTour(tourId).then((t) => setTour(t ?? 'no-existe'))
@@ -288,6 +290,29 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
     )
   }
 
+  /* La foto ya no está (Safari borra el almacenamiento si el sitio pasa días sin
+     abrirse). Antes esto se quedaba en "Abriendo la habitación…" para siempre:
+     el canvas solo se monta con URL, y sin blob no había URL ni mensaje. El
+     visor sí lo decía; el editor tiene que decirlo igual y ofrecer la salida. */
+  if (sinFoto) {
+    return (
+      <Pantalla titulo="Puntos" atras={() => ir({ nombre: 'editar', tourId })}>
+        <Aviso tono="error" titulo="Esta habitación ya no tiene foto">
+          El navegador borró la foto de {escena.name} y sin ella no hay dónde poner los puntos.
+          Cámbiala por otra o vuelve a tomarla: el nombre y los puntos que ya tenía se conservan.
+        </Aviso>
+        <div className="mt-3 flex gap-2">
+          <Boton tipo="principal" ancho onClick={() => ir({ nombre: 'foto', tourId, sceneId })}>
+            Cambiar la foto
+          </Boton>
+          <Boton ancho onClick={() => ir({ nombre: 'editar', tourId })}>
+            Volver al recorrido
+          </Boton>
+        </div>
+      </Pantalla>
+    )
+  }
+
   const otras = tour.scenes.filter((s) => s.id !== sceneId)
 
   return (
@@ -304,7 +329,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             /* Sin esto, una foto que no carga dejaba el velo de "Abriendo la
                habitación…" girando para siempre: onLoadingChange nunca vuelve a
                false cuando la textura falla, y no había nada más que lo dijera. */
-            onError={() => setFalloFoto(true)}
+            onError={alFallarFoto}
           />
         )}
 

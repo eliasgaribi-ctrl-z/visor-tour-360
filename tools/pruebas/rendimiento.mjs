@@ -159,6 +159,43 @@ if (quieto.draws > 0 || quieto.raf > 0) {
   bien = false
 }
 
+/* Abrir y cerrar la nota de un punto re-renderiza el HUD entero (es estado de
+   React) y eso NO debe costar cuadros: la cámara no se movió. Antes costaba uno:
+   Escena360 le pasaba a <Canvas> objetos nuevos de `camera` y `gl` en cada
+   render y R3F los reaplicaba. Se busca un punto de información girando la
+   foto, igual que buscarPuerta busca una puerta. */
+const INFO = /Sala 4\.2|Clóset/
+let nota = await sobreUnMarcador(page, INFO)
+for (let vuelta = 0; !nota && vuelta < 12; vuelta++) {
+  const desde = await sobreLaFoto()
+  await page.mouse.move(desde.x, desde.y)
+  await page.mouse.down()
+  for (let i = 1; i <= 8; i++) {
+    await page.mouse.move(desde.x - i * 22, desde.y, { steps: 2 })
+    await page.waitForTimeout(20)
+  }
+  await page.mouse.up()
+  await page.waitForTimeout(900)
+  nota = await sobreUnMarcador(page, INFO)
+}
+if (!nota) {
+  console.log(`  ${'abrir y cerrar la nota'.padEnd(28)} NO SE ENCONTRÓ UN PUNTO DE INFORMACIÓN`)
+  bien = false
+} else {
+  await page.waitForTimeout(1500) // que la cámara termine de asentarse tras el arrastre
+  await page.evaluate(() => window.__RESET())
+  await page.mouse.click(nota.x, nota.y)
+  await page.waitForTimeout(1200)
+  await page.getByRole('button', { name: 'Cerrar' }).click()
+  await page.waitForTimeout(1200)
+  const nota_ = await page.evaluate(() => ({ ...window.__PERF }))
+  console.log(`  ${'abrir y cerrar la nota'.padEnd(28)} ${String(nota_.draws).padStart(3)} dibujos · ${String(nota_.raf).padStart(3)} cuadros`)
+  if (nota_.draws > 0) {
+    console.log('     ↑ MAL: un re-render del HUD no debería costar cuadros')
+    bien = false
+  }
+}
+
 const inicio = await sobreLaFoto()
 await page.mouse.move(inicio.x, inicio.y)
 await page.mouse.down()

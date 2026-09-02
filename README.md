@@ -206,7 +206,7 @@ src/
 │       ├── entregar.ts         * compartir el archivo y el tipo del error, aparte y estáticos
 │       ├── migrar.ts           * la frontera: lo que viene de un archivo se filtra campo por campo
 │       ├── normalizar.ts       lo que sale de IndexedDB, con su estampa de versión
-│       ├── useBlobUrl.ts       blobId -> blob: URL, con su limpieza
+│       ├── useBlobUrl.ts       blobId -> blob: URL; y si el blob ya no existe, lo dice
 │       ├── bytes.ts            leer un Blob sin arrayBuffer() (iOS 13)
 │       ├── quota.ts            espacio del navegador
 │       └── ids.ts              identificadores
@@ -248,7 +248,7 @@ tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
 tools/pruebas/reordenar.mjs     Reordenar arrastrando guarda de verdad y revierte al cancelar
 tools/pruebas/giroscopio.mjs    El giroscopio sigue a la mano, y quieto no dibuja
-tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (97 aserciones)
+tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (100 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
 
 .github/workflows/revision.yml  Los corre todos en cada push
@@ -1199,12 +1199,12 @@ código 1 si algo no cuadra. El mismo `revision.yml` los corre todos.
 | `contraste.mjs` | la cuenta WCAG contra razones **publicadas**, y qué paletas de marca entran | no |
 | `rumbo.mjs` | la brújula apunta al norte, con el signo correcto, en 2,860 combinaciones | no |
 | `nivel.mjs` | existe un nivel que endereza un ladeo conocido, y cada eje mueve lo que dice su etiqueta | no |
-| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, todo lo tocable responde, y el modo kiosco gira, se detiene al tocar y vuelve a cero | sí |
+| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, abrir y cerrar una nota no dibuja, todo lo tocable responde, y el modo kiosco gira, se detiene al tocar y vuelve a cero | sí |
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
 | `tactil.mjs` | los 14 recorridos de pantalla, todo ≥ 44 px | sí |
 | `reordenar.mjs` | arrastrar reordena y el orden sobrevive a recargar; un roce no levanta la fila; cancelar revierte | sí |
 | `giroscopio.mjs` | con sensores sintéticos a 60 Hz: quieto **0 dibujos/s**, girar 90° gira 90°, encender y apagar no saltan, el dedo corrige, la pestaña oculta apaga | sí |
-| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 97 aserciones | sí |
+| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 100 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
 
 **Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
@@ -1494,6 +1494,19 @@ pagar nada.
   correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
   reversible y gratis— y no en la costura, que obligaría a remuestrear y
   recomprimir una 4096×2048.
+- ✅ **Un re-render del HUD ya no cuesta un dibujo.** Cualquier estado del visor
+  (abrir una nota, retirar la pista) re-renderizaba también a `<Canvas>`, y R3F
+  pide cuadro al reconfigurarse. `Escena360` va en `memo` con todas sus props
+  estables, y de paso `camera`/`gl` son constantes y los cuaterniones de nivel de
+  `PanoSphere` se memoizan por valor. `rendimiento.mjs` abre y cierra una nota y
+  exige cero dibujos; con solo las dos correcciones de props seguía costando dos.
+- ✅ **El editor de puntos dice cuándo la foto ya no existe** en vez de quedarse en
+  "Abriendo la habitación…": `useBlobUrlEstado` distingue "todavía no" de
+  "nunca", y la pantalla ofrece cambiar la foto o volver.
+- ✅ **Una foto exportada por esta app vuelve con brújula**: `leerGPano` lee
+  `PoseHeadingDegrees` y `SubirFoto` lo guarda como `rumbo`; y el norte del JPEG
+  y el de la escena salen de la misma función (`rumboDelCentro` delega en
+  `rumboDeEscena`).
 - ✅ **Giroscopio al ver** (`src/lib/useGyroLook.ts`): un botón en el visor para
   mirar moviendo el teléfono, reutilizando entero el seguidor de la captura. Lo
   delicado no era la conversión sino `invalidar()`: los sensores disparan ~60
