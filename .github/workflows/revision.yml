@@ -57,6 +57,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # La única prueba del proyecto que no necesita un navegador, así que corre
+      # en milisegundos y va aquí y no con los arneses: comprueba que la copia a
+      # mano de `damp` en src/lib/math.ts siga siendo IDÉNTICA BIT A BIT a la de
+      # THREE.MathUtils.damp. Toda la suavidad de la cámara pasa por esa función.
+      - name: La copia de `damp` sigue siendo exacta
+        run: node tools/pruebas/damp.mjs
+
       # El presupuesto de descarga es una decisión medida del proyecto (README
       # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
       # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —
