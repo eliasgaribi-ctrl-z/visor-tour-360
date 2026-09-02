@@ -51,7 +51,7 @@ import {
 import { planDeCaptura, puntoMasCercano, type PuntoGuia } from '../../lib/capture/plan'
 import { mantenerPantallaEncendida } from '../../lib/capture/pantalla'
 import { PanoramaStitcher } from '../../lib/capture/stitcher'
-import { detectWebGL } from '../tour/Escena360'
+import { detectWebGL } from '../../lib/webgl'
 
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
 import { GuiaCaptura } from './GuiaCaptura'
@@ -106,7 +106,19 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const [tomadas, setTomadas] = useState(0)
   const [cobertura, setCobertura] = useState(0)
   const [estadoSensor, setEstadoSensor] = useState<OrientationState>('inactivo')
-  const [aviso, setAviso] = useState<string | null>(null)
+  /* Dos canales de aviso y no uno solo. Antes compartían variable, y como el
+     único `setAviso(null)` de todo el archivo vivía en `comenzar()`, un "la
+     cámara se pausó" de hace dos minutos seguía en pie y reaparecía en ROJO
+     dentro de "¿Qué cuarto es?", donde ese color significa que el guardado
+     falló. La persona leía que había perdido la habitación cuando no había
+     perdido nada. */
+  /** Se ve en el HUD mientras se toman fotos: cámara, sensores, costura. */
+  const [avisoCaptura, setAvisoCaptura] = useState<string | null>(null)
+  /** Se ve solo dentro de la hoja de nombrar, y habla del guardado. */
+  const [avisoGuardado, setAvisoGuardado] = useState<{
+    tono: 'alerta' | 'error'
+    texto: string
+  } | null>(null)
   const [nombre, setNombre] = useState('')
   const [fovPantalla, setFovPantalla] = useState(60)
   const [caja, setCaja] = useState({ ancho: 1, alto: 1 })
@@ -119,6 +131,12 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const [girado, setGirado] = useState(false)
   /** El permiso de sensores se negó a propósito (distinto de "no hay"). */
   const [permisoNegado, setPermisoNegado] = useState(false)
+  /** La × pregunta antes de tirar el trabajo, pero solo si hay algo que tirar. */
+  const [confirmarSalida, setConfirmarSalida] = useState(false)
+  /* Cuántas veces la tarjeta gráfica soltó el contexto. Es un contador y no un
+     booleano porque puede pasar dos veces en la misma captura, y el efecto que
+     lo atiende necesita distinguir "otra vez" de "sigue perdido". */
+  const [perdidasDeContexto, setPerdidasDeContexto] = useState(0)
 
   /* El seguidor se crea UNA sola vez y vive lo que viva la pantalla: si se
      recreara en cada render, el dibujo por cuadro leería un objeto distinto del
@@ -148,6 +166,13 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   const vivo = useRef(true)
   /** Cancelador de la vigilancia de la cámara (llamada, silencio, calor). */
   const vigilancia = useRef<(() => void) | null>(null)
+  /* Terminar, deshacer y la recuperación tras perder el contexto hacen lo
+     mismo: esperan a que la última foto acabe de comprimirse y luego recosen
+     las tomas una por una. Dos de esas corriendo a la vez se pisan el lienzo
+     y una se lleva por delante el trabajo de la otra. Solo una a la vez. */
+  const ocupado = useRef(false)
+  /** Qué pérdida de contexto ya se atendió, para no recuperar dos veces. */
+  const perdidaAtendida = useRef(0)
   /** La URL del fantasma, para poder revocarla sin depender del estado. */
   const urlFantasma = useRef<string | null>(null)
 
@@ -175,6 +200,24 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       )
   }, [tourId])
 
+  /**
+   * Tira el costurero de ahora sin que su despedida cuente como una pérdida.
+   *
+   * OJO con el orden: `dispose()` termina llamando a `forceContextLoss()` —a
+   * propósito, porque un celular aguanta pocos contextos vivos— y eso dispara
+   * el MISMO evento `webglcontextlost` que manda el navegador cuando se queda
+   * sin memoria de video. Si el aviso sigue enganchado, cerrar la pantalla o
+   * abrir un costurero nuevo se cuenta como una pérdida y arranca una
+   * recuperación que nadie pidió. Primero se desengancha, después se tira.
+   */
+  const soltarCosturero = useCallback(() => {
+    const st = stitcher.current
+    if (!st) return
+    st.onContextoPerdido = null
+    st.dispose()
+    stitcher.current = null
+  }, [])
+
   /* --------------------------------------------------------------- LIMPIEZA */
   const apagar = useCallback(() => {
     vivo.current = false
@@ -183,15 +226,14 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     cerrarCamara(sesion.current)
     sesion.current = null
     seguidor.stop()
-    stitcher.current?.dispose()
-    stitcher.current = null
+    soltarCosturero()
     tomas.current = []
     hechos.current.clear()
     if (urlFantasma.current) {
       URL.revokeObjectURL(urlFantasma.current)
       urlFantasma.current = null
     }
-  }, [seguidor])
+  }, [seguidor, soltarCosturero])
 
   useEffect(() => apagar, [apagar])
 
@@ -225,6 +267,57 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     urlFantasma.current = blob ? URL.createObjectURL(blob) : null
     setFantasma(urlFantasma.current)
   }, [])
+
+  /**
+   * Deja los contadores de la pantalla en cero.
+   *
+   * Va aparte a propósito, y NO se llama desde `apagar()`. `apagar` corre
+   * también como limpieza al desmontar la pantalla, y desde ahí estos
+   * `setState` caerían sobre un componente que ya no existe. Los únicos dos
+   * momentos en que de verdad se empieza de cero son `comenzar()` y el botón de
+   * descartar; ahí sí hay que ponerlos, porque `apagar` vacía `tomas.current`
+   * pero no toca los números, y sin esto un reintento arrancaba diciendo
+   * "18 fotos" con el lienzo vacío.
+   */
+  const reiniciarContadores = useCallback(() => {
+    setTomadas(0)
+    setCobertura(0)
+    setCubiertos(0)
+    setPasoManual(0)
+    mostrarFantasma(null)
+  }, [mostrarFantasma])
+
+  /**
+   * Levanta un costurero nuevo y lo cuelga de la vista previa.
+   *
+   * Lo usan el arranque y la recuperación tras perder el contexto de la
+   * tarjeta gráfica, y por eso vive aquí: el enganche de `onContextoPerdido`
+   * tiene que quedar puesto en TODOS los costureros, no solo en el primero.
+   */
+  const montarCosturero = useCallback(() => {
+    // Si esto es un reintento, hay un costurero (y su contexto WebGL) vivo.
+    soltarCosturero()
+    const st = new PanoramaStitcher({
+      width: anchoUtilizable(),
+      preview: { width: 512, height: 256 },
+    })
+    st.onContextoPerdido = () => setPerdidasDeContexto((n) => n + 1)
+    stitcher.current = st
+
+    if (previa.current) {
+      /* Vaciar a mano y no con replaceChildren(): ese método es de Safari 14
+         y de Chrome 86, o sea que se cae en DOS de los cuatro navegadores del
+         target. Y el TypeError caía en el catch de `comenzar`, que como no
+         reconoce el tipo del error acusa a la cámara —"No se pudo abrir la
+         cámara"— cuando la cámara ya había abierto y estaba dando imagen.
+         `append` de la línea siguiente sí es viejo (Safari 10), se queda. */
+      const caja = previa.current
+      while (caja.firstChild) caja.removeChild(caja.firstChild)
+      st.canvas.className = 'h-full w-full object-cover'
+      caja.append(st.canvas)
+    }
+    return st
+  }, [soltarCosturero])
 
   /* ---------------------------------------------------------------- DISPARO */
   const tomarFoto = useCallback(
@@ -331,7 +424,12 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
       if (ahora - ultimaMuestra.current < MUESTREO_MS) return
       ultimaMuestra.current = ahora
 
-      const { yaw, pitch } = seguidor.reading
+      /* El ladeo entra en la cuenta igual que la inclinación: con el teléfono
+         torcido, lo que la correlación mide en horizontal ya no es todo el
+         corrimiento, y con la cámara mirando al techo un mismo giro de muñeca
+         mueve mucho menos la imagen. Quien decide si la medición sirve es la
+         propia función; aquí solo hay que darle los tres ángulos. */
+      const { yaw, pitch, roll } = seguidor.reading
       const anterior = muestra.current
 
       if (anterior) {
@@ -348,6 +446,8 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           height: GRIS.alto,
           deltaYaw,
           deltaPitch,
+          pitch,
+          roll,
         })
 
         if (estimado !== null) {
@@ -357,10 +457,20 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           /* La corrección se aplica ENSEGUIDA: con el valor ya medido, las
              tomas que faltan se pegan en su lugar y los círculos guía caen
              donde de verdad apunta la cámara. Lo que ya quedó pegado con el
-             valor viejo se arregla al terminar, recosiendo todo. */
-          if (estimaciones.current.length >= 4) {
+             valor viejo se arregla al terminar, recosiendo todo.
+
+             Pero se aplica con la mano pesada: seis mediciones en vez de
+             cuatro, y solo si la mediana se aparta más de grado y medio del
+             valor que se está usando. Con el umbral de antes bastaba una racha
+             de tres o cuatro lecturas mediocres —una pared lisa, un giro en el
+             límite del rango útil— para mover el campo de visión a media
+             captura, y entonces el daño no se quedaba en las últimas fotos:
+             marcaba la panorámica como mezclada y desplazaba los círculos guía
+             cuando todavía faltaban veinte tomas. Esperar a tener seis
+             mediciones cuesta menos de dos segundos de barrido. */
+          if (estimaciones.current.length >= 6) {
             const medido = mediana(estimaciones.current)
-            if (medido !== null && Math.abs(medido - fovLargo.current) > 0.6) {
+            if (medido !== null && Math.abs(medido - fovLargo.current) > 1.5) {
               fovLargo.current = medido
               mezclado.current = true
               recalcularFov()
@@ -381,7 +491,9 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
   /* ----------------------------------------------------------------- ARRANQUE */
   const comenzar = useCallback(async () => {
     setFase({ nombre: 'abriendo' })
-    setAviso(null)
+    setAvisoCaptura(null)
+    setAvisoGuardado(null)
+    reiniciarContadores()
     vivo.current = true
     setPermisoNegado(false)
 
@@ -446,30 +558,21 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
 
       vigilancia.current?.()
       vigilancia.current = vigilarCamara(abierta, (motivo) => {
-        if (motivo === 'interrumpida') setAviso('La cámara se pausó. Vuelve a la app para seguir.')
-        if (motivo === 'terminada') setAviso('La cámara se cerró. Guarda lo que llevas y vuelve a entrar.')
+        if (motivo === 'interrumpida') setAvisoCaptura('La cámara se pausó. Vuelve a la app para seguir.')
+        if (motivo === 'terminada') setAvisoCaptura('La cámara se cerró. Guarda lo que llevas y vuelve a entrar.')
         if (motivo === 'cambio-de-formato') {
-          setAviso('El teléfono cambió la calidad de la cámara. Termina esta habitación para no mezclar tomas.')
+          setAvisoCaptura('El teléfono cambió la calidad de la cámara. Termina esta habitación para no mezclar tomas.')
         }
       })
 
-      // El lienzo más grande que este teléfono puede armar de verdad.
-      const ancho = anchoUtilizable()
-      // Si esto es un reintento, hay un costurero (y su contexto WebGL) vivo.
-      stitcher.current?.dispose()
-      stitcher.current = new PanoramaStitcher({ width: ancho, preview: { width: 512, height: 256 } })
-      if (previa.current) {
-        /* Vaciar a mano y no con replaceChildren(): ese método es de Safari 14
-           y de Chrome 86, o sea que se cae en DOS de los cuatro navegadores del
-           target. Y el TypeError caía en el catch de más abajo, que como no
-           reconoce el tipo del error acusa a la cámara —"No se pudo abrir la
-           cámara"— cuando la cámara ya había abierto y estaba dando imagen.
-           `append` de la línea siguiente sí es viejo (Safari 10), se queda. */
-        const caja = previa.current
-        while (caja.firstChild) caja.removeChild(caja.firstChild)
-        stitcher.current.canvas.className = 'h-full w-full object-cover'
-        previa.current.append(stitcher.current.canvas)
-      }
+      // El lienzo más grande que este teléfono puede armar de verdad lo elige
+      // el propio costurero al montarse.
+      montarCosturero()
+      /* El costurero es nuevo y su contexto está sano: si en la captura
+         anterior se perdió alguno, esa cuenta ya no significa nada y dejarla
+         viva haría que el efecto de recuperación se disparara sin motivo. */
+      setPerdidasDeContexto(0)
+      perdidaAtendida.current = 0
 
       seguidor.onStateChange = setEstadoSensor
       seguidor.start()
@@ -507,7 +610,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
         consejo: error instanceof CameraError ? error.detail : undefined,
       })
     }
-  }, [alcance, recalcularFov, seguidor])
+  }, [alcance, montarCosturero, recalcularFov, reiniciarContadores, seguidor])
 
   useEffect(() => {
     const alGirar = () => {
@@ -567,26 +670,73 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     }
   }, [])
 
+  /**
+   * Vuelve a pegar todas las tomas que hay en este momento, levantando primero
+   * un costurero nuevo si el de ahora quedó sin contexto.
+   *
+   * Cuando el teléfono le quita a la pestaña la memoria de la tarjeta gráfica
+   * —basta con irse a WhatsApp un minuto a media captura—, lo acumulado en la
+   * GPU se PIERDE. El navegador puede devolver el contexto después, pero lo
+   * devuelve en blanco: no hay forma de recuperar el lienzo, solo de volver a
+   * armarlo. Y sí se puede, porque cada toma sigue viva como JPEG en
+   * `tomas.current`, que es memoria normal y no se fue a ninguna parte.
+   */
+  const recoserTodo = useCallback(
+    async (fov: number) => {
+      if (!stitcher.current || stitcher.current.perdido) montarCosturero()
+      await recoser(fov)
+    },
+    [montarCosturero, recoser],
+  )
+
+  /* ------------------------------------- RECUPERAR TRAS PERDER EL CONTEXTO */
+  useEffect(() => {
+    if (perdidasDeContexto === 0 || perdidasDeContexto === perdidaAtendida.current) return
+    /* Solo mientras se está tomando fotos. En "nombrar" la panorámica ya es un
+       JPEG en la mano y recoser no aportaría nada; en "procesando" y en
+       "error" quien lo atiende es `terminar()`, que empieza comprobando si el
+       costurero sirve. Si la pérdida ocurrió con la hoja de nombrar abierta y
+       la persona la cierra para seguir tomando, este efecto vuelve a correr
+       con la fase ya en "capturando" y ahí sí recose. */
+    if (fase.nombre !== 'capturando') return
+    // Terminar o deshacer ya están recosiendo; hacerlo a la vez se pisaría.
+    if (ocupado.current) return
+
+    perdidaAtendida.current = perdidasDeContexto
+    ocupado.current = true
+    setFase({
+      nombre: 'procesando',
+      mensaje: 'El teléfono soltó la memoria de la tarjeta gráfica. Volviendo a unir las fotos…',
+    })
+    void recoserTodo(fovLargo.current)
+      .then(() => {
+        // Todo quedó pegado con el mismo campo de visión: ya no está mezclado.
+        mezclado.current = false
+        setAvisoCaptura(
+          'El teléfono se quedó sin memoria de video un momento y hubo que volver a unir las fotos. No se perdió ninguna; puedes seguir.',
+        )
+      })
+      .catch(() => {
+        setAvisoCaptura(
+          'El teléfono se quedó sin memoria de video y no se pudieron volver a unir las fotos. Cierra otras apps y toca Terminar para intentarlo de nuevo.',
+        )
+      })
+      .finally(() => {
+        ocupado.current = false
+        setFase({ nombre: 'capturando' })
+      })
+  }, [fase.nombre, perdidasDeContexto, recoserTodo])
+
   const deshacer = useCallback(async () => {
-    /* La toma más reciente puede seguir comprimiéndose a JPEG: sin esperarla,
-       el pop() se lleva la ANTERIOR y la que se quería borrar se queda. */
-    for (let intento = 0; disparando.current && intento < 40; intento++) {
-      await new Promise((seguir) => setTimeout(seguir, 50))
-    }
+    // Ya hay una costura en curso; dos a la vez se pisan el lienzo.
+    if (ocupado.current) return
+    ocupado.current = true
 
-    const ultima = tomas.current.pop()
-    if (!ultima) return
-    if (ultima.puntoId) {
-      hechos.current.delete(ultima.puntoId)
-      setCubiertos(hechos.current.size)
-      // A mano, el contador de pasos ES el avance: si no retrocede, el punto
-      // que se acaba de deshacer no se vuelve a fotografiar nunca.
-      if (manual) setPasoManual((n) => Math.max(0, n - 1))
-    }
-    setTomadas(tomas.current.length)
-    // El fantasma tiene que volver a ser la foto que ahora sí es la última.
-    if (manual) mostrarFantasma(tomas.current[tomas.current.length - 1]?.blob ?? null)
-
+    /* El velo se pone ANTES de la primera espera, no después. Es opaco a los
+       toques, y esa es toda la protección que hace falta: si se pone después,
+       queda una ventana de hasta dos segundos —lo que tarda la última foto en
+       comprimirse— con los botones vivos, y en ese hueco caben dos Deshacer
+       seguidos o un Terminar encima de un Deshacer. */
     setFase({
       nombre: 'procesando',
       mensaje:
@@ -594,48 +744,104 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           ? 'Quitando la última toma y volviendo a unir las demás. Tarda unos segundos…'
           : 'Quitando la última toma…',
     })
+
     try {
-      await recoser(fovLargo.current)
-      mezclado.current = false
-    } catch {
-      setAviso('No se pudo volver a unir las fotos. Puedes seguir tomando o terminar así.')
+      /* La toma más reciente puede seguir comprimiéndose a JPEG: sin esperarla,
+         el pop() se lleva la ANTERIOR y la que se quería borrar se queda. */
+      for (let intento = 0; disparando.current && intento < 40; intento++) {
+        await new Promise((seguir) => setTimeout(seguir, 50))
+      }
+
+      const ultima = tomas.current.pop()
+      if (!ultima) return
+      if (ultima.puntoId) {
+        hechos.current.delete(ultima.puntoId)
+        setCubiertos(hechos.current.size)
+        // A mano, el contador de pasos ES el avance: si no retrocede, el punto
+        // que se acaba de deshacer no se vuelve a fotografiar nunca.
+        if (manual) setPasoManual((n) => Math.max(0, n - 1))
+      }
+      setTomadas(tomas.current.length)
+      // El fantasma tiene que volver a ser la foto que ahora sí es la última.
+      if (manual) mostrarFantasma(tomas.current[tomas.current.length - 1]?.blob ?? null)
+
+      try {
+        await recoserTodo(fovLargo.current)
+        mezclado.current = false
+      } catch {
+        setAvisoCaptura('No se pudo volver a unir las fotos. Puedes seguir tomando o terminar así.')
+      }
+    } finally {
+      ocupado.current = false
+      setFase({ nombre: 'capturando' })
     }
-    setFase({ nombre: 'capturando' })
-  }, [manual, mostrarFantasma, recoser])
+  }, [manual, mostrarFantasma, recoserTodo])
 
   const terminar = useCallback(async () => {
-    const st = stitcher.current
-    if (!st || tomas.current.length === 0) return
+    // Deshacer, terminar o una recuperación en curso: solo una a la vez.
+    if (ocupado.current) return
+    if (tomas.current.length === 0) return
+    ocupado.current = true
 
-    /* La última toma puede estar todavía comprimiéndose a JPEG. Si se recose
-       antes de que entre a la lista, esa foto desaparece de la panorámica. */
-    for (let intento = 0; disparando.current && intento < 40; intento++) {
-      await new Promise((seguir) => setTimeout(seguir, 50))
-    }
-
-    /* Si el giroscopio dio suficientes mediciones del campo de visión, se vuelve
-       a coser TODO con el valor calibrado. Es la diferencia entre una panorámica
-       que cierra y una en la que las paredes no empatan: el valor por defecto de
-       66° puede estar cinco grados lejos del lente real, y ese error se acumula
-       vuelta tras vuelta. */
-    const calibrado = mediana(estimaciones.current)
-    if (calibrado !== null && (mezclado.current || Math.abs(calibrado - fovLargo.current) > 1.2)) {
-      setFase({
-        nombre: 'procesando',
-        mensaje: 'Midiendo el lente y volviendo a unir las fotos. Tarda unos segundos…',
-      })
-      fovLargo.current = calibrado
-      mezclado.current = false
-      try {
-        await recoser(calibrado)
-      } catch {
-        // Si no se pudo recoser, lo que ya está en el lienzo sigue sirviendo.
-        setAviso('No se pudo afinar la unión de las fotos; la panorámica se guarda como está.')
-      }
-    }
-
+    /* El velo va ANTES de la espera, por lo mismo que en `deshacer`: mientras
+       la última foto acaba de comprimirse, los botones seguían vivos y se podía
+       tocar Terminar dos veces o meter un Deshacer en medio. */
     setFase({ nombre: 'procesando', mensaje: 'Armando la foto 360…' })
+    setAvisoGuardado(null)
+
     try {
+      /* La última toma puede estar todavía comprimiéndose a JPEG. Si se recose
+         antes de que entre a la lista, esa foto desaparece de la panorámica. */
+      for (let intento = 0; disparando.current && intento < 40; intento++) {
+        await new Promise((seguir) => setTimeout(seguir, 50))
+      }
+
+      /* Si el giroscopio dio suficientes mediciones del campo de visión, se
+         vuelve a coser TODO con el valor calibrado. Es la diferencia entre una
+         panorámica que cierra y una en la que las paredes no empatan: el valor
+         por defecto de 66° puede estar cinco grados lejos del lente real, y ese
+         error se acumula vuelta tras vuelta. */
+      const calibrado = mediana(estimaciones.current)
+      const hayQueCalibrar =
+        calibrado !== null && (mezclado.current || Math.abs(calibrado - fovLargo.current) > 1.2)
+      /* Y si el teléfono soltó la memoria de video en algún momento, lo que hay
+         en la GPU es un lienzo vacío: `exportar` se niega a entregarlo, y hace
+         bien, porque antes de negarse devolvía un JPEG liso que se guardaba
+         como habitación buena. Recoser es la única salida, y sirve igual aquí
+         que en el reintento desde la pantalla de error. */
+      const sinContexto = !stitcher.current || stitcher.current.perdido
+
+      if (hayQueCalibrar || sinContexto) {
+        setFase({
+          nombre: 'procesando',
+          mensaje: sinContexto
+            ? 'El teléfono soltó la memoria de la tarjeta gráfica. Volviendo a unir las fotos…'
+            : 'Midiendo el lente y volviendo a unir las fotos. Tarda unos segundos…',
+        })
+        if (hayQueCalibrar && calibrado !== null) fovLargo.current = calibrado
+        mezclado.current = false
+        try {
+          await recoserTodo(fovLargo.current)
+        } catch {
+          // Si no se pudo recoser, lo que ya está en el lienzo sigue sirviendo.
+          setAvisoGuardado({
+            tono: 'alerta',
+            texto: 'No se pudo afinar la unión de las fotos; la panorámica se guarda como está.',
+          })
+        }
+      }
+
+      const st = stitcher.current
+      if (!st) {
+        setFase({
+          nombre: 'error',
+          mensaje: 'No se pudo armar la foto 360.',
+          consejo: 'Se perdió el lienzo de la panorámica. Toca Reintentar el armado.',
+        })
+        return
+      }
+
+      setFase({ nombre: 'procesando', mensaje: 'Armando la foto 360…' })
       const foto = await st.exportar(0.86)
 
       /* La miniatura se saca pidiéndole al navegador que decodifique la foto YA
@@ -661,8 +867,13 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
         mensaje: 'No se pudo armar la foto 360.',
         consejo: error instanceof Error ? error.message : undefined,
       })
+    } finally {
+      /* Se suelta pase lo que pase. Si se quedara puesto, la pantalla de error
+         ofrecería "Reintentar el armado" y el botón no haría absolutamente
+         nada, que es peor que no ofrecerlo. */
+      ocupado.current = false
     }
-  }, [recoser, sceneId, tour])
+  }, [recoserTodo, sceneId, tour])
 
   const guardar = useCallback(async () => {
     if (fase.nombre !== 'nombrar' || !tour) return
@@ -701,11 +912,13 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
          perdidos por un teléfono sin espacio. Así el usuario puede hacer lugar
          y volver a tocar Guardar. */
       setFase(rescate)
-      setAviso(
-        error instanceof Error && /quota|space|almacen/i.test(error.message)
-          ? 'No hay espacio en el teléfono. Borra algo y vuelve a tocar Guardar; la foto no se ha perdido.'
-          : 'No se pudo guardar. Vuelve a tocar Guardar; la foto no se ha perdido.',
-      )
+      setAvisoGuardado({
+        tono: 'error',
+        texto:
+          error instanceof Error && /quota|space|almacen/i.test(error.message)
+            ? 'No hay espacio en el teléfono. Borra algo y vuelve a tocar Guardar; la foto no se ha perdido.'
+            : 'No se pudo guardar. Vuelve a tocar Guardar; la foto no se ha perdido.',
+      })
     }
   }, [apagar, fase, ir, nombre, sceneId, tour])
 
@@ -760,31 +973,50 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             </ol>
           </Aviso>
 
-          <div>
+          {/* Cuál de las dos está elegida se decía SOLO con un borde y un fondo
+              naranjas. Quien no distingue ese naranja del gris —o mira la
+              pantalla al sol— no tiene forma de saber qué va a pasar al tocar
+              "Abrir la cámara", y un lector de pantalla leía dos botones
+              idénticos sin ninguna marca. Ahora lo dicen tres cosas a la vez:
+              `aria-pressed` para quien escucha, una palomita para quien mira, y
+              el color para quien lo distingue. */}
+          <div role="group" aria-label="¿Qué tanto quieres cubrir?">
             <p className="mb-2 text-xs font-medium text-ink-200">¿Qué tanto quieres cubrir?</p>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setAlcance('esfera')}
+                aria-pressed={alcance === 'esfera'}
                 className={`rounded-2xl border p-3 text-left text-sm ${
                   alcance === 'esfera'
-                    ? 'border-brand-500 bg-brand-500/10'
+                    ? 'border-brand-500 bg-brand-500/10 ring-2 ring-brand-500'
                     : 'border-white/10 bg-white/5'
                 }`}
               >
-                <b className="block">Todo el cuarto</b>
+                <b className="block">
+                  <span aria-hidden className="mr-1 inline-block w-3">
+                    {alcance === 'esfera' ? '✓' : ''}
+                  </span>
+                  Todo el cuarto
+                </b>
                 <span className="text-xs text-ink-200">Incluye techo y piso. Unas 30 fotos.</span>
               </button>
               <button
                 type="button"
                 onClick={() => setAlcance('vuelta')}
+                aria-pressed={alcance === 'vuelta'}
                 className={`rounded-2xl border p-3 text-left text-sm ${
                   alcance === 'vuelta'
-                    ? 'border-brand-500 bg-brand-500/10'
+                    ? 'border-brand-500 bg-brand-500/10 ring-2 ring-brand-500'
                     : 'border-white/10 bg-white/5'
                 }`}
               >
-                <b className="block">Solo la vuelta</b>
+                <b className="block">
+                  <span aria-hidden className="mr-1 inline-block w-3">
+                    {alcance === 'vuelta' ? '✓' : ''}
+                  </span>
+                  Solo la vuelta
+                </b>
                 <span className="text-xs text-ink-200">Rápido. Techo y piso quedan vacíos.</span>
               </button>
             </div>
@@ -812,16 +1044,29 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
               <p className="mt-2 font-mono text-xs opacity-70">{fase.consejo}</p>
             )}
           </Aviso>
-          <div className="mt-4">
+          {/* Dos salidas, y en este orden. Antes había una sola —"Volver a
+              intentar"— que llamaba a `apagar()`, y `apagar()` vacía
+              `tomas.current`: el único botón de la pantalla de error tiraba a
+              la basura las veinticinco fotos. Y el error más común aquí no es
+              de la cámara, es del armado final, con las tomas perfectamente
+              sanas en memoria. Reintentar el armado las reusa tal cual. */}
+          <div className="mt-4 flex flex-col gap-2">
+            {tomadas > 0 && (
+              <Boton tipo="principal" ancho onClick={() => void terminar()}>
+                Reintentar el armado ({tomadas} {tomadas === 1 ? 'foto' : 'fotos'})
+              </Boton>
+            )}
             <Boton
+              tipo={tomadas > 0 ? 'fantasma' : 'principal'}
               ancho
               onClick={() => {
                 // Sin esto, un reintento deja la cámara anterior encendida.
                 apagar()
+                reiniciarContadores()
                 setFase({ nombre: 'permisos' })
               }}
             >
-              Volver a intentar
+              {tomadas > 0 ? 'Descartar y volver a empezar' : 'Volver a intentar'}
             </Boton>
           </div>
         </div>
@@ -880,6 +1125,14 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           <button
             type="button"
             onClick={() => {
+              /* Con fotos encima, la × pregunta. Es un botón de 44 píxeles en
+                 la esquina donde el pulgar se apoya al sujetar el teléfono, y
+                 lo que hacía era borrar sin avisar veinte minutos de trabajo.
+                 Sin fotos no hay nada que perder y sale directo. */
+              if (tomas.current.length > 0) {
+                setConfirmarSalida(true)
+                return
+              }
               apagar()
               ir({ nombre: 'editar', tourId })
             }}
@@ -922,9 +1175,19 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             </div>
           )}
 
-          {aviso && (
+          {avisoCaptura && (
             <div className="pointer-events-auto">
-              <Aviso tono="alerta">{aviso}</Aviso>
+              {/* Se puede quitar. Un aviso de cámara envejece en segundos —"la
+                  cámara se pausó" cuando ya volvió— y sin forma de cerrarlo se
+                  queda tapando el encuadre hasta el final de la captura. */}
+              <Aviso
+                tono="alerta"
+                accion={
+                  <Boton onClick={() => setAvisoCaptura(null)}>Entendido</Boton>
+                }
+              >
+                {avisoCaptura}
+              </Aviso>
             </div>
           )}
 
@@ -990,7 +1253,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           onCerrar={() => setFase({ nombre: 'capturando' })}
         >
           <div className="flex flex-col gap-3">
-            {aviso && <Aviso tono="error">{aviso}</Aviso>}
+            {avisoGuardado && <Aviso tono={avisoGuardado.tono}>{avisoGuardado.texto}</Aviso>}
             {fase.cobertura < 0.75 && (
               <Aviso tono="alerta">
                 Quedaron huecos sin fotografiar ({Math.round(fase.cobertura * 100)} % cubierto). Se
@@ -1006,6 +1269,42 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             />
             <Boton tipo="principal" ancho onClick={() => void guardar()}>
               {sceneId ? 'Reemplazar la foto' : 'Guardar habitación'}
+            </Boton>
+          </div>
+        </Hoja>
+      )}
+
+      {confirmarSalida && (
+        <Hoja titulo="¿Salir de la captura?" onCerrar={() => setConfirmarSalida(false)}>
+          <div className="flex flex-col gap-3">
+            <p className="text-sm leading-relaxed text-ink-200">
+              Llevas {tomadas} {tomadas === 1 ? 'foto' : 'fotos'} de esta habitación. Si sales sin
+              terminar, se borran: no quedan guardadas en ninguna parte hasta que la habitación se
+              guarda.
+            </p>
+            <Boton
+              tipo="principal"
+              ancho
+              onClick={() => {
+                setConfirmarSalida(false)
+                void terminar()
+              }}
+            >
+              Terminar y guardar
+            </Boton>
+            <Boton ancho onClick={() => setConfirmarSalida(false)}>
+              Seguir tomando
+            </Boton>
+            <Boton
+              tipo="peligro"
+              ancho
+              onClick={() => {
+                setConfirmarSalida(false)
+                apagar()
+                ir({ nombre: 'editar', tourId })
+              }}
+            >
+              Descartar las {tomadas} {tomadas === 1 ? 'foto' : 'fotos'}
             </Boton>
           </div>
         </Hoja>
