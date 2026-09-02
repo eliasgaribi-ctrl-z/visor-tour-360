@@ -74,13 +74,32 @@ Con el servidor de desarrollo corriendo hay dos páginas de diagnóstico:
 | `/prueba.html`                  | Abrirla **en el celular**: dice si hay https, cámara, sensores, WebGL y espacio |
 | `/tools/pruebas/costura.html`   | Verifica la costura reconstruyendo una panorámica conocida (sección 12) |
 
-Y una tercera, que se corre desde la terminal:
+Y los arneses, que se corren desde la terminal. Cuatro no necesitan navegador y
+tardan milisegundos:
+
+```bash
+node --experimental-strip-types tools/pruebas/damp.mjs        # `damp` idéntica a la de three
+node --experimental-strip-types tools/pruebas/contraste.mjs   # la cuenta WCAG y las paletas
+node --experimental-strip-types tools/pruebas/rumbo.mjs       # la brújula apunta al norte
+node tools/pruebas/patrones.mjs                               # patrones que no deben volver
+```
+
+Los otros cinco levantan un navegador (`npm i -D playwright` primero, y
+`npm run dev` en otra terminal):
 
 ```bash
 node tools/pruebas/memoria.mjs http://localhost:5173/       # memoria de video (sección 10)
 node tools/pruebas/rendimiento.mjs http://localhost:5173/   # batería, respuesta y movimiento (sección 11)
 node tools/pruebas/tactil.mjs http://localhost:5173/        # tamaño de lo que se toca (sección 11)
+node tools/pruebas/formato.mjs http://localhost:5173/       # el .tour abre lo viejo y vuelve entero
+node tools/pruebas/marca.mjs http://localhost:5173/         # la marca reviste el visor
 ```
+
+**Los nueve corren solos en cada push** (`.github/workflows/revision.yml`), junto
+con `lint`, `typecheck`, `build` y la medición del peso del arranque, que falla
+arriba de 400 kB. Playwright se instala ahí con `--no-save`: no está en las
+`devDependencies` a propósito, para no obligar a nadie a bajarlo, y por eso los
+arneses hacen `await import('playwright')` con try/catch.
 
 ---
 
@@ -137,7 +156,7 @@ src/
 ├── index.css                   Tailwind v4 + tema de marca (@theme) + reset móvil
 ├── data/tour.ts                El recorrido de ejemplo
 ├── lib/
-│   ├── types.ts                Tour, TourScene, Hotspot
+│   ├── types.ts                Tour, TourScene, Hotspot, Marca, Ficha
 │   ├── math.ts                 * ángulos y utilidades escalares. CERO dependencias
 │   ├── math3d.ts               * las proyecciones pantalla <-> escena (usa three)
 │   ├── tourEngine.ts           * El objeto mutable que conecta UI <-> cámara
@@ -147,6 +166,10 @@ src/
 │   ├── useHashRoute.ts         Rutas dentro del # (funcionan en GitHub Pages)
 │   ├── dispositivo.ts          * Qué se permite según la memoria del aparato
 │   ├── texturasVivas.ts        Puente que evita que la lista importe three.js
+│   ├── menosMovimiento.ts      prefers-reduced-motion leído UNA vez, no por cuadro
+│   ├── marca.ts                * Vestir el visor con la marca de otra inmobiliaria
+│   ├── contraste.ts            * Que una marca ajena no lo deje ilegible (WCAG)
+│   ├── rumbo.ts                * El norte de verdad: de dónde sale y con qué signo
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -158,7 +181,12 @@ src/
 │       ├── idb.ts              IndexedDB a pelo
 │       ├── tours.ts            CRUD, blobs y resolución a Tour de runtime
 │       ├── zip.ts              escritor y lector de ZIP sin dependencias
-│       ├── paquete.ts          el archivo .tour
+│       ├── paquete.ts          el archivo .tour (se baja con import(), no pesa al arrancar)
+│       ├── entregar.ts         * compartir el archivo y el tipo del error, aparte y estáticos
+│       ├── migrar.ts           * la frontera: lo que viene de un archivo se filtra campo por campo
+│       ├── normalizar.ts       lo que sale de IndexedDB, con su estampa de versión
+│       ├── useBlobUrl.ts       blobId -> blob: URL, con su limpieza
+│       ├── bytes.ts            leer un Blob sin arrayBuffer() (iOS 13)
 │       ├── quota.ts            espacio del navegador
 │       └── ids.ts              identificadores
 └── components/
@@ -167,6 +195,7 @@ src/
     │   ├── Escena360.tsx       Canvas + rig + esfera (lo comparten visor y editor)
     │   ├── CameraRig.tsx       * Traduce el input a rotación de cámara
     │   ├── PanoSphere.tsx      La esfera 360 y el fundido entre habitaciones
+    │   ├── Portada.tsx         * La ficha de la casa, ANTES del 3D y sin WebGL
     │   └── ViewerGuard.tsx     Red de seguridad de WebGL
     ├── ui/                     Joystick, hotspots, brújula, zoom, hojas…
     └── crear/                  ── las pantallas de creación ──
@@ -181,11 +210,24 @@ src/
         └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
-tools/pruebas/costura.html      Banco de pruebas de la costura (sección 11)
+tools/pruebas/costura.html      Banco de pruebas de la costura (sección 12)
+public/prueba.html              Diagnóstico de compatibilidad del teléfono
+
+  -- sin navegador, corren en milisegundos --
+tools/pruebas/damp.mjs          `damp` es idéntica bit a bit a la de three
+tools/pruebas/patrones.mjs      Formas de escribir algo que ya se demostraron malas
+tools/pruebas/contraste.mjs     La cuenta WCAG y qué paletas de marca entran
+tools/pruebas/rumbo.mjs         La brújula apunta al norte, con el signo correcto
+tools/pruebas/zipito.mjs        Escritor de ZIP independiente, para fabricar fixtures
+
+  -- con Playwright --
 tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
-public/prueba.html              Diagnóstico de compatibilidad del teléfono
+tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (90 aserciones)
+tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
+
+.github/workflows/revision.yml  Los corre todos en cada push
 ```
 
 Las piezas marcadas con `*` son las que importa entender. El resto es
@@ -281,13 +323,57 @@ Se entra por el botón de la barra de arriba (**Mis recorridos**) o directo a
 Mis recorridos → Nuevo recorrido → Agregar habitación
                                     ├─ Tomarla con la cámara  → captura guiada
                                     └─ Usar una foto que ya tengo
-                                  → nombrarla → colocar los puntos → Ver
+                                  → nombrarla → colocar los puntos
+                                  → Datos de la casa (precio, m², contacto)
                                   → Preparar archivo → compartir el .tour
 ```
 
 Si una foto salió mal, **Ajustes → Volver a tomarla** (o *Cambiar la foto*)
 reemplaza solo la imagen: el nombre de la habitación, sus puntos y su vista de
 entrada se quedan como estaban.
+
+### A dónde lleva tocar un recorrido de la lista
+
+**Al visor, no al editor**, y suena obvio pero no lo era: durante tres commits la
+tarjeta y el importador de `.tour` llevaban los dos a la pantalla de
+administración. O sea que quien recibía el archivo por WhatsApp caía entre los
+botones de "Borrar la habitación" y "Preparar archivo", y **nunca veía la
+portada** con el precio y el botón de llamar al agente — la pantalla que se
+construyó justo para él.
+
+El único recorrido que va al editor es el que todavía no tiene ninguna
+habitación: ahí no hay nada que ver. Y para que editar no cueste dos toques ni
+la descarga del motor 3D, cada fila de la lista tiene su propio lápiz al lado del
+bote de basura.
+
+### Los datos de la casa, y la portada
+
+Un recorrido puede traer una `ficha`: precio, superficie, recámaras, baños,
+dirección, descripción y el contacto del agente. Si la tiene, **el visor muestra
+una portada antes del 3D**, y eso vale por tres razones —la segunda es la que no
+es obvia:
+
+1. **Es la pantalla que decide.** Un link que abre directo a una foto 360 no dice
+   de qué casa se trata ni cuánto cuesta. El recorrido es para quien ya se
+   interesó; la portada es lo que crea el interés.
+2. **Monta sin WebGL.** El visor 3D necesita WebGL 2, que llegó a Safari en la
+   15, así que en un iPhone con iOS 13 o 14 lo único que se veía era el mensaje
+   de `ViewerGuard` explicando que no se puede. Con portada, ese mismo teléfono
+   ve la casa, el precio y el botón para llamar. Deja de ser una pared y pasa a
+   ser un anuncio.
+3. **Da algo que pintar mientras baja el motor 3D**, que son ~1.1 MB. Y quien la
+   muestra dispara la descarga en paralelo, así que leer el precio no cuesta
+   tiempo: cuando se toca "Ver el recorrido", el motor ya está.
+
+`precio` y `superficie` se guardan como **texto y no como número**, y es una
+decisión: en los listados reales de México aparece "Desde $1.9M", "Precio a
+consultar", y mezclados USD y MXN. Un número obligaría a meter una decisión de
+moneda y de locale dentro del visor, y perdería el "Desde", que es información y
+no adorno.
+
+El contacto va en la portada y **no** dentro del visor, también a propósito: en
+el recorrido el dedo está mirando alrededor, y un botón de llamar ahí se toca sin
+querer.
 
 ### Requisito que sorprende a todo el mundo: https
 
@@ -298,7 +384,7 @@ cámara simplemente nunca abre.
 
 Tres salidas, de mejor a peor:
 
-1. Publicar en GitHub Pages (sección 11) y abrir ese link en el celular. Es
+1. Publicar en GitHub Pages (sección 13) y abrir ese link en el celular. Es
    https de verdad y es como lo va a usar la gente.
 2. Abrirlo en `http://localhost` con el cable y el reenvío de puertos del
    navegador de escritorio (`chrome://inspect` → Port forwarding). `localhost`
@@ -417,7 +503,51 @@ manda por WhatsApp y se vuelve a importar en otro teléfono.
 
 El botón va en dos pasos a propósito (*Preparar* y luego *Compartir*): en iOS,
 compartir solo se permite mientras dure la activación que dejó el toque del
-usuario, y armar un ZIP de varios megabytes se la acaba.
+usuario, y armar un ZIP de varios megabytes se la acaba. Por lo mismo,
+`entregarArchivo` vive en `store/entregar.ts` y se importa **estático**: hasta la
+promesa de un `import()` gastaría esa activación.
+
+Y si a una habitación le falta su foto, el archivo **se arma igual** con las que
+sí están y la pantalla dice cuáles se quedaron fuera. Importa cuándo pasa eso:
+el `.tour` existe precisamente porque Safari borra el almacenamiento a los siete
+días, y ese borrado no es limpio ni ordenado. En el único escenario en que el
+respaldo de verdad importa, negarse en bloque por una habitación se llevaría
+también las nueve que sí estaban. El error duro se guarda para cuando no queda
+ninguna.
+
+### Qué hay dentro del `recorrido.json`
+
+```
+recorrido.json           formato, version, y el recorrido
+fotos/<escena>.jpg       la panorámica de cada habitación
+fotos/<escena>.min.jpg   su miniatura
+marca/logo.png           el logo de la inmobiliaria, si el recorrido trae
+```
+
+El manifiesto lleva `version`, y el número **importa en las dos direcciones**:
+
+- **La v2 agregó `marca`, `ficha` y `rumbo`**, los tres opcionales, así que un
+  archivo v1 se abre sin tocar nada.
+- Y un lector **viejo** frente a un archivo nuevo hace lo correcto: rechaza
+  `version > FORMAT_VERSION` con un "se hizo con una versión más nueva,
+  actualiza la página" en vez de adivinar o quedarse en negro.
+
+**Todo lo que viene de un archivo se filtra campo por campo** en
+`store/migrar.ts`, y no es paranoia de más. El `.tour` llega por WhatsApp de un
+tercero y se abre en el teléfono de un **comprador**, que no eligió confiar en
+nadie:
+
+- los colores de la marca acaban dentro de un `style.setProperty()`, así que un
+  string arbitrario ahí es una inyección de CSS;
+- la portada interpola los datos de contacto dentro de un `href`, y un archivo
+  preparado a mano metía `correo: "cliente@casa.mx?subject=…&bcc=espia@mal.mx"`
+  — el comprador toca "Correo" y su cliente de correo abre un mensaje con un BCC
+  que él no puso. Comprobado leyendo el `href` del DOM. Ahora cada dato de
+  contacto se acota a los caracteres que su esquema necesita, con lista **blanca**
+  y no negra, que siempre se queda corta;
+- y los campos numéricos también, que era el agujero que duró más porque no se
+  ve: un `"initialYaw": "90"` se guardaba como string, sobrevivía a las recargas
+  y en el rig `'90' + 0` no es 90 sino `'900'`.
 
 ### Pasarle el recorrido a alguien más
 
@@ -471,12 +601,14 @@ npm run panoramas:demo      # requiere Python 3 con Pillow
 
 ## 7. Vestirlo con tu marca
 
-Casi todo sale de `src/index.css`, en el bloque `@theme`:
+### La marca del proyecto: `src/index.css`
+
+Casi todo sale del bloque `@theme`:
 
 ```css
 @theme {
-  --color-brand-500: oklch(0.72 0.16 72);   /* acento: joystick, hotspots, activo */
-  --color-ink-900:   oklch(0.17 0.015 260); /* vidrio del HUD */
+  --color-brand-500: #e19100;   /* acento: joystick, hotspots, activo */
+  --color-ink-900:   #0c1016;   /* vidrio del HUD */
   --radius-hud:      1.25rem;
 }
 ```
@@ -485,7 +617,57 @@ Cambiar esos valores repinta el joystick, los hotspots, la barra de habitaciones
 y los botones de zoom. El "vidrio" del HUD es la utilidad `hud-glass`, definida
 en el mismo archivo.
 
-Para el logo: `TourViewer.tsx`, en la tarjeta de la barra superior.
+**Los valores van en hexadecimal, NO en `oklch()`.** `oklch()` es de Safari 15.4
+y `color-mix()` de la 16.2, y el piso de este proyecto es Safari 13: ahí un color
+que el navegador no entiende no es "un color feo", es una declaración inválida y
+el fondo simplemente no se pinta.
+
+### Una marca POR RECORRIDO, sin recompilar
+
+Un recorrido guardado puede traer su propia `marca` —colores, fondo del HUD,
+fondo de la app, tipografía de una lista blanca y logo— y el visor se viste con
+ella al abrirlo. Sin build por cliente.
+
+Funciona porque Tailwind v4 emite las utilidades **por referencia**, y eso está
+comprobado en el CSS ya compilado, no supuesto:
+
+```css
+.bg-brand-500 { background-color: var(--color-brand-500) }
+```
+
+El hexadecimal aparece solo en la declaración de `:root`, así que reasignar la
+propiedad retiñe los ~40 usos repartidos en 17 archivos de una sola vez.
+`aplicarMarca()` en `src/lib/marca.ts` hace eso, y limpia al salir — sin la
+limpieza, ir de un recorrido de marca ajena a otro sin marca dejaría los colores
+del anterior pegados.
+
+**La letra chica que sí existe:** las utilidades con ALFA queman el color.
+`bg-brand-500/10` compila a dos reglas, un `rgba()` de respaldo y un
+`color-mix()`. En Safari 16.2 y arriba gana el `color-mix` y sigue el token; en
+un iPhone más viejo se queda el color del proyecto pase lo que pase. Hay 16 en el
+repo, y las dos que ve un comprador —el aro del joystick y el aro de los
+marcadores— se cambiaron a utilidad plana con `opacity-*`.
+
+**Y una marca no puede dejar el visor ilegible.** `#111111` es un hex
+perfectamente válido, y como `ink50` deja la portada a **1.05 de contraste**
+—medido con los píxeles del navegador—. No hace falta mala fe: una inmobiliaria
+que llene "ink" pensando "tinta = oscuro" produce eso exacto. `revisarPaleta()`
+en `src/lib/contraste.ts` mide cada tinta contra cada superficie con el umbral
+que le toca (4.5:1 para letras por WCAG 1.4.3, 3:1 para formas grandes por
+1.4.11) y **descarta la paleta completa** si algo no llega — mezclar media marca
+con medio tema base da un resultado peor que cualquiera de los dos, y sin paleta
+el visor se ve como siempre, que es legible por construcción. Un tema claro
+coherente pasa entero.
+
+La tipografía es una **lista blanca de tres pilas** y no una URL: una URL
+arbitraria haría que el visor de un comprador pidiera un archivo a un tercero
+—privacidad que el cliente no eligió— y bloquearía el primer pintado.
+
+El logo se acepta en PNG, JPG o WebP, nunca SVG: un SVG subido por un cliente es
+un vector de XSS y sanearlo bien es su propio trabajo. Viaja dentro del `.tour`
+como `marca/logo.png`, y al importarlo el tipo del Blob se decide por la
+**extensión de la lista blanca** y nunca por el contenido, así que un
+`logo.png` con un SVG dentro se guarda como `image/png`.
 
 ---
 
@@ -605,11 +787,32 @@ de importarlo:
 
 | Pantalla                    | JavaScript descargado |
 | --------------------------- | --------------------- |
-| Mis recorridos              | **226 kB**            |
+| Mis recorridos              | **240 kB**            |
 | El visor                    | 1 109 kB              |
 
 Antes, abrir la lista de recorridos bajaba los 1 109 kB completos para pintar
 unos renglones de texto.
+
+Ese número lo mide el CI en cada push y falla arriba de **400 kB**: un tope
+holgado a propósito, porque la idea es avisar de un salto grande —un `import`
+estático mal puesto que arrastre three.js— y no de un kilobyte. Su historia dice
+más que el número:
+
+| | bytes |
+| --- | --- |
+| antes de la capa de marca | 236,309 |
+| con marca, ficha y portada | 242,474 |
+| con la validación de contraste y los cuatro arreglos del formato | 247,391 |
+| bajando `paquete.ts` a un `import()` dentro del gesto que lo usa | **240,065** |
+
+La última fila es la lección: `Inicio` y `EditorRecorrido` son pantallas de
+arranque y las dos importaban el archivo `.tour` de forma estática, así que el
+escritor de ZIP, la escalera de migración y la revisión de contraste entraban en
+el arranque de una lista. Bajarlas al gesto que las usa —elegir un archivo, tocar
+"Preparar archivo"— devolvió 7.3 kB, más de lo que habían costado las dos capas
+nuevas. Con una excepción que hay que respetar: `entregarArchivo` **no** puede
+ir detrás de un `import()`, porque en iOS un `await` gasta la activación del
+toque y la hoja de compartir no aparece. Vive aparte en `store/entregar.ts`.
 
 ---
 
@@ -750,13 +953,55 @@ contra la utilidad del mismo nombre, que vive en `utilities`.
 
 ## 12. Qué se verificó
 
+### Los nueve arneses, y por qué son arneses y no un framework
+
+No hay Jest ni Vitest, y es deliberado: lo que este proyecto necesita verificar
+—cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
+mide 44 px, si un color se lee sobre otro— no se prueba con `expect(x).toBe(y)`
+sobre una función pura. Se prueba **midiendo el navegador de verdad**. Así que
+cada arnés es un script que se corre solo, imprime lo que midió y sale con
+código 1 si algo no cuadra. `.github/workflows/revision.yml` los corre todos en
+cada push, junto con `lint`, `typecheck`, `build` y el peso del arranque.
+
+| Arnés | Qué afirma | Navegador |
+| --- | --- | --- |
+| `damp.mjs` | `damp` es idéntica **bit a bit** a la de three, en 401 casos | no |
+| `patrones.mjs` | formas de escribir algo que ya se demostraron malas no volvieron | no |
+| `contraste.mjs` | la cuenta WCAG contra razones **publicadas**, y qué paletas de marca entran | no |
+| `rumbo.mjs` | la brújula apunta al norte, con el signo correcto, en 2,860 combinaciones | no |
+| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, y todo lo tocable responde | sí |
+| `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
+| `tactil.mjs` | los 12 recorridos de pantalla, todo ≥ 44 px | sí |
+| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 90 aserciones | sí |
+| `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
+
+**Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
+encabezado de los arneses que las incumplieron:
+
+1. **Un arnés que reimplementa lo que prueba no prueba nada.** `damp.mjs` y
+   `contraste.mjs` transcribían las fórmulas a su propio archivo y probaban esa
+   copia; el código de producción no se leía nunca. Demostrado cambiando `damp`
+   por un lerp lineal y la luminancia por el promedio de canales: las dos
+   pruebas pasaron en verde. Ahora importan los `.ts` reales con
+   `--experimental-strip-types`. Si hay que copiar algo para probarlo, lo que hay
+   que arreglar es cómo importarlo.
+2. **Toda aserción tiene que poder fallar, y se comprueba rompiendo producción a
+   propósito** — no leyendo el código de la prueba. Varias parecían bien y no
+   podían fallar jamás: una comparaba dos llaves recién generadas por
+   `newId()`, otra imprimía el resultado y nunca lo afirmaba.
+3. **Antes de tocar el producto, sospechar de la prueba.** Un caso de teclado
+   medía 2 dibujos con el arreglo puesto, y era artefacto del arnés: meter un
+   `<input>` normal en el `<body>` cambia el layout, y eso dispara el
+   `ResizeObserver` que por contrato llama a `invalidar()`. "Arreglar" el
+   producto para callar ese 2 habría sido perseguir un fantasma.
+
 ### El visor
 
 Automatizado con Playwright sobre Chromium, viewport de celular (390×844, 2x):
 
 | Prueba                                                | Resultado                 |
 | ----------------------------------------------------- | ------------------------- |
-| Yaw inicial y foto no espejeada                       | N centrada, yaw 0° ✓      |
+| Yaw inicial y foto no espejeada                       | disco centrado, yaw 0° ✓  |
 | Joystick a la derecha → cámara a la derecha           | yaw creciente ✓           |
 | Velocidad a deflexión máxima                          | 91 °/s (objetivo 90) ✓    |
 | Curva cuadrática a media deflexión                    | 17.7 °/s (teórico 17.5) ✓ |
@@ -871,14 +1116,44 @@ cualquier hosting.
 
 - Reordenar habitaciones arrastrando en vez de con flechas.
 - Planta arquitectónica con la posición de cada escena.
-- Modo VR con WebXR (`@react-three/xr`).
 - Giroscopio también al **ver** el recorrido, para mirar moviendo el teléfono
   (la conversión de sensores ya está hecha en `src/lib/capture/orientation.ts`).
-- Corrección de nivel: enderezar el horizonte de una panorámica capturada a
-  pulso, ya que el ladeo de cada toma se conoce.
-- Alineación fina entre tomas por correlación, no solo por sensores, para
-  quitar el resto del error de paralaje.
-- Mosaicos multirresolución si vas a usar panorámicas mayores a 8K.
+  Lo delicado no es la conversión: es que los sensores disparan ~60 eventos por
+  segundo y nunca paran, así que llamar a `invalidar()` en cada uno rompería los
+  cero dibujos por segundo de la sección 11. La salida no es un throttle de
+  tiempo sino una zona muerta angular con `angleBetween()`, que ya está exportada.
+- Alineación fina entre tomas por correlación, no solo por sensores. Cuesta
+  menos de lo que parece: `desplazamientoHorizontal()` en `capture/frames.ts`
+  **ya es** correlación cruzada normalizada con afinado subpíxel por parábola, y
+  extenderla a 2-D en pirámide es cambiar un bucle. No hace falta FFT. Lo que
+  **no** quita es el paralaje: eso viene de que el teléfono gira alrededor del
+  hombro y no del punto nodal del lente, o sea una traslación del centro óptico,
+  y ninguna alineación 2-D la deshace. Lo que arregla es el error rotacional del
+  sensor, que a 66° de campo son ~50 px por cada 2° — perfectamente visibles como
+  fantasmas en las uniones.
+- Mosaicos multirresolución si vas a usar panorámicas mayores a 8K. Con una
+  advertencia medida: el teléfono **no los puede generar**. Safari en iOS topa un
+  canvas en 16,777,216 px de área (ver `lienzoUtilizable()` en `capture/frames.ts`)
+  y un equirectangular 8K son 33.5 Mpx, así que no cabe ni para partirlo. Es
+  trabajo de una capa de servidor, y si algún día se hace: caras de cubo en
+  tiles, no equirectangular en tiles.
+
+### Lo que se hizo desde que esto se escribió
+
+- ✅ **Corrección de nivel** — quedó fuera de esta lista porque su premisa estaba
+  corrida: `stitcher.ts:337` ya mete el cuaternión COMPLETO de cada toma, ladeo
+  incluido, en la proyección inversa, así que una panorámica capturada **ya sale
+  nivelada** contra la gravedad que reporta el acelerómetro. Lo que queda no es
+  "aplicar el ladeo conocido" sino dos cosas distintas: un error global de
+  referencia de gravedad de 1 a 3°, y las fotos **importadas**, donde no hay ni
+  un dato de sensor y el ladeo puede ser de 5 a 8°. Para las dos, el lugar
+  correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
+  reversible y gratis— y no en la costura, que obligaría a remuestrear y
+  recomprimir una 4096×2048.
+- ✅ **La brújula apunta al norte de verdad** (`src/lib/rumbo.ts`). Antes su "N"
+  señalaba el frente arbitrario de la foto: `offsetNorte` se calculaba en cada
+  captura y no lo leía nadie en todo `src/`.
+- ❌ **Modo VR con WebXR** — descartado, y la razón está abajo.
 
 ### Lo que se consideró y se dejó fuera, con su razón
 
@@ -899,6 +1174,42 @@ cualquier hosting.
   un solo archivo de escena son decenas o cientos de MB, contra el megabyte de
   una equirectangular. Es una decisión de producto con su propia canalización,
   y merece su propia rama.
+- **Modo VR con WebXR (`@react-three/xr`).** Cuatro razones, y la primera sola
+  ya alcanza.
+
+  **No hay público.** En 2026 Safari en iOS/iPadOS no implementa WebXR (solo
+  visionOS), y Chrome en Android no ofrece `immersive-vr` en teléfonos: el
+  soporte Cardboard se retiró y solo queda `immersive-ar` por ARCore, que no es
+  lo que necesita un tour 360. Quedan Quest Browser, Pico y Vision Pro. Para el
+  caso de uso de esta app —un link que se manda por WhatsApp a alguien que
+  quiere ver una casa— eso es prácticamente cero usuarios.
+
+  **El estéreo no da nada.** Con una foto MONOSCÓPICA los dos ojos ven la misma
+  esfera: a radio 500 y 64 mm interoculares la disparidad es ~1.3×10⁻⁴ rad, muy
+  por debajo del umbral perceptual. Se ve plano. Lo que sí se gana es
+  seguimiento de cabeza; sensación de profundidad de la habitación, ninguna.
+
+  **El peso, y una dependencia de red que hoy no existe.** El paquete y sus
+  dependencias rondan 700 kB sin comprimir, y `lazy()` protegería el
+  presupuesto de la sección 10 — pero `@pmndrs/xr` importa **estáticamente**
+  `GLTFLoader` y su `DefaultAssetBasePath` apunta a un CDN para los modelos de
+  los controles. Un sitio que hoy funciona completo desde `docs/` pasaría a
+  depender de una red externa.
+
+  **Y el problema de fondo, que es arquitectónico.** En XR no se puede dibujar a
+  pedido: el compositor pide 72/90 Hz y hay que entregarlos, o sea que se pierde
+  exactamente la propiedad de la sección 11. Y el casco es dueño de la cámara,
+  mientras que `CameraRig` dice de sí mismo que es "único dueño de la
+  orientación de la cámara". Un modo XR necesita un rig que gire **la esfera** en
+  vez de la cámara, y eso bifurca la pieza central del visor — que es justo lo
+  que `Escena360` existe para evitar.
+
+  **La alternativa, si algún cliente lo pide**, no es WebXR: es modo estéreo lado
+  a lado con giroscopio. Dos viewports de la escena que ya existe
+  (`gl.setScissor` + `setViewport`, dos `render()` por cuadro) con el giroscopio
+  dando la orientación. Cero dependencias nuevas, ~120 líneas, funciona en
+  cualquier teléfono y en un visor de cartón. Sigue siendo monoscópico — pero
+  eso también le pasa a WebXR.
 - **`gltf-transform`.** No hay ni un modelo glTF en el proyecto: es un visor de
   fotos 360, no de geometría.
 - **`IntersectionObserver` para diferir el canvas.** El visor ocupa la pantalla
