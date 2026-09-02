@@ -103,8 +103,8 @@ let bien = true
  * ni se entera. Antes esta prueba apretaba siempre en (195,400) y salía roja
  * una de cada tres veces, según dónde hubiera quedado mirando la cámara. Ahora
  * pregunta primero qué hay debajo. */
-const sobreLaFoto = async () => {
-  const r = await page.evaluate(() => {
+const sobreLaFoto = async (pg = page) => {
+  const r = await pg.evaluate(() => {
     const encima = new Set()
     for (const y of [400, 330, 470, 260]) {
       for (const x of [195, 120, 270]) {
@@ -210,15 +210,49 @@ const muestrearEmpuje = async (pg, ms = 1600, paso = 40) => {
   return valores
 }
 
-/** Gira con la flecha hasta que se vea un marcador de ENLACE (una puerta). */
+/**
+ * Gira hasta que se vea un marcador de ENLACE (una puerta), ARRASTRANDO la foto.
+ *
+ * Arrastrando y no con la flecha del teclado, y es una lección del CI: la
+ * primera versión giraba con `ArrowRight` y en la pestaña de reduced-motion de
+ * GitHub Actions dio catorce vueltas sin ver ninguna puerta —mientras en local
+ * la encontraba a la primera— y salió con "NO SE ENCONTRÓ NINGUNA PUERTA" sin
+ * decir nada más. El arrastre es la interacción que esta prueba ya usa desde su
+ * primera línea y que el CI ejercita en las dos pestañas, así que no depende de
+ * a quién le llegue el teclado.
+ *
+ * Y si aun así no aparece, la razón se imprime: cuántos marcadores hay, qué
+ * dicen, si están visibles y cuánto giró la cámara. Un "no se encontró" a secas
+ * es lo que dejó el fallo anterior sin diagnóstico.
+ */
+const PUERTAS = /Cocina|Recámara|Volver a sala/
 const buscarPuerta = async (pg) => {
-  let marcador = await sobreUnMarcador(pg, /Cocina|Recámara|Volver a sala/)
-  for (let vuelta = 0; !marcador && vuelta < 14; vuelta++) {
-    await pg.keyboard.down('ArrowRight')
-    await pg.waitForTimeout(400)
-    await pg.keyboard.up('ArrowRight')
-    await pg.waitForTimeout(700)
-    marcador = await sobreUnMarcador(pg, /Cocina|Recámara|Volver a sala/)
+  const antes = await angulos(pg)
+  let marcador = await sobreUnMarcador(pg, PUERTAS)
+  for (let vuelta = 0; !marcador && vuelta < 12; vuelta++) {
+    const desde = await sobreLaFoto(pg)
+    await pg.mouse.move(desde.x, desde.y)
+    await pg.mouse.down()
+    // Hacia la izquierda: la cámara gira a la derecha, unos 35° por pasada.
+    for (let i = 1; i <= 8; i++) {
+      await pg.mouse.move(desde.x - i * 22, desde.y, { steps: 2 })
+      await pg.waitForTimeout(20)
+    }
+    await pg.mouse.up()
+    await pg.waitForTimeout(900)
+    marcador = await sobreUnMarcador(pg, PUERTAS)
+  }
+  if (!marcador) {
+    const despues = await angulos(pg)
+    const inventario = await pg.evaluate(() =>
+      [...document.querySelectorAll('button[style*="translate3d"]')].map((b) => {
+        const r = b.getBoundingClientRect()
+        return `${b.textContent.trim()}@${Math.round(r.x)},${Math.round(r.y)} ${getComputedStyle(b).visibility}`
+      }),
+    )
+    console.log(
+      `     ↑ sin puerta: yaw ${antes?.yaw}→${despues?.yaw}; marcadores: ${inventario.length ? inventario.join(' · ') : 'ninguno con transform'}`,
+    )
   }
   return marcador
 }
@@ -612,6 +646,18 @@ const quieta = await browser.newContext({
 })
 const hoja = await quieta.newPage()
 await hoja.goto(BASE, { waitUntil: 'networkidle' })
+/* Los mismos dos avisos que la pestaña principal: que exista el canvas y que el
+   HUD haya colocado sus marcadores (nacen con visibility:hidden hasta el primer
+   pulso). Con solo dormir 3 s, en el CI la búsqueda de la puerta arrancaba antes
+   de que hubiera nada que encontrar. */
+await hoja.waitForSelector('canvas', { timeout: 40000 })
+await hoja
+  .waitForFunction(
+    () => [...document.querySelectorAll('button[style*="translate3d"]')].some((b) => getComputedStyle(b).visibility === 'visible'),
+    null,
+    { timeout: 15000 },
+  )
+  .catch(() => {})
 await hoja.waitForTimeout(3000)
 const animaciones = await hoja.evaluate(() => {
   const nombre = (sel) => {
