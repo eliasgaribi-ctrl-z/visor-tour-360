@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useEquirectTexture } from '../../lib/useEquirectTexture'
+import { useMenosMovimiento } from '../../lib/menosMovimiento'
 
 /**
  * Rotación inicial de la esfera.
@@ -37,14 +38,13 @@ export type PanoSphereProps = {
  * todavía no está lista, que es el problema que el fundido existe para evitar.
  * 120 ms es suficiente para cubrirlo y ya no se lee como una animación.
  *
- * Se consulta al vuelo y no una sola vez: el ajuste se puede cambiar con la
- * pestaña abierta, y `matchMedia` en un navegador sin soporte devuelve
- * `matches: false`, que es el comportamiento de hoy.
+ * La respuesta se consulta con `useMenosMovimiento`, que la lee una vez y la
+ * mantiene al día con un listener. La primera versión de esto llamaba a
+ * `matchMedia()` dentro del `useFrame`: sesenta veces por segundo, construyendo
+ * un `MediaQueryList` nuevo cada vez, en el único lugar del proyecto donde la
+ * regla es no trabajar por cuadro. Ver `src/lib/menosMovimiento.ts`.
  */
 const FUNDIDO_REDUCIDO = 0.12
-
-const menosMovimiento = () =>
-  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
 
 /**
  * La esfera que envuelve a la cámara.
@@ -70,6 +70,7 @@ export function PanoSphere({
 }: PanoSphereProps) {
   const { texture, loading, error } = useEquirectTexture(url)
   const invalidate = useThree((s) => s.invalidate)
+  const menosMovimiento = useMenosMovimiento()
 
   const [base, setBase] = useState<THREE.Texture | null>(null)
   const [incoming, setIncoming] = useState<THREE.Texture | null>(null)
@@ -99,7 +100,7 @@ export function PanoSphere({
 
   useFrame((_state, delta) => {
     if (!incoming || !overlayMaterial.current) return
-    const duracion = menosMovimiento() ? FUNDIDO_REDUCIDO : fadeSeconds
+    const duracion = menosMovimiento.current ? FUNDIDO_REDUCIDO : fadeSeconds
     fade.current = Math.min(1, fade.current + delta / Math.max(duracion, 0.001))
     overlayMaterial.current.opacity = fade.current
     if (fade.current >= 1) {
