@@ -12,7 +12,7 @@ import {
 } from '../../lib/store/tours'
 import { almacenamientoUtilizable } from '../../lib/store/tours'
 import { formatBytes, requestPersistence, storageInfo } from '../../lib/store/quota'
-import { importarTour, PaqueteError } from '../../lib/store/paquete'
+import { mensajeDePaquete } from '../../lib/store/entregar'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
@@ -134,12 +134,21 @@ export function Inicio({ ir }: InicioProps) {
     setImportando(true)
     setError(null)
     try {
+      /* El lector de `.tour` se baja AQUÍ y no arriba, y se midió: con el
+         `import` estático, `paquete.ts` metía el escritor de ZIP, la escalera de
+         migración y la revisión de contraste —7.6 kB— en el chunk de arranque de
+         "Mis recorridos", que es el número que este proyecto cuida. Y no hace
+         falta ahí: para llegar a esta línea la persona ya eligió un archivo en el
+         diálogo del sistema, así que el módulo viaja mientras ella lo busca.
+         `mensajeDePaquete` sí se importa arriba, y a propósito: si lo que falla
+         es la descarga del módulo, el `catch` tiene que poder dar un mensaje
+         igual, y no puede depender de lo que no llegó. */
+      const { importarTour } = await import('../../lib/store/paquete')
       const tour = await importarTour(file)
       await recargar()
       ir(destinoDe(tour.id, tour.scenes.length))
     } catch (e) {
-      const mensaje = e instanceof PaqueteError ? [e.message, e.consejo].filter(Boolean).join(' ') : 'No se pudo abrir el archivo.'
-      setError(mensaje)
+      setError(mensajeDePaquete(e, 'No se pudo abrir el archivo.'))
     } finally {
       setImportando(false)
       if (archivo.current) archivo.current.value = ''

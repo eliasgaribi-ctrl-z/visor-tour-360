@@ -6,9 +6,18 @@ import type { MarcaGuardada } from './types'
 import { limpiarEscena, limpiarFicha, limpiarMarca, migrarRecorrido } from './migrar'
 import { createZip, readZip, type ZipEntry } from './zip'
 import { leerBytes } from './bytes'
+import { PaqueteError } from './entregar'
 import { STORE_BLOBS, STORE_TOURS, idbPut, tx } from './idb'
 import { getImage, getTour } from './tours'
 import { newId } from './ids'
+
+/* La clase del error y la entrega del archivo viven en `./entregar`, no aquí,
+   para que las dos pantallas que las necesitan puedan importarlas SIN bajar este
+   módulo. Ver su encabezado: una razón es de peso (7.6 kB medidos) y la otra es
+   que un `await` antes de `navigator.share()` gasta la activación del toque en
+   iOS. Se reexportan desde aquí para que este siga siendo el módulo del que se
+   pide todo lo del `.tour`. */
+export { PaqueteError, entregarArchivo, mensajeDePaquete } from './entregar'
 
 /**
  * ============================================================================
@@ -71,15 +80,6 @@ type Manifiesto = {
     /* Desde la v2. Los dos opcionales, así que un archivo v1 se lee igual. */
     marca?: MarcaManifiesto
     ficha?: Ficha
-  }
-}
-
-export class PaqueteError extends Error {
-  consejo?: string
-  constructor(message: string, consejo?: string) {
-    super(message)
-    this.name = 'PaqueteError'
-    this.consejo = consejo
   }
 }
 
@@ -428,49 +428,4 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
   })
 
   return tour
-}
-
-/**
- * Entrega el archivo al usuario.
- *
- * IMPORTANTE: esta función no debe llevar ningún `await` antes de llamar a
- * `share()`. En iOS, compartir solo se permite mientras dure la "activación"
- * que dejó el toque del usuario, y armar un ZIP de varios megabytes se la
- * acaba. Por eso el archivo se prepara ANTES, en otro toque, y aquí solo se
- * entrega.
- *
- * Se intenta primero la hoja de compartir porque desde ahí el archivo se manda
- * a WhatsApp, a Archivos o por AirDrop en un toque, que es justo lo que la
- * gente quiere hacer. La descarga normal es el respaldo: funciona siempre, pero
- * el archivo aterriza en la carpeta de Descargas y hay que ir a buscarlo.
- */
-export function entregarArchivo(blob: Blob, nombre: string): 'compartido' | 'descargado' {
-  const file = new File([blob], nombre, { type: 'application/zip' })
-
-  if (navigator.canShare?.({ files: [file] })) {
-    void navigator.share({ files: [file], title: nombre }).catch((error: unknown) => {
-      // Cancelar la hoja de compartir NO es un fallo: descargar el archivo
-      // "por si acaso" le deja al usuario en Descargas algo que decidió no
-      // mandar.
-      if ((error as Error)?.name === 'AbortError') return
-      descargar(blob, nombre)
-    })
-    return 'compartido'
-  }
-
-  descargar(blob, nombre)
-  return 'descargado'
-}
-
-function descargar(blob: Blob, nombre: string) {
-  const url = URL.createObjectURL(blob)
-  const enlace = document.createElement('a')
-  enlace.href = url
-  enlace.download = nombre
-  document.body.append(enlace)
-  enlace.click()
-  enlace.remove()
-  // Un respiro antes de revocar: si se revoca en el mismo tick, algunos
-  // navegadores cancelan la descarga que acaban de empezar.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }

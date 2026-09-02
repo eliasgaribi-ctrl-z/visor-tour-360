@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
 import { deleteImage, getTour, saveTour } from '../../lib/store/tours'
-import { entregarArchivo, exportarTour, PaqueteError } from '../../lib/store/paquete'
+import { entregarArchivo, mensajeDePaquete } from '../../lib/store/entregar'
 import { limpiarFicha } from '../../lib/store/migrar'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { contextoSeguro } from '../../lib/capture/camera'
@@ -111,16 +111,20 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const prepararArchivo = async () => {
     setPaquete({ estado: 'armando' })
     try {
+      /* El escritor de `.tour` se baja AQUÍ y no arriba, y se midió: con el
+         `import` estático metía 7.6 kB en el chunk de arranque (el ZIP, la
+         escalera de migración, la revisión de contraste), y esta pantalla la
+         carga `App.tsx` sin `lazy()`. El botón ya dice "Armando el archivo…", así
+         que el módulo viaja dentro de una espera que ya existía.
+
+         OJO con lo que NO se movió: `entregarArchivo` se importa arriba, estática,
+         porque en iOS compartir solo se permite mientras dure la activación del
+         toque y un `await import()` la gasta. Ver el encabezado de entregar.ts. */
+      const { exportarTour } = await import('../../lib/store/paquete')
       const { blob, nombre, faltantes } = await exportarTour(tour.id)
       setPaquete({ estado: 'listo', blob, nombre, faltantes })
     } catch (e) {
-      setPaquete({
-        estado: 'error',
-        mensaje:
-          e instanceof PaqueteError
-            ? [e.message, e.consejo].filter(Boolean).join(' ')
-            : 'No se pudo armar el archivo.',
-      })
+      setPaquete({ estado: 'error', mensaje: mensajeDePaquete(e, 'No se pudo armar el archivo.') })
     }
   }
 

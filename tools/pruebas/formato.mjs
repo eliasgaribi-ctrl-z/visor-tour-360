@@ -753,6 +753,71 @@ revisar('uno viejo sin estampa se sigue leyendo', estampas.sinEstampaSeLee)
 revisar('y al reguardarlo queda estampado', estampas.trasReguardar === 2, String(estampas.trasReguardar))
 
 /* ==========================================================================
+ * "PREPARAR ARCHIVO" Y "COMPARTIR", POR LA INTERFAZ
+ *
+ * Los dos botones del editor, en el orden real de dos toques. Importa
+ * probarlos por aquí y no llamando funciones: el escritor de `.tour` se baja con
+ * `import()` para no pesar en el arranque, y `entregarArchivo` NO —en iOS un
+ * `await` gasta la activación del toque y la hoja de compartir no aparece—. Esa
+ * asimetría es exactamente el tipo de cosa que se rompe en un refactor y que solo
+ * se nota en un teléfono.
+ *
+ * En Chromium no hay `canShare` de archivos, así que cae en la descarga, que es
+ * el respaldo declarado. Se comprueba que la descarga ocurra y con qué nombre.
+ * ========================================================================== */
+console.log('\n=== Preparar el archivo y compartirlo ===')
+
+await page.goto(`${BASE}#/editar/${v2Guardado.id}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1500)
+
+await page.getByRole('button', { name: 'Preparar archivo' }).click()
+const compartir = page.getByRole('button', { name: /^Compartir / })
+/* `waitFor` y no `isVisible({timeout})`: `isVisible` responde en el instante, sin
+   esperar, así que el `timeout` no hace nada — la primera versión de esta línea
+   daba "NO" mientras el ZIP se estaba armando, y la descarga de abajo pasaba. Un
+   arnés que pregunta antes de tiempo reporta un fallo que no existe. */
+const armo = await compartir
+  .waitFor({ state: 'visible', timeout: 20000 })
+  .then(() => true)
+  .catch(() => false)
+revisar('el botón de armar deja uno de compartir', armo, armo ? await compartir.innerText() : '')
+
+const bajada = await Promise.all([
+  page.waitForEvent('download', { timeout: 15000 }).catch(() => null),
+  compartir.click(),
+]).then(([d]) => d)
+revisar(
+  'y compartir entrega el archivo',
+  bajada !== null && /\.tour$/.test(bajada.suggestedFilename()),
+  bajada ? bajada.suggestedFilename() : 'no hubo descarga',
+)
+
+/* ── Y el aviso de lo que se quedó fuera ─────────────────────────────────
+ * El archivo se arma aunque a una habitación le falte su foto, porque el
+ * respaldo importa justo cuando el navegador ya borró cosas. Pero hay que
+ * DECIRLO, o el agente cree que tiene una copia completa. */
+await page.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const tour = await tours.getTour(id)
+  await tours.deleteImage(tour.scenes[0].imageId)
+}, v2Guardado.id)
+
+await page.reload({ waitUntil: 'networkidle' })
+await page.waitForTimeout(1500)
+await page.getByRole('button', { name: 'Preparar archivo' }).click()
+await page.waitForTimeout(4000)
+const avisoFaltante = await page
+  .getByText(/No se pudo incluir|No se pudieron incluir/)
+  .first()
+  .innerText()
+  .catch(() => null)
+revisar(
+  'y dice qué habitación se quedó fuera',
+  avisoFaltante !== null && /Sala/.test(avisoFaltante),
+  String(avisoFaltante),
+)
+
+/* ==========================================================================
  * ARCHIVOS HOSTILES: cada uno tiene que dar un MENSAJE, no una pantalla negra
  * ========================================================================== */
 console.log('\n=== Un archivo roto da mensaje, no pantalla negra ===')
