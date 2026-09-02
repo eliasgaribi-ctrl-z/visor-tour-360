@@ -6,6 +6,7 @@ import type { Quaternion } from 'three'
 
 import {
   OrientationTracker,
+  SIN_LECTURA,
   anglesOf,
   needsOrientationPermission,
   requestOrientationPermission,
@@ -67,9 +68,16 @@ import type { TourEngine } from './tourEngine'
  *
  * Ni el permiso de iOS, ni la latencia real, ni si el norte de la brújula cae
  * donde debe. Nada de eso existe en un escritorio ni en CI. Por eso todo lo que
- * es una suposición está detrás de una guarda que degrada a lo de hoy —el visor
- * con joystick y arrastre, intacto— y por eso lo único que sí es comprobable
- * (la aritmética del desfase) vive en funciones puras con pruebas.
+ * es una suposición está detrás de una guarda que degrada a lo de hoy: el visor
+ * con joystick y arrastre, intacto.
+ *
+ * Lo que sí se prueba, y hace falta que se pruebe porque es donde estaban los
+ * fallos, es más que la aritmética: `useGyroLook.test.ts` monta el
+ * `OrientationTracker` de verdad contra un `window` de mentiras y le da cuerda
+ * cuadro por cuadro, con y sin eventos del sensor. Ahí se ve lo que ninguna
+ * lectura del código enseñaba —qué publica el bucle ANTES del primer evento, y
+ * qué queda en la lectura después de volver de segundo plano—, que es
+ * justamente lo que hacía girar la habitación media vuelta.
  */
 
 /** Lo que el botón del HUD necesita saber. */
@@ -111,6 +119,51 @@ export function miradaDelSensor(orientacion: Quaternion): { yaw: number; pitch: 
  * junto con el teléfono. Es el `alphaOffset` del plugin de Photo Sphere Viewer.
  */
 export const desfaseInicial = (yawCamara: number, yawSensor: number) => yawCamara - yawSensor
+
+/**
+ * El desfase con el que arranca una sesión del sensor, a partir del par
+ * (objetivo, cámara) que el CameraRig lleva por dentro.
+ *
+ * Recibe los dos números a propósito, aunque solo use uno: cuál de ellos es el
+ * ancla correcta es justo la decisión que no se ve al leer el rig, donde los
+ * dos están a mano y se parecen. El ancla es `camara.yaw` —lo que se está
+ * DIBUJANDO en este cuadro— y nunca `camara.targetYaw`, que es a dónde iba.
+ *
+ * Importa porque los dos se separan durante toda animación en vuelo, y la
+ * secuencia natural es exactamente esa: entras a una habitación tocando un
+ * enlace (o le das a Reencuadrar) y mientras el paneo corre —0.3 a 0.5 s con
+ * `smoothing = 12`— tocas el botón del giroscopio. Anclando contra el objetivo,
+ * la cámara se planta en el destino pendiente de un solo cuadro, sin suavizado,
+ * porque con el sensor al mando el rig se salta el `damp`: un teletransporte de
+ * hasta 180°. Anclando contra lo que se ve, el paneo se corta ahí donde iba,
+ * que es lo que la persona tiene delante de los ojos.
+ */
+export const anclarSesionGiro = (
+  camara: { yaw: number; targetYaw: number },
+  yawSensor: number,
+) => desfaseInicial(camara.yaw, yawSensor)
+
+/**
+ * ¿Se puede publicar lo que hay ahora mismo en `tracker.reading`?
+ *
+ * Dos condiciones, y la primera es la que evita el latigazo. Mientras
+ * `updatedAt` valga `SIN_LECTURA` no ha llegado NI UN evento de esta sesión, y
+ * lo que hay en la lectura son los ceros del objeto recién construido —o, al
+ * volver de segundo plano, la orientación de antes de guardarse el teléfono en
+ * el bolsillo—. Publicar cualquiera de las dos hace que el rig ancle el desfase
+ * contra una dirección inventada, y en cuanto entra la lectura buena la
+ * habitación gira de golpe la diferencia: medido, hasta 180° en un solo cuadro
+ * con el teléfono mirando al sur. No es hipotético ni raro: el primer
+ * requestAnimationFrame le gana al primer `deviceorientation` a cara o cruz en
+ * un iPhone, y SIEMPRE en la emulación de DevTools, donde el evento no sale
+ * hasta que alguien mueve el deslizador.
+ *
+ * La segunda es la barata: si la lectura no cambió no hay nada que hacer y no
+ * se pide cuadro, para que el canvas en `frameloop="demand"` pueda dormirse con
+ * el teléfono apoyado en la mesa.
+ */
+export const hayLecturaNueva = (updatedAt: number, yaPublicado: number) =>
+  updatedAt !== SIN_LECTURA && updatedAt !== yaPublicado
 
 /**
  * Nuevo desfase para que el sensor pase a apuntar a `destino`.
@@ -169,7 +222,9 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
   const cuadro = useRef(0)
   const avisoTimer = useRef(0)
   /** `updatedAt` de la última lectura que ya se publicó. */
-  const ultima = useRef(-1)
+  const ultima = useRef(SIN_LECTURA)
+  /** Hay un diálogo de permiso de iOS abierto ahora mismo. Ver `alternar`. */
+  const pidiendoPermiso = useRef(false)
   /**
    * El objeto que ve el CameraRig. Se crea uno NUEVO por cada encendido y
    * después solo se le mutan los campos: sesenta lecturas por segundo son
@@ -206,14 +261,19 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
   const arrancarSesion = useCallback(() => {
     if (cuadro.current !== 0) return seguidor.state
 
-    ultima.current = -1
+    ultima.current = SIN_LECTURA
     destino.current = { yaw: 0, pitch: 0 }
     const estado = seguidor.start()
 
     const bucle = () => {
       cuadro.current = requestAnimationFrame(bucle)
       const lectura = seguidor.reading
-      if (lectura.updatedAt === ultima.current) return
+
+      /* Hasta que no haya una lectura de verdad de ESTA sesión no se publica
+         nada: el visor se queda con joystick y arrastre, que es exactamente
+         como estaba un cuadro antes de tocar el botón. El porqué, con lo que
+         cuesta saltárselo, está en `hayLecturaNueva`. */
+      if (!hayLecturaNueva(lectura.updatedAt, ultima.current)) return
       ultima.current = lectura.updatedAt
 
       const punto = destino.current
@@ -222,10 +282,6 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
       punto.yaw = mirada.yaw
       punto.pitch = mirada.pitch
 
-      /* Solo a partir de la PRIMERA lectura de verdad se publica. Publicar el
-         objeto recién creado, con sus ceros, haría que el rig calculara el
-         desfase contra una dirección inventada y la vista pegara el salto que
-         todo este mecanismo existe para evitar. */
       engine.input.absoluto = punto
       engine.invalidar()
     }
@@ -310,33 +366,53 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
       return
     }
 
+    /* El botón sigue vivo mientras Safari enseña el diálogo del permiso, y un
+       botón que no responde se toca otra vez: es lo que hace cualquiera. Sin
+       esta guarda el segundo toque lanza un `requestPermission()` y un
+       `arrancarSesion()` de más. El bucle no se duplica —el segundo sale por
+       `cuadro.current !== 0`—, pero el aviso sí, y sale dos veces encimado. */
+    if (pidiendoPermiso.current) return
+    pidiendoPermiso.current = true
+
     void (async () => {
-      /* iOS 13+ solo abre el diálogo si la llamada sale de un gesto real. Este
-         `await` está DESPUÉS de haber entrado por un click, que es lo que
-         Safari mira; si esto se llamara desde un useEffect, el navegador
-         rechazaría sin enseñar nada y la persona no sabría por qué no pasa
-         nada. */
-      if (needsOrientationPermission()) {
-        const permiso = await requestOrientationPermission()
-        if (permiso === 'denied') {
-          /* Nada que deshacer: no se llegó a encender el sensor y el visor
-             sigue con joystick y arrastre, igual que antes de tocar el botón. */
-          avisar('Safari no dio permiso para los sensores. Se puede volver a permitir en Ajustes → Safari → Movimiento y orientación.')
+      try {
+        /* iOS 13+ solo abre el diálogo si la llamada sale de un gesto real.
+           Este `await` está DESPUÉS de haber entrado por un click, que es lo
+           que Safari mira; si esto se llamara desde un useEffect, el navegador
+           rechazaría sin enseñar nada y la persona no sabría por qué no pasa
+           nada. */
+        if (needsOrientationPermission()) {
+          const permiso = await requestOrientationPermission()
+          /* Nada que deshacer en ninguno de los dos cortes: no se llegó a
+             encender el sensor y el visor sigue con joystick y arrastre, igual
+             que antes de tocar el botón. */
+          if (permiso === 'denied') {
+            avisar('Safari no dio permiso para los sensores. Se puede volver a permitir en Ajustes → Safari → Movimiento y orientación.')
+            return
+          }
+          if (permiso === 'prompt') {
+            /* El diálogo se cerró sin decidir. Nada quedó bloqueado, así que
+               mandar a Ajustes sería mandar a arreglar algo que no está roto:
+               lo único que hace falta es volver a tocar. */
+            avisar('Safari no llegó a preguntar por los sensores. Toca otra vez y elige Permitir.')
+            return
+          }
+        }
+
+        const estado = arrancarSesion()
+        if (estado === 'no-soportado') {
+          setDisponible(false)
+          pararSesion()
+          avisar('Este aparato no reporta sensores de movimiento.')
           return
         }
-      }
 
-      const estado = arrancarSesion()
-      if (estado === 'no-soportado') {
-        setDisponible(false)
-        pararSesion()
-        avisar('Este aparato no reporta sensores de movimiento.')
-        return
+        activoRef.current = true
+        setActivo(true)
+        avisar('Mueve el teléfono para mirar alrededor. Arrastra con el dedo para volver al control manual.')
+      } finally {
+        pidiendoPermiso.current = false
       }
-
-      activoRef.current = true
-      setActivo(true)
-      avisar('Mueve el teléfono para mirar alrededor. Arrastra con el dedo para volver al control manual.')
     })()
   }, [apagar, arrancarSesion, pararSesion, avisar])
 

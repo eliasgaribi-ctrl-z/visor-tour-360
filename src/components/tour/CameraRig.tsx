@@ -5,7 +5,7 @@ import { useEffect, useRef } from 'react'
 import type { PerspectiveCamera } from 'three'
 import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
-import { desfaseHacia, desfaseInicial } from '../../lib/useGyroLook'
+import { anclarSesionGiro, desfaseHacia } from '../../lib/useGyroLook'
 import { menosMovimiento } from '../../lib/movimiento'
 
 export type CameraRigProps = {
@@ -171,13 +171,21 @@ export function CameraRig({
      * Un objeto distinto al de la vuelta pasada significa sesión nueva: el
      * sensor se acaba de encender y hay que anotar cuántos grados separan su
      * cero arbitrario de la dirección que la cámara ya tenía, o la vista daría
-     * un latigazo de hasta media vuelta al tocar el botón. */
+     * un latigazo de hasta media vuelta al tocar el botón.
+     *
+     * El ancla es `yaw.current` —lo que se está dibujando— y no el objetivo;
+     * el porqué, con la secuencia que lo rompe, está en `anclarSesionGiro`.
+     * Aquí se le pasan los dos para que la elección viva allá, en una función
+     * con prueba, y no en cuál de estos dos refs quedó escrito en esta línea. */
     const absoluto = input.absoluto
     if (absoluto === null) {
       sesionGiro.current = null
     } else if (sesionGiro.current !== absoluto) {
       sesionGiro.current = absoluto
-      desfaseGiro.current = desfaseInicial(targetYaw.current, absoluto.yaw)
+      desfaseGiro.current = anclarSesionGiro(
+        { yaw: yaw.current, targetYaw: targetYaw.current },
+        absoluto.yaw,
+      )
     }
 
     /* -------------------------------------------------- DESTINO PROGRAMADO

@@ -137,9 +137,27 @@ export type OrientationReading = {
   heading: number | null
   /** La lectura está referida al norte y no a un cero arbitrario. */
   absolute: boolean
-  /** Milisegundos del último evento recibido. */
+  /**
+   * Milisegundos del último evento recibido, o `SIN_LECTURA` si de esta sesión
+   * todavía no llegó ninguno. Quien lea `reading` en su propio bucle TIENE que
+   * mirar esto antes de creerse los ángulos: recién construido el objeto —y
+   * después de `stop()`— los campos traen ceros o la orientación de la sesión
+   * anterior, que no significan nada.
+   */
   updatedAt: number
 }
+
+/**
+ * El valor de `updatedAt` que significa "todavía no hay ninguna lectura".
+ *
+ * Es 0 y no −1 porque es el mismo cero con el que nace el objeto: así el
+ * arranque en frío y el regreso de segundo plano son exactamente el mismo caso
+ * y no hay dos centinelas que puedan desincronizarse. `performance.now()` no
+ * devuelve 0 en la práctica (el primer evento del sensor llega cientos de
+ * milisegundos después de cargar la página); si por un imposible lo hiciera, el
+ * único efecto sería saltarse esa lectura y usar la siguiente, 16 ms más tarde.
+ */
+export const SIN_LECTURA = 0
 
 type IOSPermission = {
   requestPermission?: () => Promise<'granted' | 'denied' | 'prompt'>
@@ -158,11 +176,19 @@ export function needsOrientationPermission(): boolean {
  * (el handler de un click): si se llama al cargar la página, iOS la rechaza
  * sin mostrar nada.
  */
-export async function requestOrientationPermission(): Promise<'granted' | 'denied' | 'unsupported'> {
+export async function requestOrientationPermission(): Promise<
+  'granted' | 'denied' | 'prompt' | 'unsupported'
+> {
   if (!needsOrientationPermission()) return 'unsupported'
   try {
     const result = await (DeviceOrientationEvent as unknown as IOSPermission).requestPermission!()
-    return result === 'granted' ? 'granted' : 'denied'
+    /* `'prompt'` se devuelve tal cual y NO se dobla a `'denied'`. Significa que
+       el diálogo se cerró sin decidir —un toque fuera, o el sistema que lo
+       retiró—, y no que la persona haya dicho que no: nada quedó bloqueado y
+       volver a tocar el botón vuelve a preguntar. Tratarlo como negado hacía
+       que la app mandara a Ajustes → Safari a arreglar algo que no está roto. */
+    if (result === 'granted' || result === 'prompt') return result
+    return 'denied'
   } catch {
     // Safari lanza si no se llamó desde un gesto de usuario.
     return 'denied'
@@ -371,6 +397,25 @@ export class OrientationTracker {
     this.hayRelativo = false
     this.norte = null
     this.muestrasNorte = []
+
+    /* La lectura se marca como caducada, y esto no es limpieza cosmética: es la
+       diferencia entre volver de segundo plano bien o con la habitación girada.
+       `stop()` se llama al ocultar la pestaña, y lo que queda en `reading` es la
+       orientación de ANTES de guardarse el teléfono en el bolsillo —medido en el
+       módulo real: tras `stop()`, `updatedAt` seguía valiendo 12345 y el yaw
+       160°—. Quien vuelva a arrancar y lea eso en su primer cuadro se lo cree,
+       ancla la vista contra una dirección de hace media hora, y a la primera
+       lectura de verdad la habitación pega exactamente el giro que dio el
+       teléfono mientras estaba oculto.
+
+       `heading` y `absolute` van en el mismo lote porque su fuente, `norte`, se
+       acaba de borrar dos líneas arriba: dejar `absolute: true` sin un norte
+       detrás sería afirmar que la lectura mira al norte real cuando ya no lo
+       sabe. */
+    this.reading.updatedAt = SIN_LECTURA
+    this.reading.heading = null
+    this.reading.absolute = false
+
     this.setState('inactivo')
   }
 
