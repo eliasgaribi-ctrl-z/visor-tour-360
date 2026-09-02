@@ -28,11 +28,24 @@ import type { Bytes } from '../store/zip'
  * giroscopio en ese mismo instante, o sea "cuántos grados hay que sumarle al
  * yaw para que 0 sea el norte".
  *
- * Y el centro de nuestras equirectangulares es exactamente yaw 0: el shader del
- * costurero mapea `x ∈ [-1,1]` a yaw de -180° a 180° (./stitcher.ts, FRAGMENT,
- * comentario del paso 1), así que la columna del medio es yaw 0, que es la
- * dirección de la primera toma. Por eso `PoseHeadingDegrees` es `offsetNorte`
- * tal cual, sin ninguna cuenta de por medio.
+ * Y el centro de nuestras equirectangulares es exactamente yaw 0 DE LA
+ * PANORÁMICA: el shader del costurero mapea `x ∈ [-1,1]` a yaw de -180° a 180°
+ * (./stitcher.ts, FRAGMENT, comentario del paso 1), así que la columna del
+ * medio es la dirección de la primera toma.
+ *
+ * Pero `offsetNorte` NO convierte el yaw de la panorámica: convierte el yaw
+ * CRUDO del giroscopio, que es otra cosa. El costurero pega cada toma con
+ * `Ry(baseYaw)·q`, y como `yaw(Ry(θ)·q) = yaw(q) − θ`, el yaw 0 de la
+ * panorámica corresponde al yaw crudo `baseYaw` —el que tenía el teléfono al
+ * empezar, o sea el cero arbitrario de `alpha` en iOS—. Hay que sumarlo:
+ *
+ *     rumbo del centro = baseYaw + offsetNorte
+ *
+ * Esa suma vive en `rumboDelCentro()`, aquí abajo, y no en quien llama, porque
+ * escribirla mal no rompe nada visible: sale un rumbo con dos decimales de
+ * falsa precisión que dice "al norte" apuntando a cualquier lado. Ya pasó una
+ * vez. Si algún día parece que la suma sobra, la prueba de `xmp.test.ts` que
+ * barre los ceros arbitrarios de `alpha` explica por qué no sobra.
  *
  * ── La trampa de la inserción ───────────────────────────────────────────────
  *
@@ -95,9 +108,10 @@ export type OpcionesGPano = {
   alto: number
   /**
    * Rumbo de brújula del CENTRO de la imagen, en grados desde el norte.
-   * Se le pasa `OrientationTracker.offsetNorte` tal cual; si vale `null`
-   * —teléfono sin magnetómetro, permiso negado, o la captura entera hecha con
-   * la pantalla en horizontal— el campo simplemente no se escribe.
+   * Se calcula con `rumboDelCentro(baseYaw, offsetNorte)` — NO es `offsetNorte`
+   * a secas, ver la cabecera de este archivo. Si vale `null` —teléfono sin
+   * magnetómetro, permiso negado, o la captura entera hecha con la pantalla en
+   * horizontal— el campo simplemente no se escribe, que es lo honesto.
    */
   norte?: number | null
   /** Cuántas fotos se cosieron. Va en `GPano:SourcePhotosCount`. */
@@ -155,6 +169,26 @@ export class XmpError extends Error {
  * un error de programación, no una condición del teléfono, y quien lo llama de
  * verdad —`conGPano`— lo atrapa y sigue sin metadatos.
  */
+/**
+ * El rumbo de brújula que le corresponde al CENTRO de la panorámica.
+ *
+ * Existe como función y no como una línea dentro de quien exporta por un motivo
+ * concreto: la suma se perdió una vez y ninguna de las 114 pruebas del proyecto
+ * se dio cuenta, porque un rumbo equivocado se ve exactamente igual que uno
+ * bueno. Aquí es una función pura de dos números y se puede barrer entera.
+ *
+ * @param baseYaw     Yaw CRUDO del giroscopio cuando se disparó la primera
+ *                    toma. Es el cero arbitrario de `alpha` en iOS.
+ * @param offsetNorte `OrientationTracker.offsetNorte`, o `null` si no hubo
+ *                    brújula. En ese caso devuelve `null` y el campo no se
+ *                    escribe: es mejor no decir nada que inventar un rumbo.
+ */
+export function rumboDelCentro(baseYaw: number, offsetNorte: number | null): number | null {
+  if (offsetNorte === null || !Number.isFinite(offsetNorte)) return null
+  if (!Number.isFinite(baseYaw)) return null
+  return baseYaw + offsetNorte
+}
+
 export function paqueteGPano(opciones: OpcionesGPano): string {
   const { ancho, alto } = opciones
   if (!esEnteroSano(ancho) || !esEnteroSano(alto)) {

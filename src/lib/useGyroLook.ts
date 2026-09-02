@@ -225,6 +225,16 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
   const ultima = useRef(SIN_LECTURA)
   /** Hay un diálogo de permiso de iOS abierto ahora mismo. Ver `alternar`. */
   const pidiendoPermiso = useRef(false)
+
+  /* ¿Sigue montado el visor?
+     El diálogo del permiso de iOS es modal, así que salir por debajo es difícil
+     —pero no imposible: basta con que algo navegue mientras está abierto—. Sin
+     esta bandera, el `await` de `alternar` sobrevive al desmontaje, la limpieza
+     ya corrió, y al resolverse el permiso se enganchan los dos escuchas del
+     sensor y arranca un rAF que ya nadie va a cancelar. Justo la pila que este
+     archivo dice ahorrarse. Es el mismo patrón de `Capturar.tsx`, que ya
+     comprueba si sigue vivo después de pedir la cámara. */
+  const montado = useRef(true)
   /**
    * El objeto que ve el CameraRig. Se crea uno NUEVO por cada encendido y
    * después solo se le mutan los campos: sesenta lecturas por segundo son
@@ -354,6 +364,7 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
      editor o en la pantalla de inicio, gastando pila por nada. */
   useEffect(() => {
     return () => {
+      montado.current = false
       window.clearTimeout(avisoTimer.current)
       activoRef.current = false
       pararSesion()
@@ -383,6 +394,11 @@ export function useGyroLook(engine: TourEngine): GiroscopioUI {
            nada. */
         if (needsOrientationPermission()) {
           const permiso = await requestOrientationPermission()
+          /* Se salieron del visor mientras Safari preguntaba. No hay nada que
+             deshacer —el sensor nunca se encendió— pero sí algo que NO hacer:
+             arrancarlo ahora dejaría los escuchas y el rAF vivos para siempre,
+             porque la limpieza del desmontaje ya pasó por aquí. */
+          if (!montado.current) return
           /* Nada que deshacer en ninguno de los dos cortes: no se llegó a
              encender el sensor y el visor sigue con joystick y arrastre, igual
              que antes de tocar el botón. */

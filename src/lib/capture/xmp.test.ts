@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { leerGPano } from './importar'
-import { conGPano, insertarXMP, paqueteGPano, puntoDeInsercion, XmpError } from './xmp'
+import { XmpError, conGPano, insertarXMP, paqueteGPano, puntoDeInsercion, rumboDelCentro } from './xmp'
 import type { Bytes } from '../store/zip'
 
 /**
@@ -302,5 +302,73 @@ describe('conGPano', () => {
 
     const jpeg = new Blob([JPEG], { type: 'image/jpeg' })
     expect(await conGPano(jpeg, { ancho: 0, alto: 0 })).toBe(jpeg)
+  })
+})
+
+/* ==========================================================================
+ *  EL RUMBO DEL CENTRO
+ * ==========================================================================
+ *
+ * Estas pruebas existen porque este cálculo ya se escribió mal una vez, se
+ * subió, y ninguna de las pruebas del proyecto lo vio: un rumbo equivocado se
+ * ve igualito que uno bueno, solo que apunta a otro lado.
+ *
+ * El modelo físico, escrito aquí a propósito y no importado del código que se
+ * está probando, para que la prueba no repita el mismo error que quiere cazar:
+ *
+ *   · `webkitCompassHeading` es el rumbo real H, en [0, 360).
+ *   · El `alpha` de iOS arranca en un cero ARBITRARIO. Llamémoslo k: el yaw
+ *     crudo del giroscopio vale `yawCrudo = H_actual - k` salvo el envoltorio.
+ *   · Por eso `offsetNorte = H - yawCrudo = k`, constante durante la captura.
+ *   · Y `baseYaw` es el yaw crudo de la PRIMERA toma: `H0 - k`.
+ *
+ * De donde `baseYaw + offsetNorte = H0`, que es justo el rumbo al que apuntaba
+ * la primera toma — y la primera toma es el centro de la panorámica.
+ */
+describe('rumboDelCentro', () => {
+  const CEROS_DE_ALPHA = [0, 37, 150, -95, 271]
+  const RUMBOS = [0, 45, 123.5, 200, 330]
+
+  it('recupera el rumbo de la primera toma sea cual sea el cero de alpha', () => {
+    for (const k of CEROS_DE_ALPHA) {
+      for (const h0 of RUMBOS) {
+        const baseYaw = h0 - k
+        const obtenido = rumboDelCentro(baseYaw, k)
+        expect(obtenido).not.toBeNull()
+        /* Se compara en el círculo: la función no normaliza a propósito, de eso
+           se encarga `grados()` al escribir el XMP. */
+        const error = Math.abs(((obtenido! - h0 + 540) % 360) - 180)
+        expect(error).toBeCloseTo(0, 9)
+      }
+    }
+  })
+
+  it('sin la suma el rumbo sale girado por el cero de alpha, que es cualquier cosa', () => {
+    /* El control negativo: si esta prueba no fallara con la versión vieja, no
+       estaría midiendo nada. Con k = 150 y la primera toma al norte, pasar
+       `offsetNorte` a secas escribe 150 en vez de 0. */
+    const k = 150
+    const h0 = 0
+    const viejo = k // lo que se escribía antes: offsetNorte tal cual
+    const error = Math.abs(((viejo - h0 + 540) % 360) - 180)
+    expect(error).toBeCloseTo(150, 9)
+    expect(rumboDelCentro(h0 - k, k)).toBeCloseTo(0, 9)
+  })
+
+  it('sin brujula no inventa un rumbo: devuelve null y el campo no se escribe', () => {
+    expect(rumboDelCentro(123.5, null)).toBeNull()
+    const xml = paqueteGPano({ ancho: 4096, alto: 2048, norte: rumboDelCentro(123.5, null) })
+    expect(xml).not.toContain('PoseHeadingDegrees')
+  })
+
+  it('un numero que no es numero tampoco se escribe', () => {
+    expect(rumboDelCentro(NaN, 30)).toBeNull()
+    expect(rumboDelCentro(30, NaN)).toBeNull()
+    expect(rumboDelCentro(30, Infinity)).toBeNull()
+  })
+
+  it('el rumbo si llega al XMP cuando existe', () => {
+    const xml = paqueteGPano({ ancho: 4096, alto: 2048, norte: rumboDelCentro(-26.5, 150) })
+    expect(xml).toContain('GPano:PoseHeadingDegrees="123.5"')
   })
 })

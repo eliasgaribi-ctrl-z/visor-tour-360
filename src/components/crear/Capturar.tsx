@@ -49,7 +49,7 @@ import {
   soltarLienzo,
 } from '../../lib/capture/frames'
 import { medirDeriva, type Deriva } from '../../lib/capture/anillo'
-import { conGPano } from '../../lib/capture/xmp'
+import { conGPano, rumboDelCentro } from '../../lib/capture/xmp'
 import { planDeCaptura, puntoMasCercano, type PuntoGuia } from '../../lib/capture/plan'
 import { mantenerPantallaEncendida } from '../../lib/capture/pantalla'
 import { PanoramaStitcher } from '../../lib/capture/stitcher'
@@ -931,13 +931,12 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
          no escribirlo: cuando no hay brújula el campo se omite y quien abra la
          foto sabe que no lo sabemos, mientras que un rumbo inventado con dos
          decimales se lee como un dato. `grados()` normaliza a [0, 360). */
-      const rumboDelCentro =
-        seguidor.offsetNorte === null ? null : baseYaw.current + seguidor.offsetNorte
+      const norte = rumboDelCentro(baseYaw.current, seguidor.offsetNorte)
 
       const foto = await conGPano(await st.exportar(0.86), {
         ancho: st.width,
         alto: st.height,
-        norte: rumboDelCentro,
+        norte,
         tomas: tomas.current.length,
         exposicionFijada: exposicionFijada.current,
       })
