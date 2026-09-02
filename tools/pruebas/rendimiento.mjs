@@ -326,6 +326,48 @@ if (!a) {
   await page.waitForTimeout(1800)
   const doble = await angulos()
 
+  /* ------------------------------------------------------------------------
+   * LAS TECLAS DE LA CÁMARA NO SE ROBAN LO QUE ALGUIEN ESCRIBE
+   *
+   * useKeyboardLook escucha en `window` y hace preventDefault() sobre las
+   * flechas y sobre a/s/w/d. Hoy el visor no monta ni un campo de texto, así
+   * que el problema es LATENTE: en cuanto llegue uno (un formulario de
+   * contacto, una nota, un buscador de habitaciones) escribir "casa" giraría
+   * la cámara y las letras no llegarían al campo.
+   *
+   * Como no hay campo que usar, la prueba mete uno de verdad en el DOM, le da
+   * el foco y dispara la tecla desde ahí. Comprueba las dos mitades: que el
+   * evento NO quede cancelado (la letra llega al campo) y que la cámara no se
+   * haya movido.
+   * ---------------------------------------------------------------------- */
+  const tecladoEnCampo = await page.evaluate(async () => {
+    const campo = document.createElement('input')
+    campo.type = 'text'
+    document.body.appendChild(campo)
+    campo.focus()
+
+    const evento = new KeyboardEvent('keydown', {
+      key: 'ArrowRight',
+      bubbles: true,
+      cancelable: true,
+    })
+    campo.dispatchEvent(evento)
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+
+    document.body.removeChild(campo)
+    return { cancelado: evento.defaultPrevented }
+  })
+  await page.waitForTimeout(600)
+  const trasEscribir = await angulos()
+
+  const respeta =
+    !tecladoEnCampo.cancelado && Math.abs(trasEscribir.yaw - doble.yaw) < 0.5
+  console.log(
+    `  ${'escribir en un campo'.padEnd(28)} ${(respeta ? 'no mueve la cámara' : 'SE ROBA LA TECLA').padEnd(10)} ` +
+      `cancelado ${tecladoEnCampo.cancelado} · yaw ${doble.yaw}\u2192${trasEscribir.yaw}`,
+  )
+  if (!respeta) bien = false
+
   const exacto = Math.abs(doble.fov - 75) < 1
   console.log(
     `  ${'reencuadrar x2 rápido'.padEnd(28)} ${(exacto ? 'fov 75 exacto' : 'SE PASÓ').padEnd(10)} ` +

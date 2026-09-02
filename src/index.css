@@ -59,6 +59,31 @@
        y el arrastre para mirar alrededor se siente roto. */
     touch-action: none;
   }
+
+  /* ── Que se vea dónde está el foco ────────────────────────────────────────
+     Antes no había ni un estilo de foco en toda la app: los botones solo
+     tenían `active:`, así que navegar con el teclado era literalmente
+     invisible —el foco avanzaba y nada en la pantalla lo decía. Los dos únicos
+     `focus:` del proyecto estaban en campos de texto.
+
+     Una sola regla en la base cubre botones, enlaces y cualquier cosa
+     enfocable, en vez de repetir una variante en veinte componentes. Los
+     campos de texto se quedan con su `focus:border-brand-500`, que ya tenían y
+     que se ve mejor en un campo que un aro por fuera: su `outline-none` gana
+     por orden de fuente y eso es lo que se quiere.
+
+     `:focus-visible` y no `:focus` a propósito: `:focus` pinta el aro también
+     al hacer clic con el mouse o tocar con el dedo, que es exactamente el
+     ruido visual por el que la gente termina escribiendo `outline: none` y
+     dejando la app sin foco otra vez.
+
+     En Safari anterior a la 15.4 `:focus-visible` no existe y el navegador
+     descarta la regla entera —solo esta, no la hoja— así que ahí se queda como
+     está hoy: sin aro. No es un retroceso, es lo mismo que ya había. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand-500);
+    outline-offset: 2px;
+  }
 }
 
 /* ---------------------------------------------------------------------------
