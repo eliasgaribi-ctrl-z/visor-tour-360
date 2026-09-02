@@ -340,31 +340,134 @@ if (!a) {
    * evento NO quede cancelado (la letra llega al campo) y que la cámara no se
    * haya movido.
    * ---------------------------------------------------------------------- */
+  /* ------------------------------------------------------------------------
+   * PELLIZCO CON TRES DEDOS  ·  regresión de un bug anterior a estos cambios
+   *
+   * `pinchDistance` se fijaba solo al pasar a haber exactamente dos punteros, y
+   * se limpiaba solo al bajar de dos. Con tres dedos apoyados eso deja un hueco:
+   *
+   *   A y B apoyados     ->  se guarda la distancia A-B
+   *   entra un tercero C ->  el tamaño ya no es 2, no se recalcula nada
+   *   se levanta A       ->  quedan B y C, tamaño 2 otra vez, pero la distancia
+   *                          guardada sigue siendo la de A-B
+   *
+   * El siguiente movimiento compara peras con manzanas y el FOV se va al tope en
+   * un solo evento. Tres dedos no es raro: sujetar el teléfono con una mano
+   * mientras se pellizca con la otra, o un roce de la palma.
+   *
+   * Se usa CDP y no PointerEvents sintéticos a propósito: los toques de CDP
+   * generan punteros REALES, con ids que el navegador conoce, así que
+   * `setPointerCapture` funciona. Con eventos inventados tiraría NotFoundError.
+   *
+   * OJO con la semántica de `Input.dispatchTouchEvent`, que no es simétrica y se
+   * verificó a mano instrumentando la página:
+   *   · en `touchStart` y `touchMove`, `touchPoints` es el conjunto ACTIVO
+   *     completo, y Chromium genera un evento por cada punto que cambió;
+   *   · en `touchEnd`, en cambio, `touchPoints` son los dedos QUE SE LEVANTAN.
+   * Mandar `touchEnd: [B, C]` creyendo que dejaba a B y C apoyados los soltaba a
+   * los dos, el `touchMove` siguiente se interpretaba como dedos nuevos, y la
+   * prueba pasaba en verde CON EL BUG PRESENTE. Una prueba vacua es peor que no
+   * tenerla, así que quede escrito.
+   * ---------------------------------------------------------------------- */
+  await page.getByRole('button', { name: 'Reencuadrar' }).click()
+  await page.waitForTimeout(1600)
+  const antesDeTresDedos = await angulos()
+
+  const dedo = (id, x, y) => ({ x, y, id })
+  const A = dedo(1, 150, 420)
+  const B = dedo(2, 240, 420) // A-B = 90 px
+  const C = dedo(3, 330, 560) // B-C = hypot(90, 140) = 166 px
+
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [A] })
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [A, B] })
+  await page.waitForTimeout(120)
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [A, B, C] })
+  await page.waitForTimeout(120)
+  // Se levanta A —solo A— y quedan B y C, a una distancia muy distinta de A-B.
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [A] })
+  await page.waitForTimeout(120)
+  // Y un movimiento mínimo del que queda.
+  await cdp.send('Input.dispatchTouchEvent', {
+    type: 'touchMove',
+    touchPoints: [B, dedo(3, 331, 560)],
+  })
+  await page.waitForTimeout(900)
+  const trasTresDedos = await angulos()
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [B, C] })
+
+  /* Un píxel de movimiento no puede mover el FOV más de un grado o dos. El bug
+     lo mandaba de 75 a 30 —el mínimo— de golpe. */
+  const salto = Math.abs(trasTresDedos.fov - antesDeTresDedos.fov)
+  const sinSalto = salto <= 3
+  console.log(
+    `  ${'pellizco con 3 dedos'.padEnd(28)} ${(sinSalto ? 'sin salto de FOV' : 'SALTÓ EL FOV').padEnd(10)} ` +
+      `fov ${antesDeTresDedos.fov}\u2192${trasTresDedos.fov} (salto ${salto}°, tope 3°)`,
+  )
+  if (!sinSalto) bien = false
+
+  /* Se espera a que la cámara se detenga del todo ANTES de medir: el contador
+     de dibujos solo dice algo si se parte de cero de verdad. */
+  await page.waitForTimeout(1200)
+  await page.evaluate(() => window.__RESET())
+
   const tecladoEnCampo = await page.evaluate(async () => {
     const campo = document.createElement('input')
     campo.type = 'text'
+    /* Fuera del flujo y de un píxel: un `<input>` normal metido en el body
+       cambia el layout, y ese cambio dispara el ResizeObserver de HotspotLayer,
+       que por contrato llama a `invalidar()`. Se medían 2 dibujos que eran de la
+       prueba, no del producto — y "arreglar" el producto para callar eso habría
+       sido perseguir un fantasma. */
+    campo.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0'
     document.body.appendChild(campo)
     campo.focus()
 
-    const evento = new KeyboardEvent('keydown', {
-      key: 'ArrowRight',
-      bubbles: true,
-      cancelable: true,
-    })
-    campo.dispatchEvent(evento)
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    const teclas = ['c', 'a', 's', 'a', ' ', 's', 'a', 'l', 'a', ' ', 'w', 'o', 'w']
+    let cancelados = 0
+    for (const key of teclas) {
+      const abajo = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      campo.dispatchEvent(abajo)
+      if (abajo.defaultPrevented) cancelados++
+      campo.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }))
+      await new Promise((r) => setTimeout(r, 12))
+    }
+
+    /* Y una tecla con modificador, que es el otro camino: el keydown sale por el
+       guard de modificadores, así que nada entra en `pressed`… y el keyup no
+       debería despertar a nadie tampoco. */
+    campo.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true }),
+    )
+    campo.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'w', ctrlKey: true, bubbles: true, cancelable: true }),
+    )
 
     document.body.removeChild(campo)
-    return { cancelado: evento.defaultPrevented }
+    return { cancelados, escrito: campo.value }
   })
-  await page.waitForTimeout(600)
-  const trasEscribir = await angulos()
 
+  // Pasado DESPIERTO_MS (250 ms) el pulso ya se durmió, si es que llegó a despertar.
+  await page.waitForTimeout(900)
+  const trasEscribir = await angulos()
+  const perfEscribir = await page.evaluate(() => ({ ...window.__PERF }))
+
+  /* Las tres mitades del asunto, y la tercera es la que faltaba:
+       1. las letras llegan al campo (ningún keydown cancelado),
+       2. la cámara no se movió,
+       3. y NO SE DIBUJÓ NI UN CUADRO.
+     La versión anterior de esta prueba solo miraba 1 y 2, y por eso dio verde
+     mientras el `keyup` seguía llamando a `invalidar()` en cada letra: medido,
+     escribir esto mismo daba 8 dibujos y 67 rAF. El pulso del HUD no se dormía
+     mientras alguien escribía. Un arnés que mira la mitad de un contrato da una
+     confianza falsa que dura años. */
   const respeta =
-    !tecladoEnCampo.cancelado && Math.abs(trasEscribir.yaw - doble.yaw) < 0.5
+    tecladoEnCampo.cancelados === 0 &&
+    Math.abs(trasEscribir.yaw - doble.yaw) < 0.5 &&
+    perfEscribir.draws === 0
   console.log(
-    `  ${'escribir en un campo'.padEnd(28)} ${(respeta ? 'no mueve la cámara' : 'SE ROBA LA TECLA').padEnd(10)} ` +
-      `cancelado ${tecladoEnCampo.cancelado} · yaw ${doble.yaw}\u2192${trasEscribir.yaw}`,
+    `  ${'escribir en un campo'.padEnd(28)} ${(respeta ? 'ni una tecla robada' : 'SE ROBA LA TECLA').padEnd(10)} ` +
+      `cancelados ${tecladoEnCampo.cancelados}/13 · yaw ${doble.yaw}\u2192${trasEscribir.yaw} · ` +
+      `${perfEscribir.draws} dibujos · ${perfEscribir.raf} rAF`,
   )
   if (!respeta) bien = false
 

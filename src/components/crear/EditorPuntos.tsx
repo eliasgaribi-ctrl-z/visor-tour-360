@@ -332,7 +332,7 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
               <Boton
                 onClick={() => {
                   engine.input.goto = { yaw: escena.initialYaw ?? 0, pitch: 0 }
-                  engine.input.dFov += BASE_FOV - engine.readout.fov
+                  engine.input.gotoFov = BASE_FOV
                   engine.invalidar()
                 }}
               >

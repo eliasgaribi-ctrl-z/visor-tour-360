@@ -109,10 +109,15 @@ export const CORTE_VISOR = -0.05
 /**
  * (yaw, pitch) de la escena → punto de la PANTALLA.
  *
- * Es la ida de `screenToYawPitch`, y la usan tanto los hotspots del visor como
- * los puntos guía de la captura. Vive aquí, en un solo lugar, porque es la
- * fórmula donde un signo al revés se nota como "el marcador aparece del lado
- * contrario" y hay que poder arreglarlo una vez, no dos.
+ * Es la ida de `screenToYawPitch`. Su único llamador es `PuntosEditables`, que
+ * proyecta un puñado de puntos por cuadro y puede permitirse que la orientación
+ * se rearme en cada llamada. Quien proyecta MUCHOS puntos por cuadro —los
+ * hotspots del visor y los puntos guía de la captura— usa `yawPitchToScreenQ`
+ * con la inversa calculada una vez fuera del bucle.
+ *
+ * La fórmula en sí ya no está aquí: está allá abajo, en un solo lugar, porque es
+ * donde un signo al revés se nota como "el marcador aparece del lado contrario" y
+ * hay que poder arreglarlo una vez, no tres —que es cuántas copias había.
  *
  * Devuelve null si la dirección queda DETRÁS de la cámara: sin ese corte, la
  * división de la perspectiva devuelve un punto reflejado que aparecería en
@@ -133,7 +138,6 @@ export const yawPitchToScreen = (
   return yawPitchToScreenQ(yawDeg, pitchDeg, _quat, camera.fov, width, height, _dir, CORTE_VISOR)
 }
 
-/** Umbral de "está detrás de la cámara" del visor. Ver `yawPitchToScreen`. */
 /**
  * (yaw, pitch) → pantalla, pero orientando la cámara con un CUATERNIÓN completo.
  *

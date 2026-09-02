@@ -48,11 +48,21 @@ export type Aparato = {
    * archivo, que es el único lugar del proyecto donde una decisión de
    * presupuesto no pasaba por aquí.
    *
-   * Hoy vale 5 en los dos aparatos, y el número está medido: 5 × 32 MB = 160 MB
-   * en un aparato normal y 5 × 8 MB = 40 MB en gama baja, contra los ~384 MB en
-   * los que Safari en iOS tumba la pestaña. Que sean iguales no es un descuido:
-   * es que el aparato modesto ya ahorra por el lado de la resolución, y bajarle
-   * además el caché solo le costaría recargas sin necesidad.
+   * Hoy vale 5 en los dos aparatos. Que sean iguales no es un descuido: el
+   * aparato modesto ya ahorra por el lado de la resolución, y bajarle además el
+   * caché solo le costaría recargas sin necesidad.
+   *
+   * ── Cuidado al leer los números, porque hay DOS ────────────────────────
+   *
+   * `memoria.mjs` reporta 160 MB con 5 en caché en un aparato normal (40 MB en
+   * gama baja), y esos son los que están en la tabla del README §10. Pero cuenta
+   * el NIVEL 0 de cada textura: 4096·2048·4 = 33 MB. Lo residente de verdad
+   * incluye los mipmaps —un tercio más, ~43 MB por habitación— así que con 5 son
+   * unos 213 MB, no 160. Es la cuenta que ya hace la cabecera de este archivo.
+   *
+   * Sigue cabiendo en los ~384 MB donde Safari en iOS tumba la pestaña, pero la
+   * reserva es un tercio menor de lo que sugieren los 160. Al subir este número
+   * hay que hacer la cuenta con 43, no con 33.
    */
   maximoEnCache: number
   /** Densidad de píxeles a la que se dibuja. */

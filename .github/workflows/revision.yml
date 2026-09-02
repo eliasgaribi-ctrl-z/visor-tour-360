@@ -64,6 +64,13 @@ jobs:
       - name: La copia de `damp` sigue siendo exacta
         run: node tools/pruebas/damp.mjs
 
+      # Formas de escribir algo que ya se demostraron equivocadas. Una prueba de
+      # navegador no las atrapa: solo mira la pantalla donde alguien se acordó de
+      # mirar, y este archivo existe porque el mismo cálculo de FOV mal hecho
+      # sobrevivió en un segundo llamador con la prueba del primero en verde.
+      - name: Patrones que no deben volver
+        run: node tools/pruebas/patrones.mjs
+
       # El presupuesto de descarga es una decisión medida del proyecto (README
       # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
       # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —

@@ -70,14 +70,31 @@ export function useKeyboardLook(engine: TourEngine) {
       apply()
     }
 
-    /* En `keyup` NO se comprueba nada: si el foco cambió a un campo mientras la
-       tecla estaba apretada, hay que soltarla igual o la cámara se queda
-       girando sola para siempre. Es el mismo motivo por el que existe `onBlur`
-       más abajo. */
+    /* En `keyup` NO se comprueba el foco, a propósito: si cambió a un campo
+       mientras la tecla estaba apretada, hay que soltarla igual o la cámara se
+       queda girando sola para siempre. Es el mismo motivo por el que existe
+       `onBlur` más abajo.
+    
+       Lo que SÍ se comprueba es que la tecla estuviera apretada. `delete`
+       devuelve false cuando no lo estaba, y ahí no hay nada que soltar: salir
+       antes de `apply()` evita tocar el timbre —y pisar `input.axis` a cero— sin
+       motivo. No es cosmético, es la regla de oro del proyecto:
+
+         · `Control+W` o `Meta+A`: el keydown sale por el guard de modificadores,
+           así que la tecla nunca entró en `pressed`… pero el keyup igual
+           despertaba canvas y HUD 250 ms. Medido: 1 dibujo y 17 rAF por una
+           tecla que ni es del visor.
+         · Peor, y es el caso para el que se escribió el guard de arriba:
+           escribiendo en un campo de texto, las letras sí llegaban al campo
+           (bien) pero el keyup de cada `a`, `s`, `w` seguía llamando a
+           `invalidar()`. Escribir "casa sala wow" daba 8 dibujos y 67 rAF: el
+           pulso del HUD no se dormía mientras alguien escribía.
+
+       O sea que el guard del keydown solo arreglaba la mitad del problema. */
     const onKeyUp = (event: KeyboardEvent) => {
       const key = normalize(event.key)
       if (!(key in KEYS)) return
-      pressed.delete(key)
+      if (!pressed.delete(key)) return
       apply()
     }
 

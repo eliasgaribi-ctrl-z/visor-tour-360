@@ -6,11 +6,26 @@
  * Ángulos y utilidades numéricas. Este archivo NO importa three.js, y eso no es
  * casualidad: es la razón de que exista separado de `math3d.ts`.
  *
- * `DEG` es `Math.PI / 180`. Vivía en el mismo módulo que las proyecciones, que
- * sí necesitan three — así que ocho módulos que solo querían esa constante (el
- * arrastre, el plan de captura, el costurero, que hace su propio WebGL a mano)
- * arrastraban el motor 3D entero a su grafo de imports. Vite llegó a bautizar el
- * chunk de three.js como "math" justamente por eso.
+ * `DEG` es `Math.PI / 180`, y vivía en el mismo módulo que las proyecciones, que
+ * sí necesitan three. Ocho módulos importaban de ahí solo escalares, y con eso
+ * metían three en su grafo de imports: por eso Vite llegó a bautizar el chunk del
+ * motor 3D como "math".
+ *
+ * ── Lo que este split ahorró de verdad, que es menos de lo que parece ──────
+ *
+ * De esos ocho, CUATRO ya importaban three por su cuenta y siguen igual:
+ * `Capturar.tsx`, `capture/stitcher.ts` (que construye un `THREE.WebGLRenderer`),
+ * `capture/orientation.ts` y `capture/importar.ts`. Los que de verdad quedaron
+ * libres son tres: `useDragLook.ts`, `capture/plan.ts` y `capture/frames.ts`.
+ *
+ * Y el peso de descarga NO bajó: el chunk de arranque pasó de 236,304 a 236,309
+ * bytes, o sea +5. Se mide, no se supone. Lo que se ganó es que el chunk de
+ * 725 kB dejara de llamarse "math" y que un módulo escalar nuevo ya no pueda
+ * arrastrar three sin querer — la trampa que creó el nombre engañoso.
+ *
+ * (Se dice aquí porque otros archivos remiten a este encabezado como la fuente
+ * de verdad. Una versión anterior ponía al costurero como ejemplo estrella de
+ * módulo liberado, y es justo uno de los cuatro que no lo fueron.)
  *
  * La regla, entonces: si algo de aquí llega a necesitar un `Vector3`, no va
  * aquí. Va en `math3d.ts`.

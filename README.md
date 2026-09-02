@@ -138,7 +138,8 @@ src/
 ├── data/tour.ts                El recorrido de ejemplo
 ├── lib/
 │   ├── types.ts                Tour, TourScene, Hotspot
-│   ├── math.ts                 * ángulos, y las proyecciones pantalla <-> escena
+│   ├── math.ts                 * ángulos y utilidades escalares. CERO dependencias
+│   ├── math3d.ts               * las proyecciones pantalla <-> escena (usa three)
 │   ├── tourEngine.ts           * El objeto mutable que conecta UI <-> cámara
 │   ├── useDragLook.ts          Arrastrar para mirar + pellizco para zoom
 │   ├── useKeyboardLook.ts      Flechas / WASD en escritorio
