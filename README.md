@@ -85,18 +85,19 @@ node --experimental-strip-types tools/pruebas/nivel.mjs       # la corrección d
 node tools/pruebas/patrones.mjs                               # patrones que no deben volver
 ```
 
-Los otros cinco levantan un navegador (`npm i -D playwright` primero, y
+Los otros seis levantan un navegador (`npm i -D playwright` primero, y
 `npm run dev` en otra terminal):
 
 ```bash
 node tools/pruebas/memoria.mjs http://localhost:5173/       # memoria de video (sección 10)
 node tools/pruebas/rendimiento.mjs http://localhost:5173/   # batería, respuesta y movimiento (sección 11)
 node tools/pruebas/tactil.mjs http://localhost:5173/        # tamaño de lo que se toca (sección 11)
+node tools/pruebas/reordenar.mjs http://localhost:5173/     # el orden se guarda al arrastrar
 node tools/pruebas/formato.mjs http://localhost:5173/       # el .tour abre lo viejo y vuelve entero
 node tools/pruebas/marca.mjs http://localhost:5173/         # la marca reviste el visor
 ```
 
-**Los diez corren solos en cada push** (`.github/workflows/revision.yml`), junto
+**Los once corren solos en cada push** (`.github/workflows/revision.yml`), junto
 con `lint`, `typecheck`, `build` y la medición del peso del arranque, que falla
 arriba de 400 kB. Playwright se instala ahí con `--no-save`: no está en las
 `devDependencies` a propósito, para no obligar a nadie a bajarlo, y por eso los
@@ -227,6 +228,7 @@ tools/pruebas/zipito.mjs        Escritor de ZIP independiente, para fabricar fix
 tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
+tools/pruebas/reordenar.mjs     Reordenar arrastrando guarda de verdad y revierte al cancelar
 tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (96 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
 
@@ -898,7 +900,7 @@ node tools/pruebas/rendimiento.mjs http://localhost:5173/
 
 Apple pide **44 px** de lado como mínimo para cualquier cosa que se toque
 (Android pide 48). Debajo de eso el pulgar falla y la gente toca dos veces, o
-toca lo de junto. `tools/pruebas/tactil.mjs` recorre las once pantallas en un
+toca lo de junto. `tools/pruebas/tactil.mjs` recorre las trece pantallas en un
 iPhone SE simulado —la más chica que sigue siendo común— y mide cada control.
 
 La primera pasada encontró seis que no llegaban, y varios eran de los que más se
@@ -981,7 +983,7 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Los diez arneses, y por qué son arneses y no un framework
+### Los once arneses, y por qué son arneses y no un framework
 
 No hay Jest ni Vitest, y es deliberado: lo que este proyecto necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
@@ -1000,7 +1002,8 @@ cada push, junto con `lint`, `typecheck`, `build` y el peso del arranque.
 | `nivel.mjs` | existe un nivel que endereza un ladeo conocido, y cada eje mueve lo que dice su etiqueta | no |
 | `rendimiento.mjs` | parado dibuja **0 cuadros/s**, y todo lo tocable responde | sí |
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
-| `tactil.mjs` | los 12 recorridos de pantalla, todo ≥ 44 px | sí |
+| `tactil.mjs` | los 13 recorridos de pantalla, todo ≥ 44 px | sí |
+| `reordenar.mjs` | arrastrar reordena y el orden sobrevive a recargar; un roce no levanta la fila; cancelar revierte | sí |
 | `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 96 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
 
@@ -1143,7 +1146,6 @@ cualquier hosting.
 
 ## 14. Siguientes pasos naturales
 
-- Reordenar habitaciones arrastrando en vez de con flechas.
 - Planta arquitectónica con la posición de cada escena.
 - Giroscopio también al **ver** el recorrido, para mirar moviendo el teléfono
   (la conversión de sensores ya está hecha en `src/lib/capture/orientation.ts`).
@@ -1179,6 +1181,16 @@ cualquier hosting.
   correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
   reversible y gratis— y no en la costura, que obligaría a remuestrear y
   recomprimir una 4096×2048.
+- ✅ **Reordenar arrastrando**, a mano y sin librería: `dnd-kit` son ~40 kB que
+  caerían en el chunk de arranque, y el proyecto ya tenía las primitivas
+  (Pointer Events, `setPointerCapture`, `touch-action: none`, `transform` escrito
+  al DOM, el umbral de 8 px) en el joystick y en los puntos. Un asa de 44 px por
+  habitación —lo ÚNICO con `touch-action: none`, porque la lista sí hace scroll—,
+  cero renders de React mientras el dedo se mueve y un solo guardado al soltar.
+  `pointercancel` (una llamada entrante en iOS) revierte en vez de guardar a
+  medias, y los botones ↑/↓ se conservan: son la única ruta con teclado.
+  `tools/pruebas/reordenar.mjs` lo mide, recargando la página para leer el orden
+  desde IndexedDB y no desde la pantalla.
 - ✅ **Corrección de nivel al ver** (`src/lib/nivel.ts`): en el editor de puntos,
   la hoja "Nivel" endereza el horizonte rotando la esfera —dos ejes, ±10°— con
   vista previa en vivo, y los puntos se recolocan para seguir sobre el mismo

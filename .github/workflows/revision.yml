@@ -177,6 +177,13 @@ jobs:
       - name: Todo se puede tocar con el pulgar
         run: node tools/pruebas/tactil.mjs http://localhost:5173/
 
+      # Reordenar arrastrando se hizo a mano, sin librería, y lo que un arrastre
+      # a mano rompe con facilidad es exactamente lo que se mide: que un toque
+      # no reordene, que el orden sobreviva a recargar, y que los botones ↑/↓
+      # —la única ruta con teclado— sigan funcionando.
+      - name: El orden se guarda al arrastrar
+        run: node tools/pruebas/reordenar.mjs http://localhost:5173/
+
       # La promesa que se hizo al subir FORMAT_VERSION a 2: los .tour de la
       # version 1 se siguen abriendo. El archivo de fixtures esta escrito a mano
       # con el manifiesto de la v1, no generado por el codigo de hoy.

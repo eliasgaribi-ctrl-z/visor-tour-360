@@ -1,6 +1,7 @@
 /* oxlint-disable react/set-state-in-effect -- Los efectos sincronizan con
    IndexedDB, que es un sistema externo. */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
@@ -43,6 +44,36 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
    */
   const [ficha, setFicha] = useState<Record<string, string> | null>(null)
   const [confirmarBorrado, setConfirmarBorrado] = useState<StoredScene | null>(null)
+
+  /* ── Reordenar arrastrando ──────────────────────────────────────────────────
+   *
+   * A mano y sin librería, por tres razones medidas: `dnd-kit` son ~40 kB que
+   * caerían justo en el chunk de arranque (esta pantalla la carga App.tsx sin
+   * lazy), `react-beautiful-dnd` está sin mantenimiento, y el proyecto ya tiene
+   * las primitivas escritas y probadas en Joystick y PuntosEditables: Pointer
+   * Events + setPointerCapture + touch-action: none + escribir `transform`
+   * directo al DOM, con el umbral de 8 px que distingue toque de arrastre.
+   *
+   * Todo el estado del gesto vive en refs y el movimiento se escribe al DOM:
+   * cero renders de React mientras el dedo se mueve. React solo se entera al
+   * soltar, con un único `guardar()`.
+   *
+   * Y los botones ↑/↓ SE CONSERVAN: son la única ruta con teclado y lector de
+   * pantalla. Un arrastre no es accesible por sí solo. */
+  const filas = useRef(new Map<string, HTMLDivElement>())
+  const arrastre = useRef<{
+    id: string
+    indice: number
+    y0: number
+    scrollY0: number
+    ultimoY: number
+    centros: number[]
+    alto: number
+    destino: number
+    activo: boolean
+    scroll: HTMLElement | null
+  } | null>(null)
+  const autoScroll = useRef(0)
   const [paquete, setPaquete] = useState<
     | { estado: 'armando' }
     | { estado: 'listo'; blob: Blob; nombre: string; faltantes: string[] }
@@ -83,12 +114,144 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     )
   }
 
-  const mover = (indice: number, direccion: -1 | 1) => {
-    const destino = indice + direccion
-    if (destino < 0 || destino >= tour.scenes.length) return
+  /** Saca la habitación de `desde` y la deja en `hasta`. Un solo guardado. */
+  const reordenar = (desde: number, hasta: number) => {
+    if (desde === hasta || hasta < 0 || hasta >= tour.scenes.length) return
     const scenes = [...tour.scenes]
-    ;[scenes[indice], scenes[destino]] = [scenes[destino], scenes[indice]]
+    const [movida] = scenes.splice(desde, 1)
+    scenes.splice(hasta, 0, movida)
     void guardar({ ...tour, scenes })
+  }
+
+  const mover = (indice: number, direccion: -1 | 1) => reordenar(indice, indice + direccion)
+
+  /** Deja todas las filas como estaban: sin transform ni realce. */
+  const limpiarFilas = () => {
+    for (const fila of filas.current.values()) {
+      fila.style.transform = ''
+      fila.style.transition = ''
+      fila.classList.remove('z-10', 'shadow-2xl', 'opacity-90')
+    }
+  }
+
+  const pararAutoScroll = () => {
+    if (autoScroll.current) cancelAnimationFrame(autoScroll.current)
+    autoScroll.current = 0
+  }
+
+  /**
+   * Recoloca las filas según dónde va el dedo. Se llama en cada movimiento y en
+   * cada paso del auto-scroll, así que lee el scroll actual y no el del inicio:
+   * lo que se ha desplazado la lista también cuenta como movimiento del dedo.
+   */
+  const acomodar = () => {
+    const a = arrastre.current
+    if (!a) return
+    const fila = filas.current.get(a.id)
+    if (!fila) return
+    const scrollAhora = a.scroll ? a.scroll.scrollTop : 0
+    const dy = a.ultimoY - a.y0 + (scrollAhora - a.scrollY0)
+    fila.style.transform = `translate3d(0, ${dy}px, 0)`
+
+    // ¿Sobre qué fila está el centro de la que se arrastra?
+    const centro = a.centros[a.indice] + dy
+    let destino = a.indice
+    let mejor = Infinity
+    a.centros.forEach((c, i) => {
+      const d = Math.abs(c - centro)
+      if (d < mejor) {
+        mejor = d
+        destino = i
+      }
+    })
+    a.destino = destino
+
+    // Las demás se hacen a un lado para abrir el hueco donde va a caer.
+    tour.scenes.forEach((scene, i) => {
+      if (scene.id === a.id) return
+      const otra = filas.current.get(scene.id)
+      if (!otra) return
+      let corrimiento = 0
+      if (a.indice < destino && i > a.indice && i <= destino) corrimiento = -a.alto
+      if (a.indice > destino && i >= destino && i < a.indice) corrimiento = a.alto
+      otra.style.transition = 'transform 150ms'
+      otra.style.transform = corrimiento ? `translate3d(0, ${corrimiento}px, 0)` : ''
+    })
+  }
+
+  const empezarArrastre = (event: ReactPointerEvent<HTMLButtonElement>, indice: number, id: string) => {
+    const fila = filas.current.get(id)
+    if (!fila) return
+    event.currentTarget.setPointerCapture(event.pointerId)
+    /* Las alturas se MIDEN, no se asumen: las tarjetas cambian de alto según
+       si la habitación tiene puntos o foto parcial. */
+    const centros = tour.scenes.map((scene) => {
+      const r = filas.current.get(scene.id)?.getBoundingClientRect()
+      return r ? r.top + r.height / 2 : 0
+    })
+    let scroll: HTMLElement | null = fila.parentElement
+    while (scroll && !/auto|scroll/.test(getComputedStyle(scroll).overflowY)) {
+      scroll = scroll.parentElement
+    }
+    arrastre.current = {
+      id,
+      indice,
+      y0: event.clientY,
+      scrollY0: scroll ? scroll.scrollTop : 0,
+      ultimoY: event.clientY,
+      centros,
+      alto: fila.getBoundingClientRect().height + 12, // + el gap-3 de la lista
+      destino: indice,
+      activo: false,
+      scroll,
+    }
+  }
+
+  const moverArrastre = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const a = arrastre.current
+    if (!a) return
+    a.ultimoY = event.clientY
+    // Umbral de 8 px: un toque sobre el asa no es un arrastre.
+    if (!a.activo && Math.abs(a.ultimoY - a.y0) <= 8) return
+    if (!a.activo) {
+      a.activo = true
+      filas.current.get(a.id)?.classList.add('z-10', 'shadow-2xl', 'opacity-90')
+    }
+    acomodar()
+
+    /* Auto-scroll a 60 px del borde de la lista, con un rAF que se cancela al
+       soltar. Sin esto no se puede llevar una habitación más allá de lo que
+       cabe en la pantalla. */
+    pararAutoScroll()
+    const caja = a.scroll?.getBoundingClientRect()
+    if (!caja || !a.scroll) return
+    const paso = a.ultimoY < caja.top + 60 ? -8 : a.ultimoY > caja.bottom - 60 ? 8 : 0
+    if (!paso) return
+    const rodar = () => {
+      const s = arrastre.current?.scroll
+      if (!s) return
+      s.scrollTop += paso
+      acomodar()
+      autoScroll.current = requestAnimationFrame(rodar)
+    }
+    autoScroll.current = requestAnimationFrame(rodar)
+  }
+
+  const soltarArrastre = () => {
+    const a = arrastre.current
+    pararAutoScroll()
+    arrastre.current = null
+    limpiarFilas()
+    if (a?.activo) reordenar(a.indice, a.destino)
+  }
+
+  /* `pointercancel` REVIERTE, no guarda: en iOS una llamada entrante cancela el
+     puntero a media operación, y guardar el orden a medias sería peor que no
+     haber movido nada. */
+  const cancelarArrastre = () => {
+    pararAutoScroll()
+    arrastre.current = null
+    limpiarFilas()
   }
 
   const borrarEscena = async (scene: StoredScene) => {
@@ -156,8 +319,37 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
         </Boton>
 
         {tour.scenes.map((scene, indice) => (
-          <Tarjeta key={scene.id}>
+          <div
+            key={scene.id}
+            ref={(nodo) => {
+              if (nodo) filas.current.set(scene.id, nodo)
+              else filas.current.delete(scene.id)
+            }}
+            data-fila={scene.id}
+            className="relative"
+          >
+          <Tarjeta>
             <div className="flex items-center gap-3">
+              {/* El asa: 44×44 y `touch-none` SOLO aquí, no en la tarjeta ni en
+                  la lista, porque esta pantalla sí hace scroll vertical y con
+                  `touch-action: none` en toda la fila la lista dejaría de poder
+                  desplazarse con tres habitaciones. */}
+              <button
+                type="button"
+                aria-label={`Arrastrar ${scene.name}`}
+                onPointerDown={(event) => empezarArrastre(event, indice, scene.id)}
+                onPointerMove={moverArrastre}
+                onPointerUp={soltarArrastre}
+                onPointerCancel={cancelarArrastre}
+                className="grid h-11 w-11 shrink-0 cursor-grab touch-none select-none place-items-center
+                           rounded-lg bg-white/10 text-ink-200 active:cursor-grabbing active:bg-white/20"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor" aria-hidden="true">
+                  <circle cx="9" cy="6" r="1.6" /><circle cx="15" cy="6" r="1.6" />
+                  <circle cx="9" cy="12" r="1.6" /><circle cx="15" cy="12" r="1.6" />
+                  <circle cx="9" cy="18" r="1.6" /><circle cx="15" cy="18" r="1.6" />
+                </svg>
+              </button>
               <Miniatura scene={scene} />
               <div className="min-w-0 flex-1">
                 <p className="truncate font-semibold">{scene.name}</p>
@@ -209,6 +401,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
               </Boton>
             </div>
           </Tarjeta>
+          </div>
         ))}
 
         {listo && (
