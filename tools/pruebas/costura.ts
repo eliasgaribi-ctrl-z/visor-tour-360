@@ -21,6 +21,7 @@
 import * as THREE from 'three'
 import { PanoramaStitcher } from '../../src/lib/capture/stitcher'
 import { planDeCaptura } from '../../src/lib/capture/plan'
+import { medirDeriva, type TomaMedible } from '../../src/lib/capture/anillo'
 import {
   desplazamientoHorizontal,
   estimarFovConGiro,
@@ -190,6 +191,12 @@ async function probarCalibracion(fuente: { data: ImageData; width: number; heigh
         height: GRIS.alto,
         deltaYaw: giro,
         deltaPitch: 0,
+        /* La cámara simulada mira al horizonte y no va ladeada. Sin estos dos
+           la función recibe `undefined`, la cuenta se llena de NaN y devuelve
+           un campo de visión que no es un número: la prueba pasaba sin medir
+           nada. */
+        pitch: 0,
+        roll: 0,
       })
 
       if (estimado === null) {
@@ -216,6 +223,165 @@ async function probarCalibracion(fuente: { data: ImageData; width: number; heigh
 
   const bien = aciertos >= intentos - 2
   log(`  <span class="${bien ? 'ok' : 'mal'}">${aciertos} de ${intentos} dentro de 3°</span>`)
+  return bien
+}
+
+/**
+ * ============================================================================
+ *  PRUEBA 3 · CERRAR EL ANILLO CUANDO EL GIROSCOPIO DERIVA
+ * ============================================================================
+ *
+ * Esta es la prueba que sustituye al teléfono que no tenemos.
+ *
+ * Se simula la vuelta del horizonte igual que en la prueba 1, pero con una
+ * mentira metida a mano: las FOTOS se toman hacia donde la cámara apunta de
+ * verdad, y las ORIENTACIONES que se guardan llevan una deriva que va creciendo
+ * hasta los 6° al cerrar la vuelta. Es exactamente lo que hace un giroscopio
+ * relativo en el minuto que dura una captura.
+ *
+ * Se comprueban tres cosas, y las tres tienen que salir bien:
+ *
+ *   1. que la deriva se mida dentro de un grado,
+ *   2. que sin deriva NO se toque nada (una corrección inventada sobre una
+ *      panorámica que ya estaba bien es el peor resultado posible),
+ *   3. que la panorámica cosida CON la corrección se parezca más a la original
+ *      que la cosida sin ella. Esto último es lo que de verdad importa: mide el
+ *      resultado, no el número intermedio.
+ */
+async function probarCierreDelAnillo(
+  fuente: { data: ImageData; width: number; height: number },
+  original: HTMLImageElement,
+) {
+  titulo('Cierre del anillo del giroscopio')
+  log('\nPRUEBA 3 · quitarle la deriva al giroscopio')
+
+  const ANCHO_TOMA = 240
+  const ALTO_TOMA = 426
+  const GRIS = { ancho: 96, alto: 72 }
+  const DERIVA = 6
+
+  const { hfov, vfov } = fovDe(ANCHO_TOMA, ALTO_TOMA)
+  const anillo = planDeCaptura({ hfov, vfov, alcance: 'vuelta' })
+  log(`  Vuelta de ${anillo.length} tomas, una cada ${(360 / anillo.length).toFixed(1)}°, con ${DERIVA}° de deriva repartidos`)
+
+  const verdaderas: THREE.Quaternion[] = []
+  const delSensor: THREE.Quaternion[] = []
+  const fotos: HTMLCanvasElement[] = []
+  const tomas: TomaMedible[] = []
+
+  anillo.forEach((punto, i) => {
+    const error = (DERIVA * i) / (anillo.length - 1)
+    const real = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(punto.pitch * DEG, -punto.yaw * DEG, 0, 'YXZ'),
+    )
+    const sensor = new THREE.Quaternion().setFromEuler(
+      new THREE.Euler(punto.pitch * DEG, -(punto.yaw + error) * DEG, 0, 'YXZ'),
+    )
+    const foto = simularToma(fuente, real, hfov, vfov, ANCHO_TOMA, ALTO_TOMA)
+    verdaderas.push(real)
+    delSensor.push(sensor)
+    fotos.push(foto)
+    tomas.push({ orientacion: sensor, grises: grisesReducidos(foto, GRIS.ancho, GRIS.alto) })
+  })
+
+  const comun = { ancho: GRIS.ancho, alto: GRIS.alto, hfov, vfov }
+  const medicion = medirDeriva({ tomas, ...comun })
+
+  const medida = medicion.deriva?.grados ?? null
+  const bienMedido = medida !== null && Math.abs(medida - DERIVA) < 1
+  log(
+    `  Deriva medida: <span class="${bienMedido ? 'ok' : 'mal'}">${medida === null ? 'ninguna' : `${medida.toFixed(2)}°`}</span>` +
+      ` (se inyectaron ${DERIVA}°, se aceptan ±1°) · ${medicion.medidos} de ${medicion.pares} parejas`,
+  )
+  log(`  Motivo: ${medicion.motivo}`)
+
+  let peorToma = 0
+  if (medicion.deriva) {
+    anillo.forEach((_, i) => {
+      const inyectado = (DERIVA * i) / (anillo.length - 1)
+      peorToma = Math.max(peorToma, Math.abs(medicion.deriva!.correcciones[i] - inyectado))
+    })
+    const bienRepartido = peorToma < 1
+    log(`  Peor toma: <span class="${bienRepartido ? 'ok' : 'mal'}">${peorToma.toFixed(2)}°</span> de diferencia entre lo corregido y lo inyectado`)
+  }
+
+  /* Sin deriva no se toca nada. Se reutilizan las mismas fotos con las
+     orientaciones buenas: si aquí saliera una corrección, estaría inventándose
+     un error que no existe. */
+  const sinDeriva = medirDeriva({
+    tomas: tomas.map((toma, i) => ({ orientacion: verdaderas[i], grises: toma.grises })),
+    ...comun,
+  })
+  const quietoCuandoDebe = sinDeriva.deriva === null
+  log(
+    `  Con el giroscopio sano: <span class="${quietoCuandoDebe ? 'ok' : 'mal'}">` +
+      `${quietoCuandoDebe ? 'no toca nada' : `¡corrige ${sinDeriva.deriva!.grados.toFixed(2)}° que nadie pidió!`}</span> · ${sinDeriva.motivo}`,
+  )
+
+  /* Y la prueba de verdad: coser la vuelta de las dos formas y ver cuál se
+     parece más al cuarto original. Se compara solo la franja del horizonte,
+     que es lo que el anillo cubre. */
+  const coser = (correcciones: number[] | null) => {
+    const st = new PanoramaStitcher({ width: 1024, preview: { width: 256, height: 128 } })
+    anillo.forEach((_, i) => {
+      const ajuste = correcciones ? correcciones[i] : 0
+      const puesta = new THREE.Quaternion()
+        .setFromAxisAngle(new THREE.Vector3(0, 1, 0), ajuste * DEG)
+        .multiply(delSensor[i])
+      st.agregar({ fuente: fotos[i], orientacion: puesta, hfov, vfov })
+    })
+    return st
+  }
+
+  const ANCHO = 512
+  const ALTO = 256
+  const franja = (imagen: ImageData, otra: ImageData) => {
+    // Solo entre −20° y +20° de pitch: fuera de ahí el anillo no cubre nada.
+    const desde = Math.round(((90 - 20) / 180) * ALTO)
+    const hasta = Math.round(((90 + 20) / 180) * ALTO)
+    let suma = 0
+    let n = 0
+    for (let fila = desde; fila < hasta; fila++) {
+      for (let columna = 0; columna < ANCHO; columna++) {
+        const i = (fila * ANCHO + columna) * 4
+        for (let c = 0; c < 3; c++) {
+          suma += Math.abs(imagen.data[i + c] - otra.data[i + c])
+          n++
+        }
+      }
+    }
+    return suma / n
+  }
+
+  const referencia = reescalar(original, ANCHO, ALTO)
+  const resultados: { nombre: string; diferencia: number; imagen: HTMLImageElement }[] = []
+
+  for (const [nombre, correcciones] of [
+    ['sin corregir', null],
+    ['con el anillo cerrado', medicion.deriva?.correcciones ?? null],
+  ] as const) {
+    const st = coser(correcciones)
+    const imagen = await cargarImagen(URL.createObjectURL(await st.exportar(0.95)))
+    resultados.push({ nombre, diferencia: franja(referencia, reescalar(imagen, ANCHO, ALTO)), imagen })
+    st.dispose()
+  }
+
+  const [antes, despues] = resultados
+  const mejora = antes.diferencia - despues.diferencia
+  const mejorTrasCorregir = mejora > 0
+  log(
+    `  Diferencia contra el cuarto original en la franja del horizonte: ` +
+      `${antes.diferencia.toFixed(2)} sin corregir → ` +
+      `<span class="${mejorTrasCorregir ? 'ok' : 'mal'}">${despues.diferencia.toFixed(2)}</span> corregido`,
+  )
+
+  for (const resultado of resultados) {
+    titulo(`Anillo con 6° de deriva · ${resultado.nombre}`)
+    imagenes.append(resultado.imagen)
+  }
+
+  const bien = bienMedido && peorToma < 1 && quietoCuandoDebe && mejorTrasCorregir
+  log(`  <span class="${bien ? 'ok' : 'mal'}">${bien ? 'el anillo cierra' : 'ALGO FALLA EN EL CIERRE DEL ANILLO'}</span>`)
   return bien
 }
 
@@ -296,8 +462,9 @@ async function correr() {
   imagenes.append(simularToma(fuente, quat, hfov, vfov, ANCHO_TOMA, ALTO_TOMA))
 
   const calibracionOk = await probarCalibracion(fuente)
+  const anilloOk = await probarCierreDelAnillo(fuente, original)
 
-  const todoBien = coberturaOk && geometriaOk && calibracionOk
+  const todoBien = coberturaOk && geometriaOk && calibracionOk && anilloOk
   log(`\n<span class="${todoBien ? 'ok' : 'mal'}">RESULTADO: ${todoBien ? 'TODO BIEN' : 'HAY ALGO MAL'}</span>`)
   ;(window as unknown as { PRUEBA_LISTA: boolean; PRUEBA_OK: boolean }).PRUEBA_LISTA = true
   ;(window as unknown as { PRUEBA_LISTA: boolean; PRUEBA_OK: boolean }).PRUEBA_OK = todoBien

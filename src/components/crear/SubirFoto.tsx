@@ -23,6 +23,7 @@ import {
   type GPano,
   type TipoDeFoto,
 } from '../../lib/capture/importar'
+import { conGPano } from '../../lib/capture/xmp'
 import { Aviso, Boton, Campo, Cargando, Pantalla, Tarjeta } from './ui'
 
 export type SubirFotoProps = {
@@ -139,7 +140,15 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
       coberturaDeg: cobertura,
       fovDeg: fov,
     })
-    const blob = await aJpeg(lienzo, 0.8)
+    /* La vista previa lleva los mismos metadatos que va a llevar la foto
+       guardada, y no es adorno: es lo que hace que "guardar imagen" desde la
+       vista previa entregue un archivo que otras apps abren como esfera, en vez
+       de un JPEG mudo que solo se parece al bueno. Cuesta releer un JPEG de
+       1024 px de ancho, unos 150 kB. */
+    const blob = await conGPano(await aJpeg(lienzo, 0.8), {
+      ancho: lienzo.width,
+      alto: lienzo.height,
+    })
     soltarLienzo(lienzo)
 
     if (mia !== generacion.current) return
@@ -169,7 +178,17 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
         coberturaDeg: cobertura,
         fovDeg: fov,
       })
-      const foto = await aJpeg(lienzo, 0.86)
+      /* Los metadatos van también en las fotos que se SUBEN, no solo en las
+         que arma el costurero: aquí la equirectangular la acabamos de fabricar
+         nosotros —el hueco que la foto no cubre se rellena de gris— así que el
+         archivo que sale es tan panorámica nuestra como la de la cámara. Del
+         rumbo no se dice nada: la foto vino de la galería y no hay giroscopio
+         que haya mirado al norte, y de con qué se tomó tampoco, porque no se
+         sabe. */
+      const foto = await conGPano(await aJpeg(lienzo, 0.86), {
+        ancho: lienzo.width,
+        alto: lienzo.height,
+      })
       const mini = await miniatura(lienzo)
       soltarLienzo(lienzo)
 
