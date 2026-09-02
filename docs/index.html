@@ -15,8 +15,38 @@
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>Recorrido virtual 360</title>
-    <script type="module" crossorigin src="./assets/index-B0Q2j1vB.js"></script>
-    <link rel="stylesheet" crossorigin href="./assets/index-DIRy-7-k.css">
+
+    <!-- ─────────────────────────────────────────────────────────────────────
+         QUE LA PRIMERA PANORÁMICA EMPIECE A BAJAR DESDE YA
+
+         Quien abre el link cae en el visor, y el visor abre en la sala. Pero
+         ese JPEG no se pide hasta que React montó, el trozo del visor llegó y
+         los 725 kB de three.js terminaron de analizarse. O sea que la foto
+         más pesada de la pantalla espera parada a que termine todo lo demás,
+         cuando la red podría estar trayéndola en paralelo desde el primer
+         milisegundo.
+
+         Esta línea es lo único que hace falta: el navegador la lee antes que
+         nada y arranca la descarga ahí mismo, así que para cuando el visor
+         pide la imagen ya está en la caché.
+
+         Lo que NO sirve aquí es un rel="modulepreload" de los trozos de
+         JavaScript. Safari no lo entendió hasta la 17, así que en un iPhone
+         con iOS 15 o 16 —que son justamente los teléfonos donde esto
+         importaría— no hace absolutamente nada. El preload de imagen sí
+         funciona ahí, y encima es el que más adelanta de los dos.
+
+         Se desperdicia en un caso: el de quien ya tiene un recorrido propio
+         guardado, porque entonces el visor abre ese y no la demo. Pero ese es
+         el que hizo el recorrido, no el cliente que recibió el link, y es un
+         JPEG de 300 kB en un teléfono que ya estuvo aquí antes.
+
+         La ruta va relativa a propósito: en GitHub Pages el sitio no cuelga de
+         la raíz del dominio (la misma razón que explica src/lib/assets.ts).
+    ────────────────────────────────────────────────────────────────────── -->
+    <link rel="preload" as="image" href="./panoramas/sala.jpg" fetchpriority="high" />
+    <script type="module" crossorigin src="./assets/index-CNSSm-wA.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-Dba7ou3B.css">
   </head>
   <body style="margin: 0; background: #0b0f19">
     <div id="root"></div>

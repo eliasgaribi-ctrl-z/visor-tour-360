@@ -1,0 +1,1 @@
+async function e(e){if(typeof e.arrayBuffer==`function`)return new Uint8Array(await e.arrayBuffer());let t=await new Promise((t,n)=>{let r=new FileReader;r.onload=()=>t(r.result),r.onerror=()=>{var e;return n((e=r.error)==null?Error(`No se pudo leer el archivo.`):e)},r.readAsArrayBuffer(e)});return new Uint8Array(t)}export{e as t};
