@@ -147,6 +147,12 @@ jobs:
       - name: Todo se puede tocar con el pulgar
         run: node tools/pruebas/tactil.mjs http://localhost:5173/
 
+      # La promesa que se hizo al subir FORMAT_VERSION a 2: los .tour de la
+      # version 1 se siguen abriendo. El archivo de fixtures esta escrito a mano
+      # con el manifiesto de la v1, no generado por el codigo de hoy.
+      - name: Los .tour viejos siguen abriendo
+        run: node tools/pruebas/formato.mjs http://localhost:5173/
+
       - name: El log del servidor, si algo falló
         if: failure()
         run: cat /tmp/dev.log

@@ -1,6 +1,9 @@
 import type { Hotspot } from '../types'
 import type { StoredScene, StoredTour } from './types'
 import { FORMAT_VERSION } from './types'
+import type { Ficha } from '../types'
+import type { MarcaGuardada } from './types'
+import { limpiarFicha, limpiarMarca, migrarRecorrido } from './migrar'
 import { createZip, readZip, type ZipEntry } from './zip'
 import { leerBytes } from './bytes'
 import { STORE_BLOBS, STORE_TOURS, idbPut, tx } from './idb'
@@ -54,6 +57,9 @@ type Manifiesto = {
     startSceneId: string
     createdAt: number
     scenes: EscenaManifiesto[]
+    /* Desde la v2. Los dos opcionales, así que un archivo v1 se lee igual. */
+    marca?: MarcaGuardada
+    ficha?: Ficha
   }
 }
 
@@ -148,6 +154,8 @@ export async function exportarTour(
       startSceneId: tour.startSceneId,
       createdAt: tour.createdAt,
       scenes: escenas,
+      marca: tour.marca,
+      ficha: tour.ficha,
     },
   }
 
@@ -201,6 +209,13 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
   if (!Array.isArray(manifiesto.recorrido?.scenes)) {
     throw new PaqueteError('El recorrido viene dañado: no trae habitaciones.')
   }
+
+  /* Un solo paso por la escalera de versiones, aquí y no repartido: de aquí en
+     adelante el resto de esta función solo ve la forma de la versión actual. */
+  manifiesto.recorrido = migrarRecorrido(
+    manifiesto.recorrido as unknown as Record<string, unknown>,
+    typeof manifiesto.version === 'number' ? manifiesto.version : 1,
+  ) as unknown as Manifiesto['recorrido']
 
   const porNombre = new Map(contenido.map((f) => [f.name, f.data]))
   const tourId = newId('tour')
@@ -257,9 +272,18 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     }
   }
 
+  /* El archivo viene de fuera y pudo editarse a mano, así que la marca y la
+     ficha se filtran campo por campo. No es paranoia de más: los colores de la
+     marca acaban dentro de un `style.setProperty()`, y un string arbitrario ahí
+     es una inyección de CSS. Ver `limpiarMarca` en migrar.ts. */
+  const marca = limpiarMarca(manifiesto.recorrido.marca)
+  const ficha = limpiarFicha(manifiesto.recorrido.ficha)
+
   const ahora = Date.now()
   const tour: StoredTour = {
     id: tourId,
+    marca,
+    ficha,
     title: manifiesto.recorrido.title || 'Recorrido importado',
     subtitle: manifiesto.recorrido.subtitle,
     startSceneId: escenas.some((s) => s.id === manifiesto.recorrido.startSceneId)

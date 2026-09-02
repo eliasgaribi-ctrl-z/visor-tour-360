@@ -43,9 +43,86 @@ export type TourScene = {
   hotspots: Hotspot[]
 }
 
+/**
+ * ============================================================================
+ *  LA MARCA DE QUIEN ENSEÑA LA CASA
+ * ============================================================================
+ *
+ * Los colores del visor son tokens de Tailwind v4 declarados en `src/index.css`,
+ * y —comprobado en el CSS ya compilado— las utilidades los consumen por
+ * referencia: `.bg-brand-500` sale como `background-color:var(--color-brand-500)`.
+ * El hex solo aparece en la declaración de `:root`.
+ *
+ * Eso hace que vestir el visor con la identidad de otra inmobiliaria NO necesite
+ * recompilar nada: basta reasignar las propiedades. Es lo que hace
+ * `src/lib/marca.ts`. Las custom properties existen desde Safari 9.1, muy por
+ * debajo del piso del proyecto.
+ *
+ * Todo es opcional a propósito: sin marca, el visor se ve exactamente como hoy.
+ */
+export type Marca = {
+  /** Para el encabezado y el nombre del archivo. */
+  nombre?: string
+  /**
+   * Hexadecimal, NUNCA `oklch()` ni `color-mix()`: los dos son de Safari 15.4 y
+   * 16.2, y un color que el navegador no entiende no es un color feo — es una
+   * declaración inválida, y el fondo simplemente no se pinta.
+   */
+  colores?: {
+    brand300?: string
+    brand400?: string
+    brand500?: string
+    brand600?: string
+    ink50?: string
+    ink200?: string
+    ink700?: string
+    ink900?: string
+  }
+  /** El vidrio del HUD. Una inmobiliaria puede quererlo claro. */
+  hudFondo?: string
+  /** Fondo de la app detrás del canvas. */
+  fondoApp?: string
+  /** Una de las pilas de `TIPOGRAFIAS`, no una URL: ver marca.ts. */
+  tipografia?: 'sistema' | 'serif' | 'geometrica'
+  /** URL del logo ya resuelta (en `StoredTour` es `logoId`, una llave de Blob). */
+  logo?: string
+}
+
+/**
+ * ============================================================================
+ *  LOS DATOS DE LA CASA
+ * ============================================================================
+ *
+ * Lo que se le muestra a un comprador ANTES de entrar al recorrido. Es la
+ * pantalla que decide si entra o cierra la pestaña.
+ *
+ * `precio` es **string y no número**, y es una decisión, no pereza: en los
+ * listados reales de México aparece "Desde $1.9M", "Precio a consultar", y
+ * mezclados USD y MXN. Un número obligaría a meter una decisión de moneda y de
+ * locale dentro del visor, y perdería el "Desde" — que es información, no
+ * adorno. Lo mismo con `superficie`: la gente escribe "120 m² de terreno".
+ */
+export type Ficha = {
+  precio?: string
+  superficie?: string
+  recamaras?: number
+  banos?: number
+  direccion?: string
+  descripcion?: string
+  agente?: {
+    nombre?: string
+    telefono?: string
+    /** Solo dígitos con lada país, p. ej. "5213312345678". */
+    whatsapp?: string
+    correo?: string
+  }
+}
+
 export type Tour = {
   title: string
   subtitle?: string
   startSceneId: string
   scenes: TourScene[]
+  marca?: Marca
+  ficha?: Ficha
 }

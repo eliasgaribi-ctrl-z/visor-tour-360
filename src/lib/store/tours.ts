@@ -1,5 +1,6 @@
 import type { Tour, TourScene } from '../types'
 import type { StoredScene, StoredTour, TourSummary } from './types'
+import { normalizarTour } from './migrar'
 import {
   STORE_BLOBS,
   STORE_TOURS,
@@ -87,9 +88,19 @@ export async function listTours(): Promise<TourSummary[]> {
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+/**
+ * Un recorrido guardado, con la forma que los componentes esperan.
+ *
+ * Pasa por `normalizarTour` a propósito, y es el ÚNICO lugar donde hace falta:
+ * los registros de IndexedDB los escribió una versión anterior de esta misma app
+ * y nadie los re-valida nunca. Sin esto, un `StoredTour` viejo llega con los
+ * campos nuevos ausentes directo a un render, y el fallo aparece lejos de la
+ * causa. `normalizarTour` devuelve el mismo objeto cuando ya está bien, que es
+ * el caso normal, así que no cuesta nada.
+ */
 export async function getTour(id: string): Promise<StoredTour | null> {
   const tour = await tx(STORE_TOURS, 'readonly', (t) => idbGet<StoredTour>(t, STORE_TOURS, id))
-  return tour ?? null
+  return tour ? normalizarTour(tour) : null
 }
 
 export async function saveTour(tour: StoredTour): Promise<StoredTour> {
@@ -157,11 +168,22 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
     ? stored.startSceneId
     : (scenes[0]?.id ?? '')
 
+  /* La marca viaja casi igual; lo único que cambia es el logo, que en la base es
+     una llave de Blob y el visor necesita como URL. Mismo puente que las fotos. */
+  let marca: Tour['marca']
+  if (stored.marca) {
+    const { logoId, ...resto } = stored.marca
+    const logo = logoId ? ((await blobUrl(logoId)) ?? undefined) : undefined
+    marca = logo ? { ...resto, logo } : resto
+  }
+
   return {
     title: stored.title,
     subtitle: stored.subtitle,
     startSceneId,
     scenes,
+    marca,
+    ficha: stored.ficha,
   }
 }
 

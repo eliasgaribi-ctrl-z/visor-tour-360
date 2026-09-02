@@ -1,4 +1,4 @@
-import type { Hotspot } from '../types'
+import type { Ficha, Hotspot, Marca } from '../types'
 
 /**
  * ============================================================================
@@ -43,12 +43,23 @@ export type StoredScene = {
   createdAt: number
 }
 
+/**
+ * La marca como se guarda: igual que `Marca`, pero el logo es una LLAVE de Blob
+ * y no una URL. Mismo patrón que `imageId` en las escenas, y por la misma razón:
+ * las URLs `blob:` mueren al recargar la página.
+ */
+export type MarcaGuardada = Omit<Marca, 'logo'> & { logoId?: string }
+
 export type StoredTour = {
   id: string
   title: string
   subtitle?: string
   startSceneId: string
   scenes: StoredScene[]
+  /** Cómo se viste el visor. Ver `src/lib/marca.ts`. */
+  marca?: MarcaGuardada
+  /** Los datos de la casa que se muestran en la portada. */
+  ficha?: Ficha
   createdAt: number
   updatedAt: number
 }
@@ -64,4 +75,15 @@ export type TourSummary = {
   coverId?: string
 }
 
-export const FORMAT_VERSION = 1
+/**
+ * Versión del formato `.tour`.
+ *
+ *   1 → el original.
+ *   2 → agrega `marca` y `ficha` al recorrido. Los dos OPCIONALES, así que un
+ *       archivo v1 se lee sin tocar nada (ver `src/lib/store/migrar.ts`).
+ *
+ * `importarTour` rechaza `version > FORMAT_VERSION` con un mensaje que dice
+ * "actualiza la página", y eso es lo correcto: un lector viejo frente a un
+ * archivo nuevo tiene que avisar, no adivinar ni quedarse en negro.
+ */
+export const FORMAT_VERSION = 2
