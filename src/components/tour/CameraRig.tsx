@@ -164,6 +164,14 @@ export function CameraRig({
   const direccionEmpuje = useRef(new Vector3())
   const tiempoEmpuje = useRef(Infinity)
 
+  /* El giroscopio: el yaw del sensor DESENVUELTO (crece sin límite, como el
+     objetivo, para que 179° → -179° no sea una vuelta entera) y el offset que
+     el gesto ajusta encima. `conSensor` recuerda si el cuadro anterior ya venía
+     con sensor, para fijar el offset sin salto la primera vez. */
+  const conSensor = useRef(false)
+  const sensorYaw = useRef(0)
+  const offsetYaw = useRef(0)
+
   /* El autogiro: hasta cuándo dura la pausa, y el despertador que la termina. */
   const pausaHasta = useRef(0)
   const despertador = useRef<{ id: number; para: number } | null>(null)
@@ -223,6 +231,8 @@ export function CameraRig({
     if (interaccion) pausaHasta.current = ahora + PAUSA_AUTOGIRO * 1000
     const girando =
       input.autogiro &&
+      // Con el teléfono en la mano no hay kiosco: el sensor manda.
+      input.orientacion === null &&
       !menosMovimiento.current &&
       document.visibilityState === 'visible' &&
       ahora >= pausaHasta.current
@@ -256,24 +266,72 @@ export function CameraRig({
      * empujado a la derecha gira de forma continua, como en un juego.
      * Multiplicar por dt (y no por frame) hace que gire igual a 60 y a 120 Hz. */
     const speed = maxSpeedDeg * (currentFov.current / 75)
-    targetYaw.current += input.axis.x * speed * dt
-    targetPitch.current += (invertY ? -input.axis.y : input.axis.y) * speed * dt
+    /* Con el sensor encendido, joystick, arrastre y destino NO tocan el objetivo:
+       van al offset, en el bloque GIROSCOPIO de abajo. */
+    const sensor = input.orientacion
+    if (!sensor) {
+      targetYaw.current += input.axis.x * speed * dt
+      targetPitch.current += (invertY ? -input.axis.y : input.axis.y) * speed * dt
+    }
 
     /* -------------------------------------------- ARRASTRE → DELTAS DIRECTOS
      * El dedo sobre la foto ya viene convertido a grados (ver useDragLook),
      * así que se suma tal cual y se consume. */
-    targetYaw.current += input.dragYaw
-    targetPitch.current += input.dragPitch
-    input.dragYaw = 0
-    input.dragPitch = 0
+    if (!sensor) {
+      targetYaw.current += input.dragYaw
+      targetPitch.current += input.dragPitch
+      input.dragYaw = 0
+      input.dragPitch = 0
+    }
 
     /* -------------------------------------------------- DESTINO PROGRAMADO
      * Un solo disparo: movemos el OBJETIVO por el camino corto y dejamos que
      * el suavizado de abajo haga la animación. */
-    if (input.goto) {
+    if (!sensor && input.goto) {
       targetYaw.current += shortestDelta(targetYaw.current, input.goto.yaw)
       targetPitch.current = input.goto.pitch
       input.goto = null
+    }
+
+    /* ----------------------------------------------------------- GIROSCOPIO
+     * El sensor es ABSOLUTO y el gesto ajusta un OFFSET, no el objetivo:
+     *
+     *   objetivo = yaw del sensor (desenvuelto) + offset
+     *
+     * · Al encenderse, el offset se elige para que el objetivo NO cambie: la
+     *   cámara se queda donde estaba y desde ahí sigue a la mano. Sin esto,
+     *   encender el giroscopio pegaba un latigazo hacia donde apuntara el
+     *   teléfono en ese instante.
+     * · Joystick y arrastre suman al offset; el `goto` de un cambio de
+     *   habitación también (por el camino corto). Así "mirar con el teléfono" y
+     *   "corregir con el dedo" no se pelean: el dedo desplaza el marco y el
+     *   teléfono sigue mandando dentro de él.
+     * · El pitch lo manda SOLO el sensor y el arrastre vertical se ignora. Es lo
+     *   que hace Street View, y evita de raíz un fallo feo: si el arrastre
+     *   acumulara un offset de pitch y la persona empujara contra el tope de
+     *   85°, el offset seguiría creciendo y bajar la vista no haría nada hasta
+     *   desenrollarlo.
+     * · El yaw del sensor llega envuelto a (-180, 180]; se acumula por el camino
+     *   corto para que cruzar la costura no sea una vuelta entera de suavizado. */
+    if (sensor) {
+      if (!conSensor.current) {
+        sensorYaw.current = sensor.yaw
+        offsetYaw.current = targetYaw.current - sensor.yaw
+        conSensor.current = true
+      } else {
+        sensorYaw.current += shortestDelta(sensorYaw.current, sensor.yaw)
+      }
+      offsetYaw.current += input.axis.x * speed * dt + input.dragYaw
+      if (input.goto) {
+        offsetYaw.current += shortestDelta(sensorYaw.current + offsetYaw.current, input.goto.yaw)
+        input.goto = null
+      }
+      input.dragYaw = 0
+      input.dragPitch = 0
+      targetYaw.current = sensorYaw.current + offsetYaw.current
+      targetPitch.current = sensor.pitch
+    } else {
+      conSensor.current = false
     }
 
     targetPitch.current = clamp(targetPitch.current, -maxPitchDeg, maxPitchDeg)

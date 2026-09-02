@@ -626,7 +626,7 @@ const brillo = await page.evaluate(async (datos) => {
   for (let i = 0; i < d.length; i += 4) suma += (d[i] + d[i + 1] + d[i + 2]) / 3
   return Math.round(suma / (d.length / 4))
 }, png.toString('base64'))
-console.log(`  ${'cambiar de habitación'.padEnd(28)} ${brillo > 40 ? `la foto se dibujó (brillo ${brillo})` : 'PANTALLA NEGRA'}`)
+console.log(`  ${'cambiar de habitación'.padEnd(28)} ${brillo > 40 ? `la foto se dibujó (brillo ${brillo})` : `PANTALLA NEGRA (brillo ${brillo}, se exige > 40)`}`)
 if (brillo <= 40) bien = false
 
 /* --------------------------------------------- 3. ¿MENOS MOVIMIENTO? ---

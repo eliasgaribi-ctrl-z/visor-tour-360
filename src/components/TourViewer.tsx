@@ -5,6 +5,7 @@ import { useWheelZoom } from '../lib/useDragLook'
 import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
+import { useGyroLook } from '../lib/useGyroLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
 
@@ -71,6 +72,30 @@ export function TourViewer({
   )
 
   useKeyboardLook(engine)
+
+  /* Mirar moviendo el teléfono. Solo aquí y no en el editor de puntos: para
+     colocar un punto hace falta un encuadre quieto. */
+  const giro = useGyroLook(engine)
+  const sensorActivo = giro.estado === 'activo' || giro.estado === 'esperando'
+  /* Los dos estados que hay que EXPLICAR: sin permiso (en iOS solo se revierte
+     en Ajustes) y sin sensores (escritorio). El aviso se va solo a los seis
+     segundos, y se marca como visto con un temporizador y no con un set en el
+     efecto —la regla de este proyecto sobre estado dentro de efectos—. */
+  const [avisoVisto, setAvisoVisto] = useState<string | null>(null)
+  const avisoGiro =
+    avisoVisto === giro.estado
+      ? null
+      : giro.estado === 'denegado'
+        ? 'Sin permiso para los sensores. En iPhone se activa en Ajustes → Safari → Movimiento y orientación.'
+        : giro.estado === 'no-soportado'
+          ? 'Este aparato no tiene sensores de movimiento.'
+          : null
+  useEffect(() => {
+    if (!avisoGiro) return
+    const estado = giro.estado
+    const t = window.setTimeout(() => setAvisoVisto(estado), 6000)
+    return () => window.clearTimeout(t)
+  }, [avisoGiro, giro.estado])
 
   /* El modo kiosco viene del recorrido, no del visor: un recorrido de feria gira
      solo y el mismo visor con otro recorrido no. Tocar el timbre arranca el
@@ -228,14 +253,39 @@ export function TourViewer({
             <RoomBar scenes={tour.scenes} activeId={scene.id} onSelect={(id) => goToScene(id)} />
           </div>
 
-          {/* Joystick · esquina inferior IZQUIERDA, zona del pulgar izquierdo */}
-          <div className="absolute bottom-0 left-0 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
-            <Joystick className="h-40 w-40 sm:h-44 sm:w-44" onChange={handleAxis} />
-          </div>
+          {/* Joystick · esquina inferior IZQUIERDA, zona del pulgar izquierdo.
+              Con el giroscopio encendido se retira: la mano ya es el joystick, y
+              dos formas de girar a la vista confunden. El arrastre sigue. */}
+          {!sensorActivo && (
+            <div className="absolute bottom-0 left-0 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+              <Joystick className="h-40 w-40 sm:h-44 sm:w-44" onChange={handleAxis} />
+            </div>
+          )}
 
           {/* Zoom y reencuadre · pulgar derecho */}
           <div className="absolute bottom-0 right-0 flex flex-col items-end gap-2 p-3
                           pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+            {/* Mirar con el teléfono. No se pinta sin https ni sin el evento en
+                el navegador (escritorio): un botón que no puede hacer nada es
+                peor que ninguno. Y desaparece si al intentarlo resulta que no
+                hay sensores, con el aviso de abajo explicándolo. */}
+            {giro.disponible && giro.estado !== 'no-soportado' && (
+              <button
+                type="button"
+                onClick={() => (sensorActivo ? giro.desactivar() : void giro.activar())}
+                aria-pressed={sensorActivo}
+                aria-label={sensorActivo ? 'Dejar de mirar con el teléfono' : 'Mirar con el teléfono'}
+                className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
+                           transition-colors active:bg-white/15 ${
+                             sensorActivo ? 'text-brand-300' : 'text-ink-50'
+                           }`}
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <rect x="8" y="3" width="8" height="18" rx="2" />
+                  <path d="M4.5 8.5a8 8 0 0 0 0 7M19.5 8.5a8 8 0 0 1 0 7" strokeLinecap="round" />
+                </svg>
+              </button>
+            )}
             <button
               type="button"
               onClick={resetView}
@@ -262,6 +312,16 @@ export function TourViewer({
               {pista}
             </p>
           </div>
+
+          {avisoGiro && (
+            <div
+              role="status"
+              className="absolute bottom-[calc(env(safe-area-inset-bottom)+15rem)] left-1/2 w-[min(20rem,90vw)]
+                         -translate-x-1/2"
+            >
+              <p className="hud-glass rounded-full px-4 py-2 text-center text-xs text-ink-200">{avisoGiro}</p>
+            </div>
+          )}
 
           {debug && (
             <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+9rem)]">

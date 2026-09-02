@@ -184,6 +184,13 @@ jobs:
       - name: El orden se guarda al arrastrar
         run: node tools/pruebas/reordenar.mjs http://localhost:5173/
 
+      # Mirar moviendo el teléfono. Chromium no emula los sensores, así que el
+      # arnés despacha DeviceOrientationEvent a mano. Lo que protege es la
+      # propiedad más valiosa del visor: con el teléfono QUIETO —sesenta lecturas
+      # por segundo que no paran— tiene que seguir dando cero dibujos.
+      - name: El giroscopio sigue a la mano y quieto no dibuja
+        run: node tools/pruebas/giroscopio.mjs http://localhost:5173/
+
       # La promesa que se hizo al subir FORMAT_VERSION a 2: los .tour de la
       # version 1 se siguen abriendo. El archivo de fixtures esta escrito a mano
       # con el manifiesto de la v1, no generado por el codigo de hoy.

@@ -96,6 +96,16 @@ export type LookInput = {
    * toca una foto que gira sola espera que se detenga.
    */
   pausa: boolean
+
+  /**
+   * Orientación ABSOLUTA del sensor (giroscopio), en grados del proyecto. Si no
+   * es null, MANDA sobre el objetivo: el joystick, el arrastre y el `goto`
+   * ajustan un offset en vez del objetivo, así que al encenderlo la cámara no
+   * salta y al mover el teléfono la vista sigue a la mano. El pitch lo manda
+   * solo el sensor. Lo escribe `useGyroLook` —con zona muerta angular, para que
+   * un teléfono quieto siga dando cero dibujos— y lo pone en null al apagarse.
+   */
+  orientacion: { yaw: number; pitch: number } | null
 }
 
 /** Lo que la cámara le cuenta a la UI. El CameraRig lo escribe cada frame. */
@@ -185,6 +195,7 @@ export const createTourEngine = (): TourEngine => {
       empuje: null,
       autogiro: false,
       pausa: false,
+      orientacion: null,
     },
     readout: { yaw: 0, pitch: 0, fov: 75, avance: 0 },
     invalidar,

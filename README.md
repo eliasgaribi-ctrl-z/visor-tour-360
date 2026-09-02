@@ -85,7 +85,7 @@ node --experimental-strip-types tools/pruebas/nivel.mjs       # la corrección d
 node tools/pruebas/patrones.mjs                               # patrones que no deben volver
 ```
 
-Los otros seis levantan un navegador (`npm i -D playwright` primero, y
+Los otros siete levantan un navegador (`npm i -D playwright` primero, y
 `npm run dev` en otra terminal):
 
 ```bash
@@ -93,11 +93,12 @@ node tools/pruebas/memoria.mjs http://localhost:5173/       # memoria de video (
 node tools/pruebas/rendimiento.mjs http://localhost:5173/   # batería, respuesta y movimiento (sección 11)
 node tools/pruebas/tactil.mjs http://localhost:5173/        # tamaño de lo que se toca (sección 11)
 node tools/pruebas/reordenar.mjs http://localhost:5173/     # el orden se guarda al arrastrar
+node tools/pruebas/giroscopio.mjs http://localhost:5173/    # el giroscopio sigue a la mano y quieto no dibuja
 node tools/pruebas/formato.mjs http://localhost:5173/       # el .tour abre lo viejo y vuelve entero
 node tools/pruebas/marca.mjs http://localhost:5173/         # la marca reviste el visor
 ```
 
-**Los once corren solos en cada push** (`.github/workflows/revision.yml`), junto
+**Los doce corren solos en cada push** (`.github/workflows/revision.yml`), junto
 con `lint`, `typecheck`, `build` y la medición del peso del arranque, que falla
 arriba de 400 kB. Playwright se instala ahí con `--no-save`: no está en las
 `devDependencies` a propósito, para no obligar a nadie a bajarlo, y por eso los
@@ -164,6 +165,7 @@ src/
 │   ├── tourEngine.ts           * El objeto mutable que conecta UI <-> cámara
 │   ├── useDragLook.ts          Arrastrar para mirar + pellizco para zoom
 │   ├── useKeyboardLook.ts      Flechas / WASD en escritorio
+│   ├── useGyroLook.ts          Mirar moviendo el teléfono, con zona muerta angular
 │   ├── useEquirectTexture.ts   Carga y caché de panorámicas
 │   ├── useHashRoute.ts         Rutas dentro del # (funcionan en GitHub Pages)
 │   ├── dispositivo.ts          * Qué se permite según la memoria del aparato
@@ -229,6 +231,7 @@ tools/pruebas/memoria.mjs       Mide la memoria de video de verdad (sección 10)
 tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 11)
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
 tools/pruebas/reordenar.mjs     Reordenar arrastrando guarda de verdad y revierte al cancelar
+tools/pruebas/giroscopio.mjs    El giroscopio sigue a la mano, y quieto no dibuja
 tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (97 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
 
@@ -983,7 +986,7 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Los once arneses, y por qué son arneses y no un framework
+### Los doce arneses, y por qué son arneses y no un framework
 
 No hay Jest ni Vitest, y es deliberado: lo que este proyecto necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
@@ -1004,6 +1007,7 @@ cada push, junto con `lint`, `typecheck`, `build` y el peso del arranque.
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
 | `tactil.mjs` | los 14 recorridos de pantalla, todo ≥ 44 px | sí |
 | `reordenar.mjs` | arrastrar reordena y el orden sobrevive a recargar; un roce no levanta la fila; cancelar revierte | sí |
+| `giroscopio.mjs` | con sensores sintéticos a 60 Hz: quieto **0 dibujos/s**, girar 90° gira 90°, encender y apagar no saltan, el dedo corrige, la pestaña oculta apaga | sí |
 | `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 97 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
 
@@ -1147,12 +1151,6 @@ cualquier hosting.
 ## 14. Siguientes pasos naturales
 
 - Planta arquitectónica con la posición de cada escena.
-- Giroscopio también al **ver** el recorrido, para mirar moviendo el teléfono
-  (la conversión de sensores ya está hecha en `src/lib/capture/orientation.ts`).
-  Lo delicado no es la conversión: es que los sensores disparan ~60 eventos por
-  segundo y nunca paran, así que llamar a `invalidar()` en cada uno rompería los
-  cero dibujos por segundo de la sección 11. La salida no es un throttle de
-  tiempo sino una zona muerta angular con `angleBetween()`, que ya está exportada.
 - Alineación fina entre tomas por correlación, no solo por sensores. Cuesta
   menos de lo que parece: `desplazamientoHorizontal()` en `capture/frames.ts`
   **ya es** correlación cruzada normalizada con afinado subpíxel por parábola, y
@@ -1181,6 +1179,17 @@ cualquier hosting.
   correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
   reversible y gratis— y no en la costura, que obligaría a remuestrear y
   recomprimir una 4096×2048.
+- ✅ **Giroscopio al ver** (`src/lib/useGyroLook.ts`): un botón en el visor para
+  mirar moviendo el teléfono, reutilizando entero el seguidor de la captura. Lo
+  delicado no era la conversión sino `invalidar()`: los sensores disparan ~60
+  eventos por segundo y nunca paran. La salida es una zona muerta ANGULAR de
+  0.15° —no un throttle de tiempo—: con el teléfono quieto el ruido queda por
+  debajo y el visor sigue en 0 dibujos/s; en la mano nunca baja de ahí. El sensor
+  es absoluto y manda; joystick, arrastre y cambio de habitación ajustan un
+  offset, así que encender y apagar no mueven la cámara y el dedo corrige sin que
+  la siguiente lectura lo deshaga. El pitch lo manda solo el sensor. Con la
+  pestaña oculta se apaga; sin https o sin evento el botón no se pinta; sin
+  sensores se retira y lo dice. `giroscopio.mjs` despacha los eventos a mano.
 - ✅ **Autogiro (modo kiosco), apagado por defecto** — y esa es la decisión. Girar
   solo es dibujar sin parar, justo lo contrario de los 0 dibujos/s medidos, así
   que es una opción por recorrido (el interruptor está en "Cambiar el nombre del
