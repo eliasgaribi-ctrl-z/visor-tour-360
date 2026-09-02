@@ -8,12 +8,10 @@ import { demoTour } from './data/tour'
 import { useHashRoute, recorridoActivo, fijarRecorridoActivo } from './lib/useHashRoute'
 import { getTour } from './lib/store/tours'
 
-import { Inicio } from './components/crear/Inicio'
-import { EditorRecorrido } from './components/crear/EditorRecorrido'
 import { Cargando } from './components/crear/ui'
 
 /**
- * ── Las pantallas con 3D se bajan aparte ───────────────────────────────────
+ * ── Cada pantalla se baja aparte ───────────────────────────────────────────
  *
  * three.js y React Three Fiber pesan un megabyte largo, y hay pantallas que no
  * dibujan ni un píxel en 3D: "Mis recorridos" es una lista, y el editor de un
@@ -21,9 +19,22 @@ import { Cargando } from './components/crear/ui'
  * recorridos obligaba a descargar el motor gráfico entero antes de pintar el
  * primer renglón — y eso en un celular con datos móviles se siente.
  *
+ * El reparto vale igual en el otro sentido, y esa mitad se nos había pasado.
+ * Quien recibe el link de una casa entra al visor y no toca jamás las
+ * pantallas de crear, pero las venía descargando de todos modos porque eran de
+ * las pocas que seguían dentro del archivo de arranque. Bajándolas también por
+ * separado, ese archivo pasó de 240.20 a 212.12 kB — 8.64 kB menos ya
+ * comprimido, que es lo que de verdad viaja por la red.
+ *
  * Con `lazy`, cada una de estas pantallas se descarga la primera vez que se
  * entra a ella y se queda en caché para las siguientes.
  */
+const Inicio = lazy(() =>
+  import('./components/crear/Inicio').then((m) => ({ default: m.Inicio })),
+)
+const EditorRecorrido = lazy(() =>
+  import('./components/crear/EditorRecorrido').then((m) => ({ default: m.EditorRecorrido })),
+)
 const TourViewer = lazy(() =>
   import('./components/TourViewer').then((m) => ({ default: m.TourViewer })),
 )
