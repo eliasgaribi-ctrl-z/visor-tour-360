@@ -8,13 +8,13 @@ import * as THREE from 'three'
 import type { TourEngine } from './tourEngine'
 import {
   OrientationTracker,
-  angleBetween,
   anglesOf,
   needsOrientationPermission,
   requestOrientationPermission,
   type OrientationState,
 } from './capture/orientation'
 import { contextoSeguro } from './capture/camera'
+import { ZONA_MUERTA, hayQueAplicar } from './giro'
 
 /**
  * ============================================================================
@@ -56,7 +56,7 @@ import { contextoSeguro } from './capture/camera'
  * seguidor está escrito precisamente para interfaz (la cruda es para el disparo
  * de la captura, donde el retraso pegaría la foto en el lugar equivocado).
  */
-export const ZONA_MUERTA = 0.15
+export { ZONA_MUERTA }
 
 export type Giroscopio = {
   /** Estado del seguidor, para pintar el botón. */
@@ -79,6 +79,12 @@ export function useGyroLook(engine: TourEngine): Giroscopio {
   /* Un solo objeto que se reescribe: sesenta lecturas por segundo no deben
      asignar sesenta objetos por segundo. El rig lee los campos, no la identidad. */
   const destino = useRef({ yaw: 0, pitch: 0 })
+  /* Dos guardas alrededor del diálogo de permiso de iOS, que es un `await` con
+     una persona en medio: un segundo toque mientras el diálogo está abierto no
+     debe pedir otro, y si la persona se fue de la pantalla mientras decidía, la
+     respuesta no debe arrancar listeners sobre un componente que ya no existe. */
+  const pidiendoPermiso = useRef(false)
+  const montado = useRef(true)
   const [estado, setEstado] = useState<OrientationState>('inactivo')
   const [disponible] = useState(
     () => contextoSeguro() && typeof DeviceOrientationEvent !== 'undefined',
@@ -95,10 +101,21 @@ export function useGyroLook(engine: TourEngine): Giroscopio {
     /* iOS 13+: el permiso tiene que salir de un gesto. Este `await` es el único
        del camino y viene justo después del toque, así que la activación sigue
        viva cuando Safari pregunta. */
+    if (pidiendoPermiso.current) return
     if (needsOrientationPermission()) {
+      pidiendoPermiso.current = true
       const respuesta = await requestOrientationPermission()
+      pidiendoPermiso.current = false
+      if (!montado.current) return
       if (respuesta === 'denied') {
         setEstado('denegado')
+        return
+      }
+      /* Safari cerró el diálogo sin decidir (o no lo abrió): no es un "no", y
+         decirle a la persona que vaya a Ajustes sería mandarla a un lugar donde
+         no hay nada que cambiar. Se le pide que toque otra vez. */
+      if (respuesta === 'prompt') {
+        setEstado('permiso-pendiente')
         return
       }
     }
@@ -107,7 +124,7 @@ export function useGyroLook(engine: TourEngine): Giroscopio {
       t.onStateChange = setEstado
       t.onReading = () => {
         const q = t.reading.suave
-        if (hayUltimo.current && angleBetween(ultimo.current, q) < ZONA_MUERTA) return
+        if (!hayQueAplicar(hayUltimo.current ? ultimo.current : null, q)) return
         ultimo.current.copy(q)
         hayUltimo.current = true
         const { yaw, pitch } = anglesOf(q)
@@ -137,6 +154,7 @@ export function useGyroLook(engine: TourEngine): Giroscopio {
     }
     document.addEventListener('visibilitychange', alCambiar)
     return () => {
+      montado.current = false
       document.removeEventListener('visibilitychange', alCambiar)
       desactivar()
     }

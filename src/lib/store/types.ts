@@ -102,6 +102,18 @@ export type StoredTour = {
   autogiro?: boolean
   createdAt: number
   updatedAt: number
+  /**
+   * Llave con la que esta casa está publicada en el servidor, si lo está.
+   *
+   * Se guarda para poder volver a compartir el mismo link y, sobre todo, para
+   * poder BAJARLA: sin esto, publicar sería una puerta de un solo sentido y una
+   * casa vendida se quedaría en línea para siempre.
+   *
+   * A propósito NO viaja dentro del `.tour`: si dos personas importaran el
+   * mismo archivo, las dos creerían mandar sobre la misma publicación y la
+   * segunda podría tirar la del primero sin enterarse.
+   */
+  publicadoComo?: string
 }
 
 /** Fila del listado de recorridos: lo mínimo para pintar la portada. */

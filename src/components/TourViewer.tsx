@@ -8,8 +8,9 @@ import { useKeyboardLook } from '../lib/useKeyboardLook'
 import { useGyroLook } from '../lib/useGyroLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
+import { detectWebGL } from '../lib/webgl'
 
-import { BASE_FOV, Escena360, detectWebGL } from './tour/Escena360'
+import { BASE_FOV, Escena360 } from './tour/Escena360'
 
 import { Compass } from './ui/Compass'
 import { DebugAngles } from './ui/DebugAngles'
@@ -61,6 +62,7 @@ export function TourViewer({
   const [info, setInfo] = useState<{ title: string; body?: string } | null>(null)
   const [hintVisible, setHintVisible] = useState(true)
   const hintDismissed = useRef(false)
+  const cartelError = useRef<HTMLDivElement>(null)
 
   /* Se pregunta UNA vez, antes de montar el canvas: si el navegador no da WebGL
      preferimos un mensaje a una pantalla negra sin explicación. */
@@ -87,9 +89,11 @@ export function TourViewer({
       ? null
       : giro.estado === 'denegado'
         ? 'Sin permiso para los sensores. En iPhone se activa en Ajustes → Safari → Movimiento y orientación.'
-        : giro.estado === 'no-soportado'
-          ? 'Este aparato no tiene sensores de movimiento.'
-          : null
+        : giro.estado === 'permiso-pendiente'
+          ? 'Toca otra vez el botón y elige Permitir para mirar con el teléfono.'
+          : giro.estado === 'no-soportado'
+            ? 'Este aparato no tiene sensores de movimiento.'
+            : null
   useEffect(() => {
     if (!avisoGiro) return
     const estado = giro.estado
@@ -165,6 +169,14 @@ export function TourViewer({
     engine.invalidar()
   }, [engine, scene.initialYaw])
 
+  /* El cartel de "no se pudo cargar la foto" tapa la pantalla entera pero no
+     recibía el foco, así que con teclado o lector de pantalla no había manera de
+     leerlo: el foco seguía en los controles de abajo, que quedaron debajo del
+     velo y ya no hacen nada. role="alert" lo anuncia y el focus() lleva ahí. */
+  useEffect(() => {
+    if (failed) cartelError.current?.focus()
+  }, [failed])
+
   /** Si nadie toca nada, la pista se retira sola a los 7 segundos. */
   useEffect(() => {
     const timer = window.setTimeout(dismissHint, 7000)
@@ -225,6 +237,21 @@ export function TourViewer({
           onError={() => setFailed(true)}
           onPointerDownCapture={alTocar}
         />
+
+        {/* Un lector de pantalla no ve la esfera ni el velo de carga: pasar de
+            un cuarto a otro no anunciaba absolutamente nada, así que la app
+            parecía congelada justo cuando más está pasando. Este párrafo es lo
+            único que la persona oye al cambiar de habitación. Se queda fuera del
+            HUD para que no lo alcance el pointer-events-none ni el z-30. */}
+        <p className="sr-only" aria-live="polite" aria-atomic="true">
+          {loading
+            ? `Cargando ${scene.name}…`
+            : `${scene.name}. ${
+                scene.hotspots.length === 0
+                  ? 'Sin puntos'
+                  : `${scene.hotspots.length} ${scene.hotspots.length === 1 ? 'punto' : 'puntos'}`
+              }.`}
+        </p>
 
         {/* ───────────────────────────── CAPA 1 · HUD ───────────────────────────── */}
         <div className="pointer-events-none absolute inset-0 z-30" onWheel={zoomRueda}>
@@ -301,27 +328,33 @@ export function TourViewer({
             <ZoomControls />
           </div>
 
-          {/* Pista de arranque · por encima de la fila de controles */}
+          {/* Pista de arranque · por encima de la fila de controles.
+              El mismo hueco lo reutiliza el sensor de movimiento para decir qué
+              pasó —que se encendió, que Safari negó el permiso, que este
+              aparato no tiene sensores—. Reutilizarlo y no inventar un segundo
+              cartel es a propósito: los dos textos dicen lo mismo, "así se mira
+              alrededor", y nunca hacen falta al mismo tiempo. El aviso gana
+              porque es respuesta a un botón que la persona acaba de tocar.
+
+              La píldora se cuadra cuando lleva un aviso: los avisos son de dos
+              renglones y en una forma redonda las esquinas se comen el texto. */}
           <div
             className={`absolute bottom-[calc(env(safe-area-inset-bottom)+12rem)] left-1/2 w-[min(20rem,90vw)]
                         -translate-x-1/2 transition-opacity duration-500 ${
-                          hintVisible ? 'opacity-100' : 'pointer-events-none opacity-0'
+                          hintVisible || avisoGiro
+                            ? 'opacity-100'
+                            : 'pointer-events-none opacity-0'
                         }`}
           >
-            <p className="hud-glass rounded-full px-4 py-2 text-center text-xs text-ink-200">
-              {pista}
+            <p
+              role="status"
+              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-ink-200 ${
+                avisoGiro ? 'rounded-2xl' : 'rounded-full'
+              }`}
+            >
+              {avisoGiro ?? pista}
             </p>
           </div>
-
-          {avisoGiro && (
-            <div
-              role="status"
-              className="absolute bottom-[calc(env(safe-area-inset-bottom)+15rem)] left-1/2 w-[min(20rem,90vw)]
-                         -translate-x-1/2"
-            >
-              <p className="hud-glass rounded-full px-4 py-2 text-center text-xs text-ink-200">{avisoGiro}</p>
-            </div>
-          )}
 
           {debug && (
             <div className="absolute left-3 top-[calc(env(safe-area-inset-top)+9rem)]">
@@ -334,7 +367,12 @@ export function TourViewer({
         <LoadingVeil visible={webgl.ok && loading && !failed} />
 
         {failed && (
-          <div className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center">
+          <div
+            ref={cartelError}
+            role="alert"
+            tabIndex={-1}
+            className="absolute inset-0 z-40 grid place-items-center bg-black/80 p-6 text-center outline-none"
+          >
             <div className="max-w-xs">
               <p className="text-sm font-semibold text-ink-50">
                 No se pudo cargar la foto de {scene.name}

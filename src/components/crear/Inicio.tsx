@@ -20,6 +20,11 @@ export type InicioProps = {
   ir: (ruta: Ruta) => void
 }
 
+/* 400 MB: un recorrido de veinte habitaciones a 8 MP pesa unos 60 MB, así que
+   el tope deja pasar con holgura cualquier casa de verdad y corta lo que solo
+   puede ser un archivo equivocado o un intento de tumbar la pestaña. */
+const MAX_ARCHIVO = 400 * 1024 * 1024
+
 /** Fecha corta y en español: "hoy", "ayer", "12 de agosto". */
 function cuando(ms: number): string {
   const dia = 24 * 60 * 60 * 1000
@@ -80,6 +85,11 @@ export function Inicio({ ir }: InicioProps) {
   const [error, setError] = useState<string | null>(null)
   const [importando, setImportando] = useState(false)
   const [creando, setCreando] = useState(false)
+  /* Borrar también puede fallar (la base bloqueada por otra pestaña, el disco
+     lleno) y hasta ahora la hoja se cerraba igual: el recorrido reaparecía en la
+     lista al recargar y no había nada que dijera por qué. */
+  const [borrandoAhora, setBorrandoAhora] = useState(false)
+  const [errorBorrado, setErrorBorrado] = useState<string | null>(null)
   const archivo = useRef<HTMLInputElement>(null)
 
   const recargar = useCallback(async () => {
@@ -130,7 +140,36 @@ export function Inicio({ ir }: InicioProps) {
     ir({ nombre: 'editar', tourId: tour.id })
   }
 
+  const quitar = async (id: string) => {
+    setBorrandoAhora(true)
+    setErrorBorrado(null)
+    try {
+      await deleteTour(id)
+      return true
+    } catch (e) {
+      setErrorBorrado(e instanceof Error ? e.message : 'No se pudo borrar el recorrido.')
+      return false
+    } finally {
+      setBorrandoAhora(false)
+    }
+  }
+
   const abrirArchivo = async (file: File) => {
+    /* Se mira el tamaño ANTES de tocar el archivo. Abrir un .tour obliga a
+       tenerlo entero en memoria dos veces —el zip comprimido y las fotos ya
+       descomprimidas— y en un celular de 3 GB eso significa que el navegador
+       mata la pestaña sin decir nada: la persona ve la app desaparecer y no
+       sabe si fue su archivo o el visor. Un mensaje es mejor que un cierre. */
+    if (file.size > MAX_ARCHIVO) {
+      setError(
+        `Ese archivo pesa ${formatBytes(file.size)} y es demasiado para abrirlo en un teléfono. ` +
+          `El tope son ${formatBytes(MAX_ARCHIVO)}. Ábrelo en una computadora y vuelve a exportarlo con menos habitaciones.`,
+      )
+      // Sin esto, volver a elegir el MISMO archivo no dispara el onChange y
+      // parece que el botón dejó de funcionar.
+      if (archivo.current) archivo.current.value = ''
+      return
+    }
     setImportando(true)
     setError(null)
     try {
@@ -145,6 +184,12 @@ export function Inicio({ ir }: InicioProps) {
          igual, y no puede depender de lo que no llegó. */
       const { importarTour } = await import('../../lib/store/paquete')
       const tour = await importarTour(file)
+      /* También aquí, no solo al crear: quien importa un recorrido acaba de
+         meter todas sus fotos al teléfono y es justo el que más tiene que
+         perder si el navegador decide hacer limpieza. Va después del await, así
+         que ya no estamos dentro del toque del usuario y Chrome puede decir que
+         no; cuando dice que no, lo peor que pasa es que sigue como estaba. */
+      void requestPersistence()
       await recargar()
       ir(destinoDe(tour.id, tour.scenes.length))
     } catch (e) {
@@ -287,27 +332,46 @@ export function Inicio({ ir }: InicioProps) {
       )}
 
       {borrando && (
-        <Hoja titulo="¿Borrar el recorrido?" onCerrar={() => setBorrando(null)}>
+        <Hoja
+          titulo="¿Borrar el recorrido?"
+          onCerrar={() => {
+            setBorrando(null)
+            setErrorBorrado(null)
+          }}
+        >
           <p className="mb-4 text-sm text-ink-200">
             Se va a borrar <b className="text-ink-50">{borrando.title}</b> con todas sus fotos, de
             este teléfono. Si tienes el archivo exportado, ese no se toca.
           </p>
           <div className="flex gap-2">
-            <Boton ancho onClick={() => setBorrando(null)}>
+            <Boton
+              ancho
+              disabled={borrandoAhora}
+              onClick={() => {
+                setBorrando(null)
+                setErrorBorrado(null)
+              }}
+            >
               Mejor no
             </Boton>
+            {/* La hoja se queda abierta si el borrado falla: es el único sitio
+                donde se puede decir qué pasó y volver a intentarlo. */}
             <Boton
               tipo="peligro"
               ancho
+              disabled={borrandoAhora}
               onClick={async () => {
-                await deleteTour(borrando.id)
+                if (!(await quitar(borrando.id))) return
                 setBorrando(null)
                 await recargar()
               }}
             >
-              Sí, borrar
+              {borrandoAhora ? 'Borrando…' : 'Sí, borrar'}
             </Boton>
           </div>
+          {errorBorrado && (
+            <p className="mt-3 text-sm leading-relaxed text-red-300">{errorBorrado}</p>
+          )}
         </Hoja>
       )}
     </Pantalla>

@@ -158,6 +158,26 @@ export type TourEngine = {
    * que alguien mueva la cámara.
    */
   suscribirHud: (fn: () => void) => () => void
+
+  /**
+   * ==========================================================================
+   *  UN SOLO DUEÑO DE LA CÁMARA
+   * ==========================================================================
+   *
+   * Con el giroscopio encendido hay dos cosas queriendo girar la vista: el
+   * teléfono y el dedo. La regla es que el dedo GANA —arrastrar es una
+   * decisión deliberada, el teléfono se mueve solo por estar en una mano— y
+   * apaga el sensor; el botón del HUD lo vuelve a encender.
+   *
+   * Lo llama el CameraRig, que es quien ya sabe distinguir "el usuario está
+   * conduciendo" para las tres formas de conducir (joystick, teclado y
+   * arrastre). Si la regla viviera en `useDragLook` habría que repetirla tres
+   * veces y una se quedaría atrás.
+   */
+  soltarGiroscopio: () => void
+
+  /** La conecta useGyroLook para enterarse de que le quitaron la cámara. */
+  conectarGiroscopio: (fn: (() => void) | null) => void
 }
 
 /** Cuánto se quedan despiertas las dos capas tras un aviso. */
@@ -165,6 +185,7 @@ const DESPIERTO_MS = 250
 
 export const createTourEngine = (): TourEngine => {
   let render: (() => void) | null = null
+  let soltarGiro: (() => void) | null = null
   const hud = new Set<() => void>()
   let frame = 0
   let despiertoHasta = 0
@@ -201,6 +222,12 @@ export const createTourEngine = (): TourEngine => {
     invalidar,
     conectarRender: (fn) => {
       render = fn
+    },
+    soltarGiroscopio: () => {
+      soltarGiro?.()
+    },
+    conectarGiroscopio: (fn) => {
+      soltarGiro = fn
     },
     suscribirHud: (fn) => {
       hud.add(fn)

@@ -7,8 +7,8 @@
  * cualquier descompresor) con esta forma:
  *
  *   recorrido.json          el manifiesto: título, habitaciones, hotspots
- *   fotos/img_xxxx.jpg      una equirectangular por habitación
- *   fotos/img_xxxx.thumb.jpg
+ *   fotos/000.jpg           una equirectangular por habitación
+ *   fotos/000.min.jpg       su miniatura
  *
  * Se escribe SIN COMPRIMIR (método "store"). No es pereza: los JPEG ya están
  * comprimidos y volver a pasarlos por deflate los deja del mismo tamaño
@@ -191,14 +191,62 @@ export function nombreSeguro(name: string): boolean {
   return !/[\u0000-\u001f]/.test(name)
 }
 
-async function inflateRaw(data: Bytes): Promise<Bytes> {
+/*
+ * Cuánto se deja crecer un archivo al abrirlo.
+ *
+ * Un ZIP puede declarar que una entrada de 200 KB se descomprime a 40 GB —es el
+ * viejo truco de la "bomba zip", y con deflate el factor llega a 1000 a 1 sin
+ * esfuerzo—. El tamaño que trae la cabecera no sirve para atajarlo: lo escribe
+ * quien armó el archivo, o sea el atacante. Lo único que sirve es contar los
+ * bytes que van saliendo y cortar cuando se pasan.
+ *
+ * 64 MB por foto es holgado: la panorámica más grande que exporta el visor es
+ * de 4096×2048 en JPEG, unos 3 MB, y aun descomprimida a mano no llega a 25.
+ * Los 400 MB del total son la suma de un recorrido de cuarenta habitaciones,
+ * que es más de lo que un teléfono aguanta en pantalla de todos modos.
+ */
+const MAX_ENTRADA = 64 * 1024 * 1024
+const MAX_SALIDA = 400 * 1024 * 1024
+
+async function inflateRaw(data: Bytes, tope: number): Promise<Bytes> {
   if (typeof DecompressionStream === 'undefined') {
     throw new Error(
       'Este archivo viene comprimido y el navegador no puede abrirlo. Actualiza el navegador o vuelve a exportarlo desde el visor.',
     )
   }
-  const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'))
-  return new Uint8Array(await new Response(stream).arrayBuffer())
+
+  /* Se lee trozo a trozo en vez de con `new Response(stream).arrayBuffer()`
+     porque ese atajo no deja mirar nada hasta que terminó: para cuando se
+     pudiera medir el resultado, la memoria ya se gastó. */
+  const lector = new Blob([data])
+    .stream()
+    .pipeThrough(new DecompressionStream('deflate-raw'))
+    .getReader()
+
+  const trozos: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await lector.read()
+    if (done) break
+    total += value.length
+    if (total > tope) {
+      // Con `.catch` porque cancelar un lector devuelve una promesa, y si
+      // rechaza sin nadie escuchando queda un "unhandled rejection".
+      void lector.cancel().catch(() => undefined)
+      throw new Error(
+        'Ese archivo se expande a un tamaño absurdo al abrirlo; no es un .tour normal.',
+      )
+    }
+    trozos.push(value)
+  }
+
+  const salida = new Uint8Array(total) as Bytes
+  let puesto = 0
+  for (const trozo of trozos) {
+    salida.set(trozo, puesto)
+    puesto += trozo.length
+  }
+  return salida
 }
 
 export async function readZip(blob: Blob): Promise<ZipFile[]> {
@@ -227,8 +275,16 @@ export async function readZip(blob: Blob): Promise<ZipFile[]> {
 
   const decoder = new TextDecoder()
   const files: ZipFile[] = []
+  let salidaTotal = 0
 
   for (let i = 0; i < count; i++) {
+    /* Todos los desplazamientos del directorio salen del propio archivo, así
+       que un .tour manipulado puede mandarlos fuera de rango. Sin esta prueba
+       el DataView lanza un RangeError con un mensaje en inglés que acaba tal
+       cual en la pantalla del usuario. */
+    if (pointer < 0 || pointer + 46 > bytes.length) {
+      throw new Error('El archivo .tour está dañado (directorio central fuera de lugar).')
+    }
     if (view.getUint32(pointer, true) !== SIG_CENTRAL) {
       throw new Error('El archivo .tour está dañado (directorio central ilegible).')
     }
@@ -244,12 +300,19 @@ export async function readZip(blob: Blob): Promise<ZipFile[]> {
     /* Los tamaños de nombre y extra de la cabecera LOCAL pueden diferir de los
        del directorio central, así que se releen ahí para saber dónde empiezan
        los datos. */
-    if (view.getUint32(localOffset, true) !== SIG_LOCAL) {
+    if (localOffset + 30 > bytes.length || view.getUint32(localOffset, true) !== SIG_LOCAL) {
       throw new Error(`El archivo .tour está dañado (cabecera de "${name}").`)
     }
     const localNameLength = view.getUint16(localOffset + 26, true)
     const localExtraLength = view.getUint16(localOffset + 28, true)
     const start = localOffset + 30 + localNameLength + localExtraLength
+    /* `subarray` recorta en silencio: si el archivo se truncó a media
+       transferencia de WhatsApp, entregaría media foto sin decir nada y el
+       error saldría mucho más tarde, al decodificar el JPEG, con un mensaje
+       que no ayuda a nadie. Mejor decirlo aquí. */
+    if (start + compressedSize > bytes.length) {
+      throw new Error(`El archivo .tour está incompleto (le faltan datos de "${name}").`)
+    }
     const raw = bytes.subarray(start, start + compressedSize)
 
     /* Un .tour puede venir de cualquier lado, así que su contenido es dato
@@ -258,7 +321,18 @@ export async function readZip(blob: Blob): Promise<ZipFile[]> {
        generamos nosotros— pero se filtra igual, porque el día que alguien
        agregue una descarga por archivo esto ya está resuelto. */
     if (!name.endsWith('/') && nombreSeguro(name)) {
-      files.push({ name, data: method === 0 ? raw : await inflateRaw(raw) })
+      // El tope de cada entrada baja conforme se llena el total: mil entradas
+      // de 60 MB cada una pasarían el límite por entrada y aun así sumarían
+      // 60 GB.
+      const restante = MAX_SALIDA - salidaTotal
+      const data = method === 0 ? raw : await inflateRaw(raw, Math.min(MAX_ENTRADA, restante))
+      salidaTotal += data.length
+      if (salidaTotal > MAX_SALIDA) {
+        throw new Error(
+          'Ese archivo se expande a un tamaño absurdo al abrirlo; no es un .tour normal.',
+        )
+      }
+      files.push({ name, data })
     }
 
     pointer += 46 + nameLength + extraLength + commentLength

@@ -41,7 +41,11 @@ equirectangular; o se sube una foto 360 que ya se tenga. Después se nombran las
 habitaciones, se colocan los puntos tocando la escena y todo queda guardado en el
 teléfono, con un archivo `.tour` para respaldarlo o pasarlo a otro dispositivo.
 
-Sin servidor, sin cuenta y sin instalar nada: sigue siendo un sitio estático.
+Sin cuenta y sin instalar nada, y el visor es un sitio estático. Hay **una sola
+pieza opcional con servidor**: si quieres poder mandarle una casa a un cliente
+por link, la sección 14 monta un Worker de Cloudflare que la guarda. Sin
+configurarlo, todo lo demás funciona igual y los recorridos no salen del
+teléfono.
 
 Diseñado *mobile-first*: el pulgar izquierdo gira, el derecho hace zoom y
 reencuadra, y los cambios de habitación viven arriba para no estorbar.
@@ -64,8 +68,15 @@ Otros comandos:
 npm run build       # tsc + build de producción
 npm run typecheck   # solo tipos
 npm run lint        # oxlint
+npm test            # vitest run (las pruebas de unidad; sección 12)
 npm run build:pages # compila a docs/ para GitHub Pages
 ```
+
+En cada push a `main` y en cada pull request, `.github/workflows/revision.yml` corre
+`npm run lint`, `npm run build` y `npm test`, más una cuarta cosa que se explica
+en la sección 12. `npm run typecheck` no está en el CI porque `npm run build` ya
+hace `tsc -b`. Node va clavado a la versión del `.nvmrc` y del campo `engines`:
+**22.12**.
 
 Con el servidor de desarrollo corriendo hay dos páginas de diagnóstico:
 
@@ -161,7 +172,9 @@ src/
 ├── lib/
 │   ├── types.ts                Tour, TourScene, Hotspot, Marca, Ficha
 │   ├── math.ts                 * ángulos y utilidades escalares. CERO dependencias
+│   ├── math.test.ts            (las pruebas unitarias viven junto a lo que prueban)
 │   ├── math3d.ts               * las proyecciones pantalla <-> escena (usa three)
+│   ├── math3d.test.ts
 │   ├── tourEngine.ts           * El objeto mutable que conecta UI <-> cámara
 │   ├── useDragLook.ts          Arrastrar para mirar + pellizco para zoom
 │   ├── useKeyboardLook.ts      Flechas / WASD en escritorio
@@ -169,6 +182,7 @@ src/
 │   ├── useEquirectTexture.ts   Carga y caché de panorámicas
 │   ├── useHashRoute.ts         Rutas dentro del # (funcionan en GitHub Pages)
 │   ├── dispositivo.ts          * Qué se permite según la memoria del aparato
+│   ├── webgl.ts                ¿Hay WebGL 2? Una pregunta, una sola respuesta
 │   ├── texturasVivas.ts        Puente que evita que la lista importe three.js
 │   ├── menosMovimiento.ts      prefers-reduced-motion leído UNA vez, no por cuadro
 │   ├── marca.ts                * Vestir el visor con la marca de otra inmobiliaria
@@ -180,12 +194,14 @@ src/
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
 │   │   ├── frames.ts           congelar tomas, brillo, calibrar el FOV
 │   │   ├── plan.ts             a dónde hay que apuntar y en qué orden
+│   │   ├── frames.test.ts      · plan.test.ts
 │   │   ├── stitcher.ts         * la costura equirectangular en la GPU
 │   │   └── importar.ts         fotos 360, panorámicas de celular y GPano
 │   └── store/                  ── guardar y compartir ──
 │       ├── idb.ts              IndexedDB a pelo
 │       ├── tours.ts            CRUD, blobs y resolución a Tour de runtime
 │       ├── zip.ts              escritor y lector de ZIP sin dependencias
+│       ├── zip.test.ts         nombres de entrada que se salen de su carpeta, y topes al inflar
 │       ├── paquete.ts          el archivo .tour (se baja con import(), no pesa al arrancar)
 │       ├── entregar.ts         * compartir el archivo y el tipo del error, aparte y estáticos
 │       ├── migrar.ts           * la frontera: lo que viene de un archivo se filtra campo por campo
@@ -439,8 +455,16 @@ detalles que solo aparecen midiendo:
 
 Barriendo la esfera con más de un millón de direcciones, para dieciséis formas
 de encuadre distintas (de 30° a 100°, en vertical y en horizontal), el plan
-cubre **el 100.0000 % en todas**. Un cuarto completo con la cámara típica de un
-celular en vertical son 29 fotos.
+cubre **el 100.0000 % en todas**.
+
+Cuántas fotos son, con la cámara típica de un celular (66° en el lado largo del
+sensor) y el teléfono **parado**, que es como se sostiene: el fotograma queda de
+52° × 66° y `planDeCaptura` pide **38 fotos** para el cuarto completo, o **12**
+si solo se da la vuelta del horizonte. Eran 29 hasta que el avance entre fotos
+dejó de ser un 80 % fijo y pasó a descontar la tolerancia del disparador: dos
+fotos vecinas pueden salir desviadas 11° cada una y hacia lados contrarios, y
+sin descontarlo el plan prometía una cobertura que la captura real no entregaba.
+Los dos números salen de correr la propia función, no de contarlos a mano.
 
 **La costura** (`src/lib/capture/stitcher.ts`) proyecta **al revés**. Lo
 intuitivo sería deformar la foto y pegarla sobre el lienzo, pero entonces los
@@ -574,10 +598,26 @@ cp recorrido/fotos/*.jpg public/panoramas/     # las panorámicas
 cat recorrido/recorrido.json                   # nombres, ángulos y puntos
 ```
 
-Con eso se llena `src/data/tour.ts` (mismos campos, `image` con `asset(...)`) y
-`npm run build:pages` deja el recorrido publicado en su propio link, sin que el
-cliente tenga que importar nada. El `recorrido.json` ya trae los `hotspots` con
-sus `yaw`/`pitch` en la misma convención, así que es copiar y pegar.
+Con eso se llena `src/data/tour.ts` y `npm run build:pages` deja el recorrido
+publicado en su propio link, sin que el cliente tenga que importar nada.
+
+**No es copiar y pegar el JSON entero**, aunque durante un tiempo esta misma
+sección prometía que sí. El `recorrido.json` que escribe `paquete.ts` tiene un
+envoltorio y unos nombres de campo que el `Tour` de `src/lib/types.ts` no
+conoce. La conversión es corta, pero hay que hacerla:
+
+| En `recorrido.json`                      | En `src/data/tour.ts`              | Qué cambia                                              |
+| ---------------------------------------- | ---------------------------------- | ------------------------------------------------------- |
+| `recorrido.title` / `.subtitle`          | `title` / `subtitle`               | Suben un nivel: en el JSON cuelgan de `recorrido`        |
+| `recorrido.startSceneId`                 | `startSceneId`                     | Igual, un nivel arriba                                   |
+| `recorrido.scenes[]`                     | `scenes[]`                         | Igual, un nivel arriba                                   |
+| `scene.archivo` (`fotos/000.jpg`)        | `image: asset('panoramas/000.jpg')` | **Cambia de nombre y de ruta.** Sin `asset()` da 404 en Pages |
+| `scene.miniatura` (`fotos/000.min.jpg`)  | `thumbnail: asset(...)`            | Mismo cambio de nombre y de ruta. Es opcional            |
+| `scene.id` / `name` / `initialYaw`       | iguales                            | —                                                        |
+| `scene.hotspots[]`                       | `hotspots[]`                       | **Esto sí es copiar y pegar**: mismo tipo `Hotspot`, mismos `yaw`/`pitch` en grados |
+| `formato`, `version`, `exportadoEn`      | no existen                         | Se tiran: son del sobre del `.tour`                      |
+| `recorrido.id`, `recorrido.createdAt`    | no existen                         | Se tiran                                                 |
+| `scene.origin`, `coverageDeg`, `createdAt` | no existen                       | Se tiran: son de la captura, no del recorrido publicado  |
 
 ---
 
@@ -681,7 +721,9 @@ como `marca/logo.png`, y al importarlo el tipo del Blob se decide por la
 
 ## 8. Ajustes rápidos
 
-Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
+Casi todo son props de `<CameraRig>` (que se monta dentro del `<Canvas>` de
+`src/components/tour/Escena360.tsx`, no de `TourViewer.tsx`) o de `<Joystick>`
+(ese sí en `TourViewer.tsx`):
 
 | Qué quieres cambiar              | Dónde                                 | Valor actual |
 | -------------------------------- | ------------------------------------- | ------------ |
@@ -716,8 +758,61 @@ Casi todo son props de `<CameraRig>` (en `TourViewer.tsx`) o de `<Joystick>`:
   `overscroll-behavior: none`, que también está puesto pero es de Safari 16: en
   un iPhone más viejo vuelve el rebote elástico al llegar al borde. Molesta y ya;
   el scroll de las hojas sigue funcionando.
-- `dpr={[1, 2]}`: se limita el device pixel ratio; renderizar a 3x en un celular
-  moderno tira el framerate a la mitad sin que se note la diferencia.
+- `dpr={aparato().dpr}`: se limita el device pixel ratio; renderizar a 3x en un
+  celular moderno tira el framerate a la mitad sin que se note la diferencia. No
+  es un número fijo: `src/lib/dispositivo.ts` entrega `[1, 2]` en un teléfono
+  normal y `1` a secas en uno modesto, junto con el ancho de textura y cuántas
+  fotos precargar (sección 10).
+
+### Hasta qué iPhone llega: son dos pisos, no uno
+
+La pregunta "¿funciona en mi celular?" no tiene una sola respuesta, y tratarla
+como si la tuviera es lo que produce pantallas negras sin explicación. Hay dos
+requisitos distintos y viven en capas distintas:
+
+| Qué se quiere hacer | Desde | Qué lo limita |
+| -------------------- | ----- | ------------- |
+| Cargar la página, ver el menú, editar el recorrido, importar y exportar el `.tour` | **Safari 13** (iOS 13, de 2019) | Que el navegador pueda **leer** el archivo JavaScript y **pintar** el CSS |
+| Ver el recorrido en 3D y capturar con la cámara | **Safari 15** (iOS 15, de 2021) | WebGL 2: three.js r185 pide un contexto `webgl2` y nada más — la rama de WebGL 1 se quitó en r163 |
+
+El piso de abajo cuesta dos cosas, y las dos son fáciles de romper sin darse
+cuenta:
+
+- **El `target` del build** (`vite.config.ts`) baja hasta `safari13`. Vite
+  compila por defecto para Safari 16 y arriba, y un navegador que no entiende la
+  sintaxis no falla a medias: no ejecuta nada y la pantalla se queda negra.
+- **El plugin `aplanarCapas`** (también en `vite.config.ts`). **No lo quites.**
+  Tailwind v4 envuelve todo lo que genera en `@layer`, y `@layer` existe desde
+  Safari 15.4: una regla-arroba que el navegador no conoce no se ignora a
+  medias, se descarta **ella y su bloque entero**. Medido en la hoja publicada:
+  44 109 de 48 672 bytes, el **90.6 %**, viven dentro de una capa. Ahí está el
+  preflight, los colores, `.absolute`, `.flex`, `.hud-glass` y hasta la propia
+  `.alto-pantalla` que se escribió para que un iPhone viejo no se quedara sin
+  altura. Sin el plugin, en Safari 13 la app monta y se pinta **sin una sola
+  regla de estilo**, y encima falla en silencio: la red de seguridad de
+  `index.html` se dispara cuando `#root` se queda vacío o atorado en un velo de
+  carga, y una app montada sin estilos no es ninguna de las dos cosas — tiene
+  hijos y ya terminó. No hay opción de configuración que lo evite, y Lightning
+  CSS con targets `safari13` tampoco: la semántica de `@layer` es de **orden**,
+  no de sintaxis, y no existe forma general de bajarla.
+
+El piso de arriba lo vigila `src/lib/webgl.ts`, que pide `webgl2` **y nada más**
+antes de montar el `<Canvas>`. Aceptar un contexto WebGL 1 como bueno era peor
+que no detectar nada: el canvas se montaba y el motor reventaba adentro, y ese
+error no lo atrapa la frontera de React —R3F crea el renderer en un `configure()`
+asíncrono al que nadie le pone `.catch`, o sea que es una promesa rechazada y no
+una excepción de render—. Lo que se veía en un iPhone con iOS 13 no era una
+pantalla negra: era el velo de "Cargando panorámica…" girando para siempre, que
+para diagnosticar es todavía peor.
+
+Por eso el mensaje de `ViewerGuard` cambia según **cuál** de los dos falta. Si
+falta WebGL 2 no dice "cierra pestañas y vuelve a cargar": ahí no hay nada que
+cerrar, y mandar a alguien a repetir un gesto que no puede funcionar es peor que
+no decir nada.
+
+Para saber en qué piso está un teléfono concreto sin adivinar, ábrele
+**`/prueba.html`**: trae una fila de "WebGL 2 (lo que necesita el visor)" con el
+mismo criterio que aplica el visor, y otra de "WebGL 1" solo como dato.
 
 ---
 
@@ -944,18 +1039,54 @@ marcador.
 
 ### Si el teléfono pidió menos movimiento
 
-Los puntos de enlace traen un aro que late para que se noten. Es adorno, y una
-animación infinita mantiene despierto al compositor del navegador — justo lo
-contrario de lo que hace el resto del visor. Con **`prefers-reduced-motion`**
-activo (iOS: Accesibilidad › Movimiento › Reducir movimiento) el aro se queda
-quieto y translúcido; el marcador se sigue distinguiendo por su color.
+Quien enciende **"Reducir movimiento"** (iOS: Accesibilidad › Movimiento;
+Android: "Quitar animaciones") no está pidiendo una interfaz más sobria: hay
+gente a la que un paneo suave o un fundido a pantalla completa le provoca mareo
+de verdad. Un visor 360 es de lo peor en ese sentido, porque el movimiento ocupa
+**toda** la pantalla y no queda un borde quieto donde descansar la vista.
 
-La rueda de "cargando" no se toca: ahí el movimiento sí dice algo —que la foto
-viene en camino— y congelarla se leería como que se trabó.
+Durante un tiempo esta sección dio el ajuste por atendido cuando solo lo estaba
+a medias: se apagaba el adorno y se dejaba en pie lo que de verdad marea. Hoy
+son **tres** cosas, y las tres cuelgan de `src/lib/menosMovimiento.ts`:
 
-La regla vive **fuera** de `@layer base`. En Tailwind v4 las capas mandan más
-que la especificidad: dentro de `base`, `.animate-ping` habría perdido siempre
-contra la utilidad del mismo nombre, que vive en `utilities`.
+| Qué se apaga | Dónde | Qué pasa en su lugar |
+| ------------- | ----- | -------------------- |
+| El aro que late en los puntos de enlace | `src/index.css`, `@media (prefers-reduced-motion: reduce)` | El aro se queda quieto y translúcido; el marcador se sigue distinguiendo por su color |
+| La inercia de la cámara | `CameraRig.tsx`, el suavizado | La cámara se planta en su objetivo de un solo cuadro, sin `damp` |
+| El fundido entre habitaciones | `PanoSphere.tsx`, `fadeSeconds` | Pasa de 0.55 s a 0: el cuarto nuevo aparece de golpe |
+
+La que más importa de las tres es la del medio, y no por el arrastre: cuando se
+arrastra con el dedo el objetivo va pegado al dedo de todos modos y el suavizado
+casi no se nota. La que marea es la animación de los puntos — tocar un hotspot
+dispara un paneo de casi un segundo con la panorámica entera barriendo la
+pantalla.
+
+Tres detalles del código que no son obvios:
+
+- **`menosMovimiento()` es una función, no una constante.** El ajuste se puede
+  cambiar con la aplicación abierta (en iOS está a dos toques en el centro de
+  control). Leerlo una sola vez al arrancar dejaría al visor moviéndose igual
+  hasta recargar la página.
+- **El `MediaQueryList` se guarda.** `CameraRig` pregunta esto en cada cuadro, o
+  sea hasta 120 veces por segundo, y `matchMedia()` crea un objeto nuevo en cada
+  llamada: sería basura que alguien tiene que recoger justo mientras se dibuja.
+  Se crea una vez y se le lee `.matches`, que es una lectura viva.
+- **En `CameraRig` va después del clamp de pitch.** Copiar el objetivo antes de
+  toparlo dejaría el pitch pasarse de los 85° y la panorámica se retorcería en el
+  polo, que es exactamente lo que el clamp evita.
+
+La rueda de "cargando" **no** se toca: ahí el movimiento sí dice algo —que la
+foto viene en camino— y congelarla se leería como que se trabó.
+
+La regla CSS vive **fuera** de `@layer base`, y se emite **después** de las
+utilidades. En Tailwind v4 las capas mandan más que la especificidad: dentro de
+`base`, `.animate-ping` habría perdido siempre contra la utilidad del mismo
+nombre, que vive en `utilities`. Y esa colocación es también lo que hace que el
+plugin `aplanarCapas` (sección 9) sea seguro: al quitar los envoltorios en el
+bundle de producción las dos reglas quedan con la misma especificidad (0-1-0) y
+gana la de más abajo, que es la que ya ganaba. Es la única regla del proyecto que
+depende del orden de las capas; si algún día se mueve dentro de una, hay que
+revisar el plugin.
 
 ---
 
@@ -986,15 +1117,80 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Los doce arneses, y por qué son arneses y no un framework
+### Lo que corre solo: `npm test`, los doce arneses y el CI
 
-No hay Jest ni Vitest, y es deliberado: lo que este proyecto necesita verificar
+```bash
+npm test        # vitest run
+```
+
+Las pruebas viven **junto al archivo que prueban**, con el sufijo `.test.ts`.
+Son ocho archivos, y ninguno toca el DOM: geometría, bytes, ZIP, el anillo de
+la costura, los metadatos de la foto, la publicación y el giroscopio.
+
+| Archivo                        | Qué defiende |
+| ------------------------------ | ------------ |
+| `src/lib/math.test.ts`         | `wrap180` en sus bordes (−180 y 540 tienen que dar 180, nunca −180), `wrap360`, el camino corto de `shortestDelta`, y la ida y vuelta `vector3ToYawPitch(yawPitchToVector3(y, p))` sobre una malla de direcciones |
+| `src/lib/store/zip.test.ts`    | `readZip(createZip(...))` con acentos y con entradas de más de 64 kB, y sobre todo la tabla de `nombreSeguro`: `'../x'`, `'/x'`, `'a\\b'`, `'a/../b'` tienen que salir rechazados. Es la que más vale: un `.tour` lo manda un desconocido |
+| `src/lib/capture/frames.test.ts` | `fovDe` y `ladoLargoDesdeHorizontal` como inversas en cualquier forma de fotograma, que el campo corto salga de la tangente y no de una regla de tres, y `mediana` con lista vacía, impar y par (y que no reordene el arreglo que le pasaron) |
+| `src/lib/capture/plan.test.ts` | Que el plan de captura cubra de verdad: cada dirección de la esfera tiene que caer dentro del **rectángulo** hfov × vfov de alguna foto, más cenit, nadir, ids sin repetir y cada anillo cerrando en el yaw 360 sin salto |
+| `src/lib/math3d.test.ts`       | `yawPitchToVector3` y `vector3ToYawPitch` como inversas: un signo volteado pone un punto del lado equivocado |
+| `src/lib/capture/anillo.test.ts` | `medirDeriva` contra un cuarto sintético con una deriva conocida inyectada; caza un signo volteado o un recorrido al revés |
+| `src/lib/capture/xmp.test.ts`  | el paquete GPano dentro de un JPEG real de libjpeg, y `rumboDelCentro` contra un modelo físico escrito aparte |
+| `src/lib/publicar.test.ts`     | el manifiesto publicado, los nombres de foto que el Worker acepta, y la llave |
+| `src/lib/useGyroLook.test.ts`  | la aritmética del offset del giroscopio (en `src/lib/giro.ts`), la zona muerta, y que `'prompt'` no es `'denied'` |
+
+Esa última merece una nota, porque el invariante fácil de escribir está mal. La
+cobertura de una foto **no** es un casquete de radio `hfov/2`: es un rectángulo
+de hfov × vfov, y las esquinas del rectángulo llegan más lejos que su lado
+corto. Con la prueba escrita como casquete sale roja el día uno **sin que haya
+nada roto**: con el teléfono parado y el lente de 66° la peor dirección queda a
+27.0° del centro de su foto contra los 26.0° que el casquete exigiría, y con el
+gran angular de 100° a 45.0° contra 41.8°. La correcta proyecta cada dirección
+al marco local de cada punto y revisa `|x/z| ≤ tan(hfov/2)` **y**
+`|y/z| ≤ tan(vfov/2)`, por separado.
+
+Lleva además un **control negativo**, que es la parte que hace que la prueba
+valga algo: si cada foto abarcara un 15 % menos de lo planeado, tiene que
+aparecer un hueco. Sin eso, la prueba de arriba podría estar pasando por un
+signo mal puesto en la cuenta y no porque el plan esté bien.
+
+`vitest.config.ts` está aparte del `vite.config.ts` a propósito: si no existe,
+Vitest levanta React, Tailwind y el plugin que aplana las capas del CSS para
+correr ocho archivos de aritmética. `environment: 'node'` porque ninguna toca
+el DOM.
+
+Y todo eso lo vuelve a correr **`.github/workflows/revision.yml`** en cada push
+y en cada pull request, con la versión de Node clavada a la misma que dicen
+`.nvmrc` y el campo `engines` del `package.json` (22.12). Es un solo workflow con
+dos trabajos: primero `npm ci`, `npm run lint` (con cero avisos permitidos),
+`npm run typecheck`, `npm run build`, `npm test`, los cinco arneses que no
+necesitan navegador, el peso del arranque (falla arriba de 400 kB), el
+`typecheck` del `worker/` y el gate de `docs/`; después, con un servidor de
+desarrollo levantado, los siete arneses de Playwright.
+
+El gate de `docs/` es el paso que menos se ve venir:
+
+```yaml
+- run: npm run build:pages && git add -A docs && git diff --cached --quiet -- docs
+```
+
+El sitio publicado es la carpeta `docs/` guardada en el repositorio, así que se
+puede cambiar el código, olvidar regenerarla y dejar el link mostrando la
+versión de hace tres semanas sin que nadie se entere. El `git add -A` no es de
+adorno: cada build renombra los archivos con un hash del contenido, o sea que un
+cambio en el código no *modifica* `index-abc123.js`, crea un `index-def456.js`
+nuevo, que para git es un archivo sin seguir. `git diff` a secas no mira los
+archivos sin seguir, así que el paso pasaba en verde con `docs/` desactualizado,
+que es exactamente lo que se quería atrapar.
+
+### Los doce arneses, y por qué además de Vitest hay arneses
+
+Vitest cubre la aritmética. Lo que este proyecto también necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
 mide 44 px, si un color se lee sobre otro— no se prueba con `expect(x).toBe(y)`
 sobre una función pura. Se prueba **midiendo el navegador de verdad**. Así que
 cada arnés es un script que se corre solo, imprime lo que midió y sale con
-código 1 si algo no cuadra. `.github/workflows/revision.yml` los corre todos en
-cada push, junto con `lint`, `typecheck`, `build` y el peso del arranque.
+código 1 si algo no cuadra. El mismo `revision.yml` los corre todos.
 
 | Arnés | Qué afirma | Navegador |
 | --- | --- | --- |
@@ -1030,6 +1226,10 @@ encabezado de los arneses que las incumplieron:
    `<input>` normal en el `<body>` cambia el layout, y eso dispara el
    `ResizeObserver` que por contrato llama a `invalidar()`. "Arreglar" el
    producto para callar ese 2 habría sido perseguir un fantasma.
+
+Lo de aquí abajo es de dónde salieron esos arneses: las mediciones que se
+hicieron a mano al construir cada pieza, y las que siguen siendo a mano (la
+costura en GPU).
 
 ### El visor
 
@@ -1068,8 +1268,11 @@ cadena de matemáticas. La idea: si la costura está bien hecha, tiene que poder
 4. Compara el resultado contra el original.
 
 Un signo invertido, una costura que no cierra, un polo roto o una imagen
-volteada disparan la diferencia. Resultado con 30 tomas simuladas de una cámara
-vertical de 40° × 66°:
+volteada disparan la diferencia.
+
+La cámara simulada es de 240×426 px, o sea un teléfono parado, y de ahí salen
+40.1° × 66.0°. El número de tomas **no está escrito a mano** en la página: se lo
+pide a `planDeCaptura`, que hoy devuelve **102** para esa forma de fotograma.
 
 | Medición                                     | Resultado                    |
 | -------------------------------------------- | ---------------------------- |
@@ -1077,6 +1280,12 @@ vertical de 40° × 66°:
 | Diferencia media contra el original          | **1.40 / 255 niveles** ✓     |
 | N / E / S / O y el cenit en su lugar          | Δ ≤ 2 niveles ✓              |
 | Tiempo de costura                            | 19 ms por toma               |
+
+> Los números de esa tabla son de la última corrida registrada, cuando el plan
+> pedía 30 tomas para el mismo lente. Después el avance entre fotos dejó de ser
+> un 80 % fijo y pasó a descontar la tolerancia del disparador, y el plan subió
+> a 102. El tiempo por toma no depende de cuántas sean, pero la diferencia media
+> sí puede haberse movido: hay que volver a abrir la página para refrescarla.
 
 La misma página verifica la **calibración del campo de visión**: simula dos
 tomas con un lente conocido y un giro conocido, y comprueba que el estimador
@@ -1113,6 +1322,7 @@ valor real.
 | La rueda hace zoom también encima de un marcador (antes no)                 | ✓         |
 | Todo lo que se toca mide ≥ 44 px, en 11 pantallas y un iPhone SE            | ✓         |
 | Con «reducir movimiento», el aro deja de latir y la rueda sigue girando     | ✓         |
+| Con «reducir movimiento», la cámara no arrastra inercia y el fundido entre habitaciones no ocurre | sin prueba automática |
 | Cambio de habitación: el congelamiento bajó de 900 ms a ~600 (170 en gama baja) | ✓     |
 | Errores de consola en todo el recorrido anterior                  | ninguno ✓ |
 
@@ -1130,8 +1340,15 @@ git add docs && git commit -m "publica el visor" && git push
 
 En el repositorio: **Settings → Pages → Source: Deploy from a branch → `main` /
 `docs`**. En un par de minutos queda en
-`https://<usuario>.github.io/<repositorio>/`, que es un link normal: se abre en
-cualquier celular, sin instalar nada y sin cuenta.
+`https://<usuario>.github.io/<repositorio>/`, que es un link normal: nadie tiene
+que instalar nada ni crear una cuenta.
+
+Aquí decía "se abre en cualquier celular" y eso no es cierto tal cual. La página
+**carga** en cualquier celular desde Safari 13 —para eso está el target del
+build y el plugin que aplana las capas del CSS—, pero el recorrido en 3D pide
+WebGL 2, que es Safari 15. En un iPhone con iOS 13 o 14 el link abre, se ve la
+interfaz y sale un mensaje explicando qué falta, en vez de una pantalla negra.
+Los dos pisos, con lo que se puede hacer en cada uno, están en la sección 9.
 
 Dos detalles que hacen que esto funcione y que conviene no romper:
 
@@ -1148,9 +1365,107 @@ cualquier hosting.
 
 ---
 
-## 14. Siguientes pasos naturales
+## 14. Enseñar una casa por link (Cloudflare)
 
-- Planta arquitectónica con la posición de cada escena.
+Hasta aquí, un recorrido armado en el celular vive **en ese celular**. La ruta
+`#/ver/<id>` parece compartible, pero el id se busca en el almacén de quien
+abre: al cliente le sale "no se encontró". La única forma de enseñar una casa
+era mandar el archivo `.tour` y pedirle al otro que lo importara — que nadie
+hace.
+
+Esta sección lo arregla. Es la **única parte del proyecto que tiene servidor**, y
+es opcional: si no la configuras, todo lo demás funciona exactamente igual.
+
+### Qué se monta
+
+Un Worker de Cloudflare con un bucket de R2 detrás (`worker/`). Guarda las casas
+publicadas y las entrega. Nada más: sin cuentas, sin base de datos, sin sesiones.
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npx wrangler r2 bucket create visor-tours
+npx wrangler secret put CLAVE_PUBLICACION     # inventa una larga y guárdala
+npx wrangler deploy
+```
+
+Wrangler imprime la dirección al terminar. Con esa dirección se compila el
+visor:
+
+```bash
+cd ..
+VITE_PUBLICAR_BASE=https://visor-tours.TU-CUENTA.workers.dev npm run build:pages
+```
+
+Y en `worker/wrangler.toml`, `APP_BASE` tiene que apuntar de vuelta a donde vive
+el visor (hoy, la URL de GitHub Pages). El Worker la necesita para rebotar a
+quien abra el link.
+
+Sin `VITE_PUBLICAR_BASE`, el botón de publicar **no aparece** y el visor se
+comporta como siempre.
+
+### Cómo se usa
+
+En el editor de un recorrido, **Enseñar por link → Publicar**. La primera vez
+pide la clave; queda guardada en ese teléfono. Al terminar sale el link, listo
+para pegar en WhatsApp.
+
+Cuando la casa se vende: **Quitar de internet**. El link deja de abrir y las
+fotos se borran del bucket.
+
+### Las tres decisiones, y por qué
+
+**Quién puede subir · una clave compartida.** Viaja en el encabezado
+`Authorization` y vive como secreto del Worker. **No está en el paquete de la
+app**, y eso no es un descuido: el JavaScript de un sitio estático lo lee
+cualquiera, así que una clave metida ahí sería pública el día uno. La escribe la
+persona una vez en su teléfono. Si se pierde un aparato, se cambia el secreto
+del Worker con `wrangler secret put` y listo.
+
+Sin esto, cualquiera que encuentre la dirección puede llenarte el bucket, y la
+cuenta la pagas tú.
+
+**Quién puede ver · quien tenga el link.** La llave son 128 bits de azar (26
+letras de un alfabeto sin caracteres que se confundan): no se llega probando.
+Todas las respuestas llevan `X-Robots-Tag: noindex, nofollow` y hay un
+`robots.txt` que cierra el sitio entero — una casa en venta puede estar
+habitada, y su interior no tiene por qué quedar en Google. Es lo mismo que hacen
+Matterport y Kuula.
+
+**Qué se puede subir · solo JPEG**, con tope por foto, por cantidad y por peso
+total. El manifiesto se vuelve a sanear en el Worker aunque el teléfono ya lo
+haya hecho: lo que llega por la red es de quien tenga la clave, y una clave
+compartida entre varios teléfonos acaba en más manos de las previstas.
+
+### El detalle que hace que WhatsApp enseñe la tarjeta
+
+El link que se comparte apunta al Worker (`/t/<llave>`), no directo al visor. El
+robot que arma la vista previa de WhatsApp **no ejecuta JavaScript**: si le
+mandáramos la app, leería un `index.html` vacío y enseñaría un link pelón. Esa
+ruta devuelve una página con el título, la descripción y la miniatura ya
+escritos en el HTML, y a una persona la rebota al visor.
+
+El rebote va en JavaScript y no con un 302 justamente porque un 302 se lo
+llevaría también el robot.
+
+### Qué cuesta
+
+El plan gratis de Cloudflare da 10 GB en R2 y 100 000 peticiones al día. Una
+casa de seis cuartos son unos 9 MB, así que caben más de mil casas antes de
+pagar nada.
+
+---
+
+## 15. Siguientes pasos naturales
+
+- Planta arquitectónica con la posición de cada escena, con el cono de hacia
+  dónde se está mirando. Depende de tener un plano por casa.
+- Compensar la exposición contra la mediana de todas las tomas y no contra la
+  primera: hoy, si la primera foto apunta a la ventana, toda la panorámica
+  queda sesgada. En Safari no se puede bloquear la exposición por hardware, así
+  que el software es la única defensa.
+- Recoser en un Web Worker, para que armar la panorámica no congele la pantalla.
 - Alineación fina entre tomas por correlación, no solo por sensores. Cuesta
   menos de lo que parece: `desplazamientoHorizontal()` en `capture/frames.ts`
   **ya es** correlación cruzada normalizada con afinado subpíxel por parábola, y
@@ -1223,8 +1538,21 @@ cualquier hosting.
   captura y no lo leía nadie en todo `src/`.
 - ❌ **Modo VR con WebXR** — descartado, y la razón está abajo.
 
+Dos que estaban en esta lista y **ya están hechas**: mirar moviendo el teléfono
+(sección 5) y la alineación por correlación entre tomas, que hoy corrige la
+deriva del giroscopio al cerrar la vuelta.
+
 ### Lo que se consideró y se dejó fuera, con su razón
 
+- **Modo VR con WebXR (`@react-three/xr`).** Estaba en la lista de siguientes
+  pasos de aquí arriba y no debía estar: **Safari no implementa la WebXR Device
+  API** ni en iOS ni en iPadOS (solo en visionOS 2). Para el objetivo declarado
+  de este proyecto —que una casa se enseñe desde el iPhone que traiga quien
+  sea— está muerto: no es que se vea mal, es que la API no existe. Lo que sí da
+  casi toda esa sensación por una fracción del trabajo es el **giroscopio al
+  ver**, que está en la lista de arriba y cuya parte cara —permiso de iOS,
+  ángulo de pantalla, fusión con `webkitCompassHeading` para el norte real— ya
+  está escrita en `src/lib/capture/orientation.ts`.
 - **Texturas comprimidas KTX2/Basis.** La cuenta es correcta: una textura
   comprimida se queda comprimida en la tarjeta gráfica y ahorraría de dos a
   ocho veces la memoria. Pero las panorámicas de este visor **las produce el

@@ -36,14 +36,15 @@ jobs:
   # Lo rápido: tipos, lint y que el build salga. Segundos, no minutos.
   # ──────────────────────────────────────────────────────────────────────────
   estatico:
-    name: Tipos, lint y build
+    name: Tipos, lint, build y pruebas
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # La misma que dicen .nvmrc y `engines` del package.json.
+          node-version: '22.12'
           cache: npm
 
       - run: npm ci
@@ -53,6 +54,12 @@ jobs:
 
       - name: Tipos
         run: npm run typecheck
+
+      # Vitest: la aritmética que no necesita navegador (geometría, ZIP, XMP, el
+      # anillo de la costura, la publicación, el offset del giroscopio). Viven
+      # junto a lo que prueban, con sufijo .test.ts.
+      - name: Pruebas unitarias
+        run: npm test
 
       - name: Build
         run: npm run build
@@ -124,6 +131,20 @@ jobs:
             exit 1
           fi
 
+      # El Worker de Cloudflare (publicar por link) es un paquete aparte con sus
+      # propias dependencias; aquí solo se comprueba que compile.
+      - name: El Worker compila
+        working-directory: worker
+        run: npm ci && npm run typecheck
+
+      # El sitio publicado es la carpeta `docs/` guardada en el repositorio, así
+      # que se puede cambiar el código y dejar el link mostrando la versión de
+      # hace tres semanas. El `git add -A` no es adorno: cada build renombra los
+      # archivos con un hash, o sea que el build nuevo son archivos SIN SEGUIR,
+      # y `git diff` a secas no los mira.
+      - name: docs/ está al día
+        run: npm run build:pages && git add -A docs && git diff --cached --quiet -- docs
+
   # ──────────────────────────────────────────────────────────────────────────
   # Los arneses de Playwright que hasta ahora solo se corrían a mano.
   #
@@ -142,7 +163,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          # La misma que dicen .nvmrc y `engines` del package.json.
+          node-version: '22.12'
           cache: npm
 
       - run: npm ci

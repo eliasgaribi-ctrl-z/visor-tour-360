@@ -31,10 +31,10 @@ export { PaqueteError, entregarArchivo, mensajeDePaquete } from './entregar'
  * El `.tour` es el respaldo que no depende de eso, y de paso es cómo se pasa un
  * recorrido de un teléfono a otro. Por dentro es un ZIP normal:
  *
- *   recorrido.json           qué habitaciones hay, cómo se llaman, sus puntos
- *   fotos/<escena>.jpg       la panorámica de cada habitación
- *   fotos/<escena>.min.jpg   su miniatura
- *   marca/logo.png           el logo de la inmobiliaria, si el recorrido trae
+ *   recorrido.json     qué habitaciones hay, cómo se llaman, sus puntos
+ *   fotos/000.jpg      la panorámica de la primera habitación
+ *   fotos/000.min.jpg  su miniatura
+ *   marca/logo.png     el logo de la inmobiliaria, si el recorrido trae
  *
  * Se puede abrir con cualquier descompresor, así que las fotos nunca quedan
  * secuestradas dentro de un formato propio.
@@ -147,14 +147,21 @@ export async function exportarTour(
       continue
     }
 
-    const archivo = `${CARPETA}/${scene.id}.jpg`
+    /* El nombre dentro del ZIP va por número de habitación y no por su id.
+       El id de un recorrido importado viene de un archivo ajeno, así que al
+       reexportarlo se convertiría en el nombre de una entrada del ZIP: justo
+       lo que cualquier descompresor va a escribir en el disco de quien lo
+       abra. Por número, el nombre siempre lo ponemos nosotros. */
+    const numero = String(indice).padStart(3, '0')
+
+    const archivo = `${CARPETA}/${numero}.jpg`
     entradas.push({ name: archivo, data: await bytes(foto) })
 
     let miniatura: string | undefined
     if (scene.thumbId) {
       const mini = await getImage(scene.thumbId)
       if (mini) {
-        miniatura = `${CARPETA}/${scene.id}.min.jpg`
+        miniatura = `${CARPETA}/${numero}.min.jpg`
         entradas.push({ name: miniatura, data: await bytes(mini) })
       }
     }
@@ -271,6 +278,83 @@ async function marcaParaArchivo(
   return marca
 }
 
+/* ------------------------------------------------- LO QUE VIENE DE AFUERA */
+
+/*
+ * Un .tour llega por WhatsApp y lo pudo escribir cualquiera: por dentro es un
+ * ZIP con un JSON, y editar ese JSON a mano toma un minuto. Nada de lo que
+ * traiga entra tal cual.
+ *
+ * Los topes de largo no son manía de orden. Un nombre de habitación de dos
+ * megabytes se vuelve a medir y a pintar en cada render de la lista y deja el
+ * teléfono clavado; el cuerpo de un punto de información sin límite hace lo
+ * mismo dentro del visor, que ya va justo de memoria con las panorámicas.
+ */
+const texto = (v: unknown, max: number, porDefecto: string) =>
+  typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : porDefecto
+
+const textoOpcional = (v: unknown, max: number) =>
+  typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined
+
+/**
+ * Deja los puntos de un manifiesto ajeno en algo que el visor pueda dibujar.
+ *
+ * Lo que no se entiende se tira en vez de intentar componerlo: un punto con un
+ * `kind` desconocido no se sabe qué dibujaría, y un link con destino vacío no
+ * lleva a ningún lado pero sí se guarda y reaparece cada vez que el recorrido
+ * se vuelve a exportar.
+ *
+ * El tope de cien puntos por habitación es de sobra —en el editor de verdad no
+ * pasan de una docena— y evita que un archivo con cien mil deje la escena sin
+ * responder al tacto.
+ */
+function saneaHotspots(crudo: unknown): Hotspot[] {
+  if (!Array.isArray(crudo)) return []
+
+  const num = (v: unknown, porDefecto = 0) =>
+    typeof v === 'number' && Number.isFinite(v) ? v : porDefecto
+
+  const vistos = new Set<string>()
+  const salida: Hotspot[] = []
+
+  for (const h of crudo.slice(0, 100)) {
+    if (!h || typeof h !== 'object') continue
+    const c = h as Record<string, unknown>
+    if (c.kind !== 'link' && c.kind !== 'info') continue
+
+    let id = typeof c.id === 'string' && c.id ? c.id.slice(0, 64) : newId('punto')
+    // Dos puntos con el mismo id rompen las listas de React: el segundo se
+    // dibuja donde iba el primero y el toque abre el panel equivocado.
+    if (vistos.has(id)) id = newId('punto')
+    vistos.add(id)
+
+    const base = {
+      id,
+      yaw: num(c.yaw),
+      // ±85° es el mismo límite que usa el editor: en el polo, el marcador se
+      // estira hasta ocupar todo el ancho de la pantalla.
+      pitch: Math.max(-85, Math.min(85, num(c.pitch))),
+      label: texto(c.label, 80, 'Punto'),
+    }
+
+    if (c.kind === 'link') {
+      if (typeof c.to !== 'string' || !c.to) continue
+      salida.push({
+        ...base,
+        kind: 'link',
+        to: c.to.slice(0, 64),
+        arriveYaw: typeof c.arriveYaw === 'number' && Number.isFinite(c.arriveYaw)
+          ? c.arriveYaw
+          : undefined,
+      })
+    } else {
+      salida.push({ ...base, kind: 'info', body: textoOpcional(c.body, 2000) })
+    }
+  }
+
+  return salida
+}
+
 /**
  * Lee un archivo .tour y lo guarda como un recorrido NUEVO.
  *
@@ -326,7 +410,12 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
   const escenas: StoredScene[] = []
   const blobs: { id: string; blob: Blob }[] = []
   /* El archivo viene de fuera y pudo editarse a mano. Dos habitaciones con el
-     mismo id romperían las listas de React, así que la segunda se renombra. */
+     mismo id romperían las listas de React y harían que un punto llevara a la
+     habitación equivocada, así que la segunda se renombra. Los links que
+     apuntaban a ese id se quedan como estaban, o sea llevando a la PRIMERA
+     habitación, que es la que conservó el id y la interpretación razonable de
+     un archivo así; los que queden apuntando a la nada los filtra `resolveTour`
+     antes de dibujar nada. */
   const idsVistos = new Set<string>()
 
   for (const crudo of manifiesto.recorrido.scenes) {
@@ -362,16 +451,25 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
      * con el id y la renombrada queda inalcanzable. Eso es la única lectura
      * honesta de un archivo ambiguo: la habitación se conserva y se puede volver
      * a enlazar desde el editor, pero nadie inventa a dónde llevaba una puerta. */
-    const id = escena.id && !idsVistos.has(escena.id) ? escena.id : newId('esc')
+    /* Del id solo se acepta la forma que produce `newId`: letras, dígitos,
+       guion y guion bajo. No es paranoia gratuita —hoy el id no toca el disco—
+       pero sí termina en la URL (`#/ver/...`) y en el nombre de una entrada del
+       ZIP la próxima vez que se exporte, y ahí una cadena arbitraria sí hace
+       daño. Lo que no pase el filtro se cambia por un id nuevo. */
+    const crudoId = typeof escena.id === 'string' ? escena.id : ''
+    const idOriginal = /^[A-Za-z0-9_-]{1,64}$/.test(crudoId) ? crudoId : ''
+    const id = idOriginal && !idsVistos.has(idOriginal) ? idOriginal : newId('esc')
     idsVistos.add(id)
 
     escenas.push({
       id,
-      name: escena.name,
+      name: texto(escena.name, 60, 'Habitación'),
       imageId,
       thumbId,
-      initialYaw: escena.initialYaw,
-      hotspots: escena.hotspots,
+      initialYaw: typeof escena.initialYaw === 'number' && Number.isFinite(escena.initialYaw)
+        ? escena.initialYaw
+        : 0,
+      hotspots: saneaHotspots(escena.hotspots),
       origin: escena.origin,
       coverageDeg: escena.coverageDeg,
       rumbo: escena.rumbo,
@@ -423,8 +521,8 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     ficha,
     // Un booleano de verdad, o nada: `"sí"` o `1` en el archivo no encienden nada.
     autogiro: manifiesto.recorrido.autogiro === true ? true : undefined,
-    title: manifiesto.recorrido.title || 'Recorrido importado',
-    subtitle: manifiesto.recorrido.subtitle,
+    title: texto(manifiesto.recorrido.title, 80, 'Recorrido importado'),
+    subtitle: textoOpcional(manifiesto.recorrido.subtitle, 120),
     startSceneId: escenas.some((s) => s.id === manifiesto.recorrido.startSceneId)
       ? manifiesto.recorrido.startSceneId
       : escenas[0].id,

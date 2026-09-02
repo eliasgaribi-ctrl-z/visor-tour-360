@@ -1,4 +1,5 @@
-import type { ReactNode } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
+import type { KeyboardEvent, ReactNode } from 'react'
 
 /**
  * Piezas compartidas de las pantallas de creación.
@@ -237,6 +238,13 @@ export function Cargando({ texto = 'Un momento…' }: { texto?: string }) {
   )
 }
 
+/* Lo que se puede enfocar dentro de la hoja. Es la lista de siempre; el filtro
+   de `disabled` va aparte porque un botón deshabilitado sí aparece en el
+   querySelector pero el navegador no lo enfoca, y si lo tomáramos como el
+   último de la fila el Tab se quedaría atorado en el vacío. */
+const ENFOCABLES =
+  'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+
 /** Hoja inferior para confirmaciones y formularios cortos. */
 export function Hoja({
   titulo,
@@ -247,6 +255,75 @@ export function Hoja({
   onCerrar: () => void
   children: ReactNode
 }) {
+  const idTitulo = useId()
+  const panel = useRef<HTMLDivElement>(null)
+  const [altoVisible, setAltoVisible] = useState<number | null>(null)
+
+  /* Foco al abrir y devuelto al cerrar. Sin esto, quien navega con teclado o
+     con lector de pantalla abre la hoja y el foco se queda donde estaba: en el
+     botón de atrás de la pantalla que quedó debajo. Anunciaba la hoja como si
+     no existiera y había que tabular a ciegas hasta encontrarla. Al cerrar, el
+     foco vuelve al botón que la abrió, que es donde la persona iba. */
+  useEffect(() => {
+    const previo = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    panel.current?.focus()
+    return () => {
+      previo?.focus()
+    }
+  }, [])
+
+  /* El teclado de iOS no encoge la ventana: la tapa. La hoja está anclada
+     abajo, así que con el teclado abierto el botón de guardar queda literalmente
+     debajo de las teclas. Lo que sí sabe dónde termina la parte visible es
+     visualViewport, así que la altura de la hoja se acota a esa medida.
+
+     Se acota la ALTURA y no se le mete paddingBottom al contenedor: en iOS los
+     elementos `fixed` se reposicionan solos contra el viewport visual cuando
+     sale el teclado, y el padding se sumaría a ese corrimiento; la hoja se iría
+     hacia arriba el doble de lo que debe. Los 24 px que se restan son el p-3 de
+     arriba y abajo del contenedor. */
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const medir = () => setAltoVisible(vv.height)
+    medir()
+    vv.addEventListener('resize', medir)
+    vv.addEventListener('scroll', medir)
+    return () => {
+      vv.removeEventListener('resize', medir)
+      vv.removeEventListener('scroll', medir)
+    }
+  }, [])
+
+  /* Escape cierra, y el Tab da vueltas dentro de la hoja en vez de irse a los
+     controles de la pantalla de atrás, que están tapados y no se pueden usar. */
+  const alTeclear = (evento: KeyboardEvent<HTMLDivElement>) => {
+    if (evento.key === 'Escape') {
+      evento.stopPropagation()
+      onCerrar()
+      return
+    }
+    if (evento.key !== 'Tab') return
+    const caja = panel.current
+    if (!caja) return
+    const focos = Array.from(caja.querySelectorAll<HTMLElement>(ENFOCABLES)).filter(
+      (el) => !el.hasAttribute('disabled'),
+    )
+    if (focos.length === 0) return
+    const primero = focos[0]
+    const ultimo = focos[focos.length - 1]
+    const activo = document.activeElement
+    /* El panel mismo cuenta como "antes del primero": recién abierto, el foco
+       está en él, y un Shift+Tab desde ahí se saldría de la hoja. */
+    if (evento.shiftKey && (activo === primero || activo === caja)) {
+      evento.preventDefault()
+      ultimo.focus()
+    } else if (!evento.shiftKey && activo === ultimo) {
+      evento.preventDefault()
+      primero.focus()
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
       {/* El fondo cierra la hoja al tocarlo, pero NO es un botón con nombre:
@@ -254,14 +331,35 @@ export function Hoja({
           y a cualquiera que navegue con teclado. La × de adentro es la que
           cuenta. */}
       <div aria-hidden onClick={onCerrar} className="absolute inset-0" />
+      {/* El diálogo es este panel y no el `fixed inset-0` de arriba: si el rol
+          fuera del contenedor, el fondo que cierra quedaría dentro del diálogo y
+          un lector de pantalla lo leería como parte del contenido.
+
+          Lo que NO se hace es marcar la pantalla de atrás con aria-hidden: las
+          ocho hojas se renderizan DENTRO de <Pantalla>, así que esconder ese
+          contenedor escondería también la hoja. Para inertizar el fondo de
+          verdad habría que sacar la hoja a un portal. */}
       {/* max-h + scroll: la hoja de editar un punto pasa de 500 px de alto, y
           en un teléfono chico con el teclado abierto no cabe. Sin esto, el
-          botón de guardar queda fuera de la pantalla y no hay forma de llegar. */}
-      <div className="hud-glass alto-max-hoja relative w-full max-w-md overflow-y-auto
-                      overscroll-contain rounded-hud p-4">
+          botón de guardar queda fuera de la pantalla y no hay forma de llegar.
+          alto-max-hoja se queda de respaldo para los navegadores sin
+          visualViewport. */}
+      <div
+        ref={panel}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={idTitulo}
+        tabIndex={-1}
+        onKeyDown={alTeclear}
+        style={altoVisible ? { maxHeight: altoVisible - 24 } : undefined}
+        className="hud-glass alto-max-hoja relative w-full max-w-md overflow-y-auto
+                   overscroll-contain rounded-hud p-4 outline-none"
+      >
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/25" />
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-ink-50">{titulo}</h2>
+          <h2 id={idTitulo} className="text-base font-semibold text-ink-50">
+            {titulo}
+          </h2>
           <button
             type="button"
             onClick={onCerrar}

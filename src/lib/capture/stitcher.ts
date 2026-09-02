@@ -161,6 +161,9 @@ export type Toma = {
 const MARGEN_PITCH = 4
 const MARGEN_YAW = 2
 
+/** Ancho de la miniatura con la que se mide la cobertura. Ver `cobertura`. */
+const MUESTRAS_COBERTURA = 96
+
 /** Tamaño de lienzo razonable según lo que aguante el dispositivo. */
 export function anchoRecomendado(renderer: THREE.WebGLRenderer): number {
   const maxTextura = renderer.capabilities.maxTextureSize
@@ -194,6 +197,24 @@ export class PanoramaStitcher {
   private brilloReferencia: number | null = null
   private tomas = 0
 
+  /* Cobertura: el objetivo y el material se crean UNA vez y se reutilizan.
+     Antes se creaban y se tiraban en cada llamada, y como `cobertura()` se
+     dispara con cada toma, eso significaba compilar y enlazar un programa de
+     WebGL por foto. Compilar un shader no es gratis en un celular: bloquea el
+     hilo mientras el driver traduce el GLSL. */
+  private objetivoCobertura: THREE.WebGLRenderTarget
+  private materialCobertura: THREE.ShaderMaterial
+
+  /* El navegador puede quitarle a la pestaña el contexto de la tarjeta gráfica
+     cuando anda escaso de memoria, y en los teléfonos pasa de verdad: basta con
+     irse a otra app un rato en mitad de una captura. Cuando eso ocurre, todo
+     lo acumulado en la GPU se pierde: el objetivo se queda en blanco y las
+     llamadas de dibujo no hacen nada, sin lanzar ningún error. */
+  private contextoPerdido = false
+
+  /** Se avisa hacia arriba para que la interfaz pueda ofrecer volver a coser. */
+  onContextoPerdido: (() => void) | null = null
+
   constructor(options: StitcherOptions = {}) {
     this.renderer = new THREE.WebGLRenderer({
       alpha: false,
@@ -218,6 +239,16 @@ export class PanoramaStitcher {
     this.renderer.setPixelRatio(1)
     this.renderer.setSize(preview.width, preview.height, false)
     this.canvas = this.renderer.domElement
+
+    /* three ya llama a preventDefault en su propio manejador, que es lo que
+       permite que el contexto se pueda restaurar después. Aquí solo se levanta
+       la bandera: restaurar el contexto devuelve un lienzo VACÍO, no la
+       panorámica que había, así que la única recuperación honesta es volver a
+       pegar las tomas una por una desde los JPEG que siguen en memoria. */
+    this.canvas.addEventListener('webglcontextlost', () => {
+      this.contextoPerdido = true
+      this.onContextoPerdido?.()
+    })
 
     this.acumulado = new THREE.WebGLRenderTarget(this.width, this.height, {
       depthBuffer: false,
@@ -289,6 +320,24 @@ export class PanoramaStitcher {
     mallaNormalizar.frustumCulled = false
     this.escenaNormalizar.add(mallaNormalizar)
 
+    this.objetivoCobertura = new THREE.WebGLRenderTarget(
+      MUESTRAS_COBERTURA,
+      Math.round(MUESTRAS_COBERTURA / 2),
+      { depthBuffer: false, stencilBuffer: false, colorSpace: THREE.NoColorSpace },
+    )
+    this.materialCobertura = new THREE.ShaderMaterial({
+      vertexShader: VERTEX,
+      fragmentShader: /* glsl */ `
+        precision highp float;
+        uniform sampler2D uAcumulado;
+        varying vec2 vNdc;
+        void main() { gl_FragColor = texture2D(uAcumulado, vNdc * 0.5 + 0.5); }
+      `,
+      uniforms: { uAcumulado: { value: this.acumulado.texture } },
+      depthTest: false,
+      depthWrite: false,
+    })
+
     this.limpiar()
   }
 
@@ -308,6 +357,11 @@ export class PanoramaStitcher {
     return this.tomas
   }
 
+  /** True si la tarjeta gráfica soltó el contexto y este costurero ya no sirve. */
+  get perdido() {
+    return this.contextoPerdido
+  }
+
   /**
    * Pega una toma en el lienzo.
    *
@@ -316,13 +370,30 @@ export class PanoramaStitcher {
    * cada foto, y en un celular eso se siente.
    */
   agregar(toma: Toma) {
+    // Sin contexto, `render` no lanza nada: simplemente no dibuja. Seguir
+    // sumando tomas solo serviría para creer que la panorámica va avanzando.
+    if (this.contextoPerdido) return
+
     const textura = new THREE.Texture(toma.fuente)
     textura.colorSpace = THREE.NoColorSpace
-    textura.minFilter = THREE.LinearFilter
+
+    /* La foto SIEMPRE se ve más chica en el lienzo de lo que es: al pegarla en
+       la equirectangular se reduce 1.9 veces en el centro y 3.1 veces en la
+       esquina, que es justo la zona donde se traslapa con la vecina. Con un
+       filtro lineal a secas, reducir así es tomar uno de cada tres píxeles y
+       tirar los otros dos: aparece ese hormigueo de bordes duros en las
+       costuras. Con mipmaps la GPU promedia el bloque entero, que es lo que
+       corresponde, y el anisotrópico evita que se emborrone de más en la
+       dirección en la que no hace falta.
+       El precio es generar la pirámide de cada foto —una pasada extra sobre
+       1600×1200 por toma, y se paga otra vez al recoser— pero lo hace el
+       driver en la GPU, no el hilo principal. */
+    textura.minFilter = THREE.LinearMipmapLinearFilter
     textura.magFilter = THREE.LinearFilter
     textura.wrapS = THREE.ClampToEdgeWrapping
     textura.wrapT = THREE.ClampToEdgeWrapping
-    textura.generateMipmaps = false
+    textura.generateMipmaps = true
+    textura.anisotropy = this.renderer.capabilities.getMaxAnisotropy()
     textura.flipY = true
     textura.needsUpdate = true
 
@@ -481,45 +552,34 @@ export class PanoramaStitcher {
    * equirectangular las filas de arriba y abajo son estiramientos del polo, y
    * contarlas igual que el ecuador diría "80 % listo" cuando falta media pared.
    */
-  cobertura(muestras = 96): number {
+  cobertura(muestras = MUESTRAS_COBERTURA): number {
+    // Sin contexto no hay nada que leer y el objetivo saldría en cero, o sea
+    // "0 % cubierto", que es una respuesta creíble y falsa. Mejor decirlo.
+    if (this.contextoPerdido) return 0
+
     const alto = Math.max(2, Math.round(muestras / 2))
-    const objetivo = new THREE.WebGLRenderTarget(muestras, alto, {
-      depthBuffer: false,
-      stencilBuffer: false,
-      colorSpace: THREE.NoColorSpace,
-    })
+    /* El objetivo se creó en el constructor con el tamaño de siempre. Si esta
+       llamada pide otro, hay que redimensionarlo ANTES de dibujar: si no, se
+       leerían `muestras × alto` píxeles de un objetivo que sigue teniendo el
+       tamaño de la primera llamada. `setSize` no hace nada si el tamaño ya
+       coincide, que es el caso normal. */
+    this.objetivoCobertura.setSize(muestras, alto)
 
     // Se copia el acumulado tal cual (sin normalizar) para conservar el alfa.
     const anterior = this.renderer.getRenderTarget()
-    const materialPrevio = this.materialNormalizar.uniforms.uAcumulado.value
-    this.renderer.setRenderTarget(objetivo)
+    this.renderer.setRenderTarget(this.objetivoCobertura)
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.clear(true, false, false)
 
-    const copia = new THREE.ShaderMaterial({
-      vertexShader: VERTEX,
-      fragmentShader: /* glsl */ `
-        precision highp float;
-        uniform sampler2D uAcumulado;
-        varying vec2 vNdc;
-        void main() { gl_FragColor = texture2D(uAcumulado, vNdc * 0.5 + 0.5); }
-      `,
-      uniforms: { uAcumulado: { value: this.acumulado.texture } },
-      depthTest: false,
-      depthWrite: false,
-    })
     const malla = this.escenaNormalizar.children[0] as THREE.Mesh
     const materialOriginal = malla.material
-    malla.material = copia
+    malla.material = this.materialCobertura
     this.renderer.render(this.escenaNormalizar, this.camara)
     malla.material = materialOriginal
-    this.materialNormalizar.uniforms.uAcumulado.value = materialPrevio
 
     const pixeles = new Uint8Array(muestras * alto * 4)
-    this.renderer.readRenderTargetPixels(objetivo, 0, 0, muestras, alto, pixeles)
+    this.renderer.readRenderTargetPixels(this.objetivoCobertura, 0, 0, muestras, alto, pixeles)
     this.renderer.setRenderTarget(anterior)
-    objetivo.dispose()
-    copia.dispose()
 
     let cubierto = 0
     let total = 0
@@ -540,13 +600,28 @@ export class PanoramaStitcher {
    * Exporta la panorámica terminada.
    *
    * La normalización (dividir color entre alfa) se hace aquí en JavaScript y no
-   * en un shader para no reservar un segundo lienzo del tamaño completo: en un
-   * celular, 32 MB de más en el momento exacto en que además hay que armar el
-   * JPEG es justo lo que provoca que la pestaña se recargue sola.
+   * en un shader, y se hace EN SITIO sobre el mismo bloque de memoria que se
+   * leyó de la tarjeta gráfica. Eso importa: a 4096×2048 ese bloque son 33.5 MB
+   * y la versión anterior pedía un segundo bloque igual para el `ImageData`,
+   * justo en el momento en que además hay que armar el JPEG. Eran 67 MB de pico
+   * y una copia entera de más, y en un celular es exactamente el momento en que
+   * la pestaña se recarga sola.
+   *
+   * El truco es que `ImageData` se puede construir SOBRE un `Uint8ClampedArray`
+   * que ya existe, sin copiarlo. Por eso el volteo vertical —la fila 0 del
+   * framebuffer es la de abajo y la de la imagen es la de arriba— se hace
+   * intercambiando filas de a pares en el mismo arreglo, con un renglón de
+   * ida y vuelta de 16 KB como único apoyo.
    */
   async exportar(calidad = 0.86): Promise<Blob> {
+    if (this.contextoPerdido) {
+      throw new Error(
+        'El teléfono liberó la memoria de la tarjeta gráfica. Hay que volver a unir las fotos.',
+      )
+    }
+
     const { width, height } = this
-    const pixeles = new Uint8Array(width * height * 4)
+    const pixeles = new Uint8ClampedArray(width * height * 4)
     this.renderer.readRenderTargetPixels(this.acumulado, 0, 0, width, height, pixeles)
 
     const canvas = document.createElement('canvas')
@@ -555,38 +630,48 @@ export class PanoramaStitcher {
     const ctx = canvas.getContext('2d')
     if (!ctx) throw new Error('No se pudo preparar el lienzo de la panorámica.')
 
-    const imagen = ctx.createImageData(width, height)
-    const destino = imagen.data
-
     const vacio = this.materialNormalizar.uniforms.uVacio.value as THREE.Vector3
     const vr = Math.round(vacio.x * 255)
     const vg = Math.round(vacio.y * 255)
     const vb = Math.round(vacio.z * 255)
 
-    for (let fila = 0; fila < height; fila++) {
-      // La fila 0 del framebuffer es la de ABAJO; la fila 0 de la imagen es la
-      // de arriba. Aquí se voltea.
-      const origen = (height - 1 - fila) * width * 4
-      const salida = fila * width * 4
+    const bytesPorFila = width * 4
+    // El arreglo es "clamped": al escribir, el navegador ya redondea y recorta
+    // a 0…255 por su cuenta, así que la división por alfa no necesita tope.
+    const normalizarFila = (inicio: number) => {
       for (let columna = 0; columna < width; columna++) {
-        const i = origen + columna * 4
-        const j = salida + columna * 4
+        const i = inicio + columna * 4
         const alfa = pixeles[i + 3]
         if (alfa < 5) {
-          destino[j] = vr
-          destino[j + 1] = vg
-          destino[j + 2] = vb
+          pixeles[i] = vr
+          pixeles[i + 1] = vg
+          pixeles[i + 2] = vb
         } else {
           const escala = 255 / alfa
-          destino[j] = Math.min(255, pixeles[i] * escala)
-          destino[j + 1] = Math.min(255, pixeles[i + 1] * escala)
-          destino[j + 2] = Math.min(255, pixeles[i + 2] * escala)
+          pixeles[i] *= escala
+          pixeles[i + 1] *= escala
+          pixeles[i + 2] *= escala
         }
-        destino[j + 3] = 255
+        pixeles[i + 3] = 255
       }
     }
 
-    ctx.putImageData(imagen, 0, 0)
+    const renglon = new Uint8ClampedArray(bytesPorFila)
+    const mitad = Math.floor(height / 2)
+    for (let fila = 0; fila < mitad; fila++) {
+      const arriba = fila * bytesPorFila
+      const abajo = (height - 1 - fila) * bytesPorFila
+      normalizarFila(arriba)
+      normalizarFila(abajo)
+      renglon.set(pixeles.subarray(arriba, arriba + bytesPorFila))
+      pixeles.copyWithin(arriba, abajo, abajo + bytesPorFila)
+      pixeles.set(renglon, abajo)
+    }
+    // Con alto impar la fila del medio se queda donde está, pero igual hay que
+    // normalizarla: el bucle de arriba nunca la toca.
+    if (height % 2 === 1) normalizarFila(mitad * bytesPorFila)
+
+    ctx.putImageData(new ImageData(pixeles, width, height), 0, 0)
 
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob(resolve, 'image/jpeg', calidad),
@@ -599,6 +684,8 @@ export class PanoramaStitcher {
 
   dispose() {
     this.acumulado.dispose()
+    this.objetivoCobertura.dispose()
+    this.materialCobertura.dispose()
     this.material.dispose()
     this.materialNormalizar.dispose()
     this.malla.geometry.dispose()

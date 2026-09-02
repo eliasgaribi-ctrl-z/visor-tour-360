@@ -13,8 +13,9 @@ import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { TourEngineProvider, useCreateTourEngine } from '../../lib/tourEngine'
 import { wrap180 } from '../../lib/math'
 import { screenToYawPitch } from '../../lib/math3d'
+import { detectWebGL } from '../../lib/webgl'
 
-import { BASE_FOV, Escena360, detectWebGL } from '../tour/Escena360'
+import { BASE_FOV, Escena360 } from '../tour/Escena360'
 import { Compass } from '../ui/Compass'
 import { LoadingVeil } from '../ui/LoadingVeil'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
@@ -74,6 +75,16 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
    * exactamente a lo que había.
    */
   const [nivelando, setNivelando] = useState<{ nivel?: Nivel; hotspots: StoredScene['hotspots'] } | null>(null)
+  const [falloFoto, setFalloFoto] = useState(false)
+  /* Lo que no se pudo escribir, guardado entero para poder reintentarlo tal
+     cual. No basta con un mensaje: si la escritura falló porque el disco estaba
+     lleno un segundo, el trabajo de la persona se pierde a menos que quede algo
+     a lo que darle "Reintentar". */
+  const [pendiente, setPendiente] = useState<{
+    siguiente: StoredTour
+    previo: StoredTour
+    aviso?: string
+  } | null>(null)
 
   const capa = useRef<HTMLDivElement>(null)
 
@@ -86,6 +97,35 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
     void getTour(tourId).then((t) => setTour(t ?? 'no-existe'))
   }, [tourId])
 
+  /**
+   * Pinta el cambio de inmediato y luego lo escribe.
+   *
+   * Pintar primero es lo correcto: arrastrar un punto y esperar a IndexedDB
+   * para verlo moverse se siente roto. Pero si la escritura falla, la pantalla
+   * queda mintiendo —el punto está donde lo dejaste, y al volver a entrar no
+   * está— así que en el catch se devuelve el recorrido a como estaba y el
+   * fallo se dice con un aviso que NO se va solo. El toast de 1.8 segundos
+   * sirve para "guardado"; para "no se guardó" es justo lo contrario de lo que
+   * hace falta.
+   */
+  const escribir = useCallback(
+    async (siguiente: StoredTour, previo: StoredTour, aviso?: string) => {
+      setTour(siguiente)
+      try {
+        await saveTour(siguiente)
+        setPendiente(null)
+        if (aviso) {
+          setGuardado(aviso)
+          window.setTimeout(() => setGuardado(null), 1800)
+        }
+      } catch {
+        setTour(previo)
+        setPendiente({ siguiente, previo, aviso })
+      }
+    },
+    [],
+  )
+
   const aplicar = useCallback(
     async (cambiar: (scene: StoredScene) => StoredScene, aviso?: string) => {
       if (!tour || tour === 'no-existe' || !escena) return
@@ -93,14 +133,9 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
         ...tour,
         scenes: tour.scenes.map((s) => (s.id === sceneId ? cambiar(s) : s)),
       }
-      setTour(siguiente)
-      await saveTour(siguiente)
-      if (aviso) {
-        setGuardado(aviso)
-        window.setTimeout(() => setGuardado(null), 1800)
-      }
+      await escribir(siguiente, tour, aviso)
     },
-    [escena, sceneId, tour],
+    [escena, escribir, sceneId, tour],
   )
 
   /** Mientras se arrastra solo se actualiza en memoria; al soltar se guarda. */
@@ -266,6 +301,10 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             nivel={escena.nivel}
             webgl={webgl}
             onLoadingChange={setCargando}
+            /* Sin esto, una foto que no carga dejaba el velo de "Abriendo la
+               habitación…" girando para siempre: onLoadingChange nunca vuelve a
+               false cuando la textura falla, y no había nada más que lo dijera. */
+            onError={() => setFalloFoto(true)}
           />
         )}
 
@@ -320,9 +359,32 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             <Compass className="relative shrink-0" rumbo={escena.rumbo} />
           </div>
 
-          {guardado && (
+          {guardado && !pendiente && (
             <div className="absolute left-1/2 top-[calc(env(safe-area-inset-top)+5.5rem)] -translate-x-1/2">
               <p className="hud-glass rounded-full px-4 py-1.5 text-xs text-ink-50">{guardado}</p>
+            </div>
+          )}
+
+          {pendiente && (
+            <div className="pointer-events-auto absolute inset-x-0 top-[calc(env(safe-area-inset-top)+5.5rem)]
+                            mx-auto max-w-md px-3">
+              <Aviso
+                tono="error"
+                titulo="No se pudo guardar"
+                accion={
+                  <Boton
+                    onClick={() =>
+                      void escribir(pendiente.siguiente, pendiente.previo, pendiente.aviso)
+                    }
+                  >
+                    Reintentar
+                  </Boton>
+                }
+              >
+                El cambio se deshizo para que la pantalla no te enseñe algo que no está guardado.
+                Vuelve a intentarlo; si sigue fallando, puede ser que al teléfono ya no le quede
+                espacio.
+              </Aviso>
             </div>
           )}
 
@@ -449,8 +511,21 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
           </Hoja>
         )}
 
-        <LoadingVeil visible={cargando && !!url} />
+        <LoadingVeil visible={cargando && !!url && !falloFoto} />
         {!url && <LoadingVeil visible label="Abriendo la habitación…" />}
+
+        {falloFoto && (
+          <div
+            role="alert"
+            className="absolute inset-x-0 top-[calc(env(safe-area-inset-top)+5.5rem)] z-40
+                       mx-auto max-w-md px-3"
+          >
+            <Aviso tono="error" titulo="No se pudo abrir la foto">
+              La foto de esta habitación no se pudo cargar, así que los puntos que pongas ahora
+              caerían sobre nada. Vuelve al recorrido y cámbiala desde Ajustes.
+            </Aviso>
+          </div>
+        )}
 
         {borrador && (
           <Hoja
@@ -458,6 +533,10 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
             onCerrar={() => setBorrador(null)}
           >
             <div className="flex flex-col gap-3">
+              {/* Cuál de los dos está elegido lo decía solo el borde ámbar: un
+                  lector de pantalla leía dos botones iguales y no había forma de
+                  saber cuál estaba puesto. aria-pressed lo dice, y la palomita
+                  lo dice sin depender del color. */}
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -471,13 +550,17 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
                     })
                   }
                   disabled={otras.length === 0}
+                  aria-pressed={borrador.kind === 'link'}
                   className={`rounded-2xl border p-3 text-left text-sm disabled:opacity-40 ${
                     borrador.kind === 'link'
                       ? 'border-brand-500 bg-brand-500/10'
                       : 'border-white/10 bg-white/5'
                   }`}
                 >
-                  <b className="block">Ir a otro cuarto</b>
+                  <b className="block">
+                    {borrador.kind === 'link' && <span aria-hidden>✓ </span>}
+                    Ir a otro cuarto
+                  </b>
                   <span className="text-xs text-ink-200">
                     {otras.length === 0 ? 'Necesitas otra habitación' : 'Una puerta o un pasillo'}
                   </span>
@@ -485,13 +568,17 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
                 <button
                   type="button"
                   onClick={() => setBorrador({ ...borrador, kind: 'info' })}
+                  aria-pressed={borrador.kind === 'info'}
                   className={`rounded-2xl border p-3 text-left text-sm ${
                     borrador.kind === 'info'
                       ? 'border-brand-500 bg-brand-500/10'
                       : 'border-white/10 bg-white/5'
                   }`}
                 >
-                  <b className="block">Solo un dato</b>
+                  <b className="block">
+                    {borrador.kind === 'info' && <span aria-hidden>✓ </span>}
+                    Solo un dato
+                  </b>
                   <span className="text-xs text-ink-200">Medidas, acabados, notas</span>
                 </button>
               </div>

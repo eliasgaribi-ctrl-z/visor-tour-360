@@ -69,7 +69,22 @@ export async function leerGPano(file: Blob): Promise<GPano | null> {
     const izquierda = numero('CroppedAreaLeftPixels') ?? 0
     const arriba = numero('CroppedAreaTopPixels') ?? 0
 
-    if (!anchoTotal || !altoTotal || !ancho || !alto) return null
+    /* Los metadatos vienen de un archivo ajeno y son los que deciden dónde se
+       dibuja la imagen sobre el lienzo. Un FullPanoWidthPixels de cero parte
+       una división; uno negativo o disparatado manda el drawImage a
+       coordenadas absurdas y el resultado es un lienzo en blanco sin ningún
+       error en la consola. Si algo no cuadra se devuelve null y la foto entra
+       por el camino de "adivinar el tipo", que es el que ya existía para las
+       fotos sin metadatos. 200 000 píxeles de lado es más del doble de la
+       panorámica más grande que produce cualquier cámara de consumo. */
+    const sano = (v: number | null): v is number =>
+      v !== null && Number.isFinite(v) && v > 0 && v <= 200_000
+    if (!sano(anchoTotal) || !sano(altoTotal) || !sano(ancho) || !sano(alto)) return null
+    if (!Number.isFinite(izquierda) || !Number.isFinite(arriba)) return null
+    if (izquierda < 0 || arriba < 0) return null
+    if (ancho > anchoTotal || alto > altoTotal) return null
+    if (izquierda + ancho > anchoTotal || arriba + alto > altoTotal) return null
+
     return { anchoTotal, altoTotal, ancho, alto, izquierda, arriba }
   } catch {
     return null
@@ -85,17 +100,282 @@ export class ImportError extends Error {
   }
 }
 
+/* ------------------------------------------------------ ABRIR EL ARCHIVO */
+
 /**
- * Decodifica el archivo a un canvas, ya girado según su EXIF.
+ * El techo de píxeles del lienzo de ORIGEN.
  *
- * `imageOrientation: 'from-image'` es lo que evita que una foto tomada con el
- * teléfono de lado entre acostada: sin eso, el navegador entrega los píxeles
- * crudos del sensor y la rotación se queda solo en los metadatos.
+ * Safari en iOS aguanta 16 777 216 píxeles por canvas y, al pasarse, no lanza
+ * ningún error: entrega el lienzo EN BLANCO. El lienzo de salida ya se protege
+ * con `lienzoUtilizable` (ver frames.ts), pero este de entrada nunca pasó por
+ * ahí, así que una foto de 50 megapíxeles —que hoy toma cualquier teléfono de
+ * gama media— se guardaba como una habitación completamente vacía.
+ *
+ * Bajar de aquí no pierde nada: la equirectangular que se exporta es de
+ * 4096×2048, o sea 8 megapíxeles, y de una foto normal se aprovecha todavía
+ * menos.
  */
-export async function leerImagen(file: Blob): Promise<HTMLCanvasElement> {
-  let bitmap: ImageBitmap
+const MAX_PX_ORIGEN = 16_000_000
+
+type FuenteDecodificada = {
+  fuente: CanvasImageSource
+  ancho: number
+  alto: number
+  /** ¿El decodificador ya aplicó la rotación del EXIF? `null` = no se sabe. */
+  yaOrientada: boolean | null
+  soltar: () => void
+}
+
+/**
+ * Decodifica el archivo, bajando por tres escalones hasta que uno funcione.
+ *
+ * 1. `createImageBitmap` con `imageOrientation: 'from-image'`. Es el bueno: sin
+ *    eso, una foto tomada con el teléfono de lado entra acostada, porque el
+ *    navegador entrega los píxeles crudos del sensor y la rotación se queda
+ *    solo en los metadatos.
+ * 2. `createImageBitmap` sin opciones. `imageOrientation` es un enum de WebIDL,
+ *    y en un WebKit cuyo enum solo tiene 'none' y 'flipY', pasarle
+ *    'from-image' lanza TypeError ANTES de mirar la imagen. O sea que un JPEG
+ *    perfectamente válido se reportaba como ilegible por culpa de una opción.
+ * 3. Un `<img>` y `decode()`. Es lo que queda en los navegadores que ni
+ *    siquiera tienen `createImageBitmap` (Safari lo trajo hasta iOS 15).
+ */
+async function decodificar(file: Blob): Promise<FuenteDecodificada> {
+  if (typeof createImageBitmap === 'function') {
+    try {
+      const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+      return {
+        fuente: bitmap,
+        ancho: bitmap.width,
+        alto: bitmap.height,
+        yaOrientada: true,
+        soltar: () => bitmap.close(),
+      }
+    } catch {
+      try {
+        const bitmap = await createImageBitmap(file)
+        return {
+          fuente: bitmap,
+          ancho: bitmap.width,
+          alto: bitmap.height,
+          yaOrientada: false,
+          soltar: () => bitmap.close(),
+        }
+      } catch {
+        // Los dos intentos con bitmap fallaron: queda el <img>.
+      }
+    }
+  }
+
+  const url = URL.createObjectURL(file)
   try {
-    bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' })
+    const img = new Image()
+    img.src = url
+    await img.decode()
+    return {
+      fuente: img,
+      ancho: img.naturalWidth,
+      alto: img.naturalHeight,
+      yaOrientada: null,
+      // La URL se suelta hasta después de dibujar: revocarla antes deja a
+      // algunos navegadores viejos con la imagen a medio pintar.
+      soltar: () => URL.revokeObjectURL(url),
+    }
+  } catch (error) {
+    URL.revokeObjectURL(url)
+    throw error
+  }
+}
+
+/* ------------------------------------------------ LA ROTACIÓN DEL EXIF */
+
+type ExifJpeg = {
+  /** 1 a 8, según la tabla del EXIF. 1 = derecha, no hay nada que hacer. */
+  orientacion: number
+  /** El tamaño que declara el propio JPEG, SIN girar. 0 si no se encontró. */
+  ancho: number
+  alto: number
+}
+
+/**
+ * Saca del JPEG la orientación del EXIF y su tamaño sin girar.
+ *
+ * No es un lector de EXIF completo: recorre los marcadores del principio del
+ * archivo, saca la etiqueta 0x0112 del primer IFD y el tamaño del bloque SOF, y
+ * se detiene ahí. Son unas cuarenta líneas contra los 40 KB de una librería,
+ * para dos números.
+ *
+ * Los 256 KB de cabecera son de sobra: el EXIF va pegado al principio del
+ * archivo y lo más grande que lleva dentro es la miniatura, que ronda los
+ * 20 KB.
+ */
+async function leerExifJpeg(file: Blob): Promise<ExifJpeg | null> {
+  try {
+    const b = await leerBytes(file.slice(0, 256 * 1024))
+    if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null // no es JPEG
+    const dv = new DataView(b.buffer, b.byteOffset, b.byteLength)
+
+    let orientacion = 1
+    let ancho = 0
+    let alto = 0
+    let p = 2
+
+    while (p + 4 <= b.length) {
+      if (b[p] !== 0xff) break
+      const marcador = b[p + 1]
+      // Marcadores sueltos: no traen bloque de datos detrás.
+      if (marcador === 0x01 || (marcador >= 0xd0 && marcador <= 0xd9)) {
+        p += 2
+        continue
+      }
+      // SOS: aquí empiezan los datos comprimidos y ya no hay cabeceras.
+      if (marcador === 0xda) break
+
+      const largo = dv.getUint16(p + 2)
+      if (largo < 2) break
+      const inicio = p + 4
+      const fin = p + 2 + largo
+      if (fin > b.length) break
+
+      if (marcador === 0xe1) {
+        orientacion = leerOrientacion(dv, b, inicio, fin) ?? orientacion
+      }
+
+      /* SOF0 a SOF15 llevan el tamaño real de la imagen. Los tres huecos de ese
+         rango son otra cosa: DHT (0xc4), JPG (0xc8) y DAC (0xcc). El SOF va
+         siempre después de los APPn, así que en cuanto aparece ya está todo
+         lo que veníamos a buscar. */
+      const esSof =
+        marcador >= 0xc0 && marcador <= 0xcf &&
+        marcador !== 0xc4 && marcador !== 0xc8 && marcador !== 0xcc
+      if (esSof) {
+        if (inicio + 5 <= b.length) {
+          alto = dv.getUint16(inicio + 1)
+          ancho = dv.getUint16(inicio + 3)
+        }
+        break
+      }
+
+      p = fin
+    }
+
+    if (orientacion < 1 || orientacion > 8) orientacion = 1
+    return { orientacion, ancho, alto }
+  } catch {
+    return null
+  }
+}
+
+/** La etiqueta 0x0112 dentro de un bloque APP1 con EXIF. */
+function leerOrientacion(dv: DataView, b: Uint8Array, inicio: number, fin: number): number | null {
+  // El bloque tiene que empezar con "Exif\0\0"; si no, es otro APP1 (XMP, por
+  // ejemplo, que es justo el que trae los GPano).
+  if (fin - inicio < 14) return null
+  if (b[inicio] !== 0x45 || b[inicio + 1] !== 0x78) return null
+  if (b[inicio + 2] !== 0x69 || b[inicio + 3] !== 0x66) return null
+
+  // Detrás viene una cabecera TIFF, que trae su propio orden de bytes.
+  const tiff = inicio + 6
+  const marca = dv.getUint16(tiff)
+  if (marca !== 0x4949 && marca !== 0x4d4d) return null
+  const le = marca === 0x4949
+  if (dv.getUint16(tiff + 2, le) !== 0x002a) return null
+
+  const ifd0 = tiff + dv.getUint32(tiff + 4, le)
+  if (ifd0 < tiff || ifd0 + 2 > fin) return null
+
+  const entradas = dv.getUint16(ifd0, le)
+  for (let i = 0; i < entradas; i++) {
+    const entrada = ifd0 + 2 + i * 12
+    if (entrada + 12 > fin) break
+    if (dv.getUint16(entrada, le) === 0x0112) return dv.getUint16(entrada + 8, le)
+  }
+  return null
+}
+
+/**
+ * Qué rotación falta por aplicar a mano, si es que falta alguna.
+ *
+ * Girar de menos deja una foto acostada, que se arregla; girar DE MÁS arruina
+ * una foto que estaba bien. Así que solo se gira cuando hay razón para creer
+ * que el navegador no lo hizo.
+ *
+ * Cuando la orientación intercambia los ejes (de la 5 a la 8) eso se puede
+ * comprobar de verdad: basta comparar el tamaño que entregó el decodificador
+ * con el que el propio JPEG declara en su cabecera SOF. Si vienen
+ * intercambiados, el navegador ya giró la imagen.
+ *
+ * Con las orientaciones 2, 3 y 4 —espejo y media vuelta— el tamaño no cambia y
+ * no hay nada que comparar, así que se decide por el camino que se usó para
+ * decodificar. Ver `decodificar` para el detalle de cada escalón.
+ */
+async function orientacionPendiente(
+  file: Blob,
+  yaOrientada: boolean | null,
+  ancho: number,
+  alto: number,
+): Promise<number> {
+  if (yaOrientada === true) return 1
+
+  const exif = await leerExifJpeg(file)
+  if (!exif || exif.orientacion === 1) return 1
+
+  const medible = exif.ancho > 0 && exif.alto > 0 && exif.ancho !== exif.alto
+  if (exif.orientacion >= 5 && medible) {
+    const yaGirada = ancho === exif.alto && alto === exif.ancho
+    return yaGirada ? 1 : exif.orientacion
+  }
+
+  /* `createImageBitmap` sin opciones solo se llega a usar en los navegadores
+     cuyo enum viejo rechaza 'from-image', y en esos el valor por omisión es
+     'none': seguro que no la giró. Con el <img> no se sabe —Chrome 81 y
+     Safari 13.4 lo giran solos, los anteriores no— y ahí se deja como está. */
+  return yaOrientada === false ? exif.orientacion : 1
+}
+
+/**
+ * Prepara el lienzo para dibujar la imagen ya girada.
+ *
+ * `ancho` y `alto` son los de la imagen tal como la entregó el decodificador,
+ * antes de girar. Cada matriz es la transformación que manda la esquina de
+ * arriba a la izquierda del archivo a donde el EXIF dice que va.
+ */
+function aplicarOrientacion(
+  ctx: CanvasRenderingContext2D,
+  orientacion: number,
+  ancho: number,
+  alto: number,
+) {
+  switch (orientacion) {
+    case 2: // espejo horizontal
+      ctx.transform(-1, 0, 0, 1, ancho, 0)
+      break
+    case 3: // media vuelta
+      ctx.transform(-1, 0, 0, -1, ancho, alto)
+      break
+    case 4: // espejo vertical
+      ctx.transform(1, 0, 0, -1, 0, alto)
+      break
+    case 5: // espejo sobre la diagonal
+      ctx.transform(0, 1, 1, 0, 0, 0)
+      break
+    case 6: // un cuarto de vuelta a la derecha
+      ctx.transform(0, 1, -1, 0, alto, 0)
+      break
+    case 7: // espejo sobre la otra diagonal
+      ctx.transform(0, -1, -1, 0, alto, ancho)
+      break
+    case 8: // un cuarto de vuelta a la izquierda
+      ctx.transform(0, -1, 1, 0, 0, ancho)
+      break
+  }
+}
+
+/** Decodifica el archivo a un canvas, ya girado según su EXIF y sin pasarse de tamaño. */
+export async function leerImagen(file: Blob): Promise<HTMLCanvasElement> {
+  let decodificada: FuenteDecodificada
+  try {
+    decodificada = await decodificar(file)
   } catch (error) {
     const tipo = (file as File).type || ''
     if (/heic|heif/i.test(tipo) || /heic|heif$/i.test((file as File).name ?? '')) {
@@ -110,12 +390,36 @@ export async function leerImagen(file: Blob): Promise<HTMLCanvasElement> {
     )
   }
 
-  const canvas = crearLienzo(bitmap.width, bitmap.height)
-  const ctx = canvas.getContext('2d', { alpha: false })
-  if (!ctx) throw new ImportError('No se pudo preparar la imagen.')
-  ctx.drawImage(bitmap, 0, 0)
-  bitmap.close()
-  return canvas
+  const { fuente, ancho: anchoOriginal, alto: altoOriginal, yaOrientada, soltar } = decodificada
+
+  try {
+    if (anchoOriginal <= 0 || altoOriginal <= 0) {
+      throw new ImportError('El navegador abrió la imagen pero salió vacía.')
+    }
+
+    let ancho = anchoOriginal
+    let alto = altoOriginal
+    if (ancho * alto > MAX_PX_ORIGEN) {
+      const factor = Math.sqrt(MAX_PX_ORIGEN / (ancho * alto))
+      ancho = Math.max(1, Math.round(ancho * factor))
+      alto = Math.max(1, Math.round(alto * factor))
+    }
+
+    const orientacion = await orientacionPendiente(file, yaOrientada, anchoOriginal, altoOriginal)
+    // De la 5 a la 8 la foto queda de pie donde estaba acostada: el lienzo va al
+    // revés que la imagen.
+    const ejesCambiados = orientacion >= 5
+
+    const canvas = crearLienzo(ejesCambiados ? alto : ancho, ejesCambiados ? ancho : alto)
+    const ctx = canvas.getContext('2d', { alpha: false })
+    if (!ctx) throw new ImportError('No se pudo preparar la imagen.')
+    ctx.imageSmoothingQuality = 'high'
+    if (orientacion > 1) aplicarOrientacion(ctx, orientacion, ancho, alto)
+    ctx.drawImage(fuente, 0, 0, ancho, alto)
+    return canvas
+  } finally {
+    soltar()
+  }
 }
 
 /** Qué parece ser la foto, para preseleccionar la opción correcta. */

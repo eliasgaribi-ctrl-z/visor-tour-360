@@ -7,6 +7,7 @@ import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
 import { yawPitchToVector3 } from '../../lib/math3d'
 import { useMenosMovimiento } from '../../lib/menosMovimiento'
+import { desenvolver, offsetHacia, offsetSinSalto } from '../../lib/giro'
 
 /**
  * ============================================================================
@@ -97,10 +98,14 @@ export type CameraRigProps = {
  * Único dueño de la orientación de la cámara. Nadie más toca camera.rotation.
  *
  * Cada frame:
- *   1. lee el objeto mutable LookInput (joystick + arrastre + zoom),
+ *   1. lee el objeto mutable LookInput (joystick + arrastre + zoom + sensor),
  *   2. lo integra sobre un yaw/pitch OBJETIVO,
  *   3. suaviza la cámara real hacia ese objetivo (inercia),
  *   4. escribe la orientación y publica el estado para el HUD.
+ *
+ * El giroscopio es la excepción a los pasos 2 y 3: no aporta velocidad ni
+ * deltas sino una posición, y se planta en ella sin inercia. Ver el bloque
+ * GIROSCOPIO más abajo y src/lib/useGyroLook.ts.
  *
  * ── La matemática, en corto ────────────────────────────────────────────────
  *
@@ -316,14 +321,14 @@ export function CameraRig({
     if (sensor) {
       if (!conSensor.current) {
         sensorYaw.current = sensor.yaw
-        offsetYaw.current = targetYaw.current - sensor.yaw
+        offsetYaw.current = offsetSinSalto(targetYaw.current, sensor.yaw)
         conSensor.current = true
       } else {
-        sensorYaw.current += shortestDelta(sensorYaw.current, sensor.yaw)
+        sensorYaw.current = desenvolver(sensorYaw.current, sensor.yaw)
       }
       offsetYaw.current += input.axis.x * speed * dt + input.dragYaw
       if (input.goto) {
-        offsetYaw.current += shortestDelta(sensorYaw.current + offsetYaw.current, input.goto.yaw)
+        offsetYaw.current = offsetHacia(sensorYaw.current, offsetYaw.current, input.goto.yaw)
         input.goto = null
       }
       input.dragYaw = 0
@@ -336,9 +341,31 @@ export function CameraRig({
 
     targetPitch.current = clamp(targetPitch.current, -maxPitchDeg, maxPitchDeg)
 
-    /* ------------------------------------------------------------ SUAVIZADO */
-    yaw.current = damp(yaw.current, targetYaw.current, smoothing, dt)
-    pitch.current = damp(pitch.current, targetPitch.current, smoothing, dt)
+    /* ------------------------------------------------------------ SUAVIZADO
+     * Con "reducir movimiento" encendido no hay inercia: la cámara se planta en
+     * su objetivo de un solo cuadro. La que sufre de verdad es la animación de
+     * los puntos —tocar un hotspot dispara un paneo de casi un segundo con la
+     * panorámica entera barriendo la pantalla, que es justo el movimiento que
+     * marea—; el arrastre con el dedo apenas cambia, porque ahí el objetivo va
+     * pegado al dedo de todos modos.
+     *
+     * Va DESPUÉS del clamp a propósito: copiar el objetivo antes de toparlo
+     * dejaría el pitch pasarse de los 85° y la panorámica se retorcería en el
+     * polo, que es exactamente lo que el clamp está evitando.
+     *
+     * Con el giroscopio SÍ se conserva la inercia, a diferencia de lo que hacía
+     * la otra implementación de esta misma pantalla: la lectura ya viene
+     * suavizada por el seguidor, pero el offset que el dedo y el joystick le
+     * suman no, y `giroscopio.mjs` mide la respuesta con las tolerancias de
+     * siempre (±3°). Si algún día se siente tarde, se quita aquí y se vuelve a
+     * medir; no antes. */
+    if (menosMovimiento.current) {
+      yaw.current = targetYaw.current
+      pitch.current = targetPitch.current
+    } else {
+      yaw.current = damp(yaw.current, targetYaw.current, smoothing, dt)
+      pitch.current = damp(pitch.current, targetPitch.current, smoothing, dt)
+    }
 
     /* --------------------------------------------------------------- EMPUJE
      * Un solo disparo: se toma la dirección de la puerta y arranca el reloj. Se
@@ -381,7 +408,12 @@ export function CameraRig({
      *
      * Los umbrales son una décima de grado y de FOV: por debajo de eso el
      * movimiento ya no se ve, y perseguirlo hasta el cero exacto dejaría la
-     * animación viva para siempre, que es justo lo que se quiere evitar. */
+     * animación viva para siempre, que es justo lo que se quiere evitar.
+     *
+     * Con el giroscopio la cuenta da falso casi siempre —la cámara se planta
+     * en su objetivo sin inercia— y está bien: ahí el que pide cuadro es el
+     * bucle de useGyroLook, y solo cuando llega una lectura NUEVA. Con el
+     * teléfono apoyado en la mesa el visor se duerme igual que sin sensor. */
     const enMovimiento =
       input.axis.x !== 0 ||
       input.axis.y !== 0 ||

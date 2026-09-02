@@ -23,6 +23,7 @@ import {
   type GPano,
   type TipoDeFoto,
 } from '../../lib/capture/importar'
+import { conGPano } from '../../lib/capture/xmp'
 import { Aviso, Boton, Campo, Cargando, Pantalla, Tarjeta } from './ui'
 import { sugerirNombre } from './nombres'
 
@@ -140,7 +141,15 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
       coberturaDeg: cobertura,
       fovDeg: fov,
     })
-    const blob = await aJpeg(lienzo, 0.8)
+    /* La vista previa lleva los mismos metadatos que va a llevar la foto
+       guardada, y no es adorno: es lo que hace que "guardar imagen" desde la
+       vista previa entregue un archivo que otras apps abren como esfera, en vez
+       de un JPEG mudo que solo se parece al bueno. Cuesta releer un JPEG de
+       1024 px de ancho, unos 150 kB. */
+    const blob = await conGPano(await aJpeg(lienzo, 0.8), {
+      ancho: lienzo.width,
+      alto: lienzo.height,
+    })
     soltarLienzo(lienzo)
 
     if (mia !== generacion.current) return
@@ -170,7 +179,17 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
         coberturaDeg: cobertura,
         fovDeg: fov,
       })
-      const foto = await aJpeg(lienzo, 0.86)
+      /* Los metadatos van también en las fotos que se SUBEN, no solo en las
+         que arma el costurero: aquí la equirectangular la acabamos de fabricar
+         nosotros —el hueco que la foto no cubre se rellena de gris— así que el
+         archivo que sale es tan panorámica nuestra como la de la cámara. Del
+         rumbo no se dice nada: la foto vino de la galería y no hay giroscopio
+         que haya mirado al norte, y de con qué se tomó tampoco, porque no se
+         sabe. */
+      const foto = await conGPano(await aJpeg(lienzo, 0.86), {
+        ancho: lienzo.width,
+        alto: lienzo.height,
+      })
       const mini = await miniatura(lienzo)
       soltarLienzo(lienzo)
 
@@ -289,17 +308,25 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
               </Aviso>
             )}
 
+            {/* aria-pressed y el ✓: cuál de las tres está elegida se decía solo
+                con el borde ámbar, y eso no llega ni a un lector de pantalla
+                (que leía tres botones idénticos) ni a quien no distingue ese
+                ámbar del gris. La palomita lo dice sin depender del color. */}
             <div className="flex flex-col gap-2">
               {(Object.keys(DESCRIPCIONES) as TipoDeFoto[]).map((opcion) => (
                 <button
                   key={opcion}
                   type="button"
                   onClick={() => setTipo(opcion)}
+                  aria-pressed={tipo === opcion}
                   className={`rounded-2xl border p-3 text-left ${
                     tipo === opcion ? 'border-brand-500 bg-brand-500/10' : 'border-white/10 bg-white/5'
                   }`}
                 >
-                  <b className="block text-sm">{DESCRIPCIONES[opcion].titulo}</b>
+                  <b className="block text-sm">
+                    {tipo === opcion && <span aria-hidden>✓ </span>}
+                    {DESCRIPCIONES[opcion].titulo}
+                  </b>
                   <span className="text-xs text-ink-200">{DESCRIPCIONES[opcion].texto}</span>
                 </button>
               ))}

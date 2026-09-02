@@ -59,14 +59,41 @@
     return navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'no lo dice';
   }, 'no lo dice'));
 
-  /* WebGL: lo que de verdad necesita el visor */
-  var gl = null, motivo = '';
+  /* ---------------------------------------------------------------------
+     WEBGL: DOS FILAS, NO UNA
+
+     Aquí había una sola fila que aceptaba `webgl2`, `webgl` o
+     `experimental-webgl` indistintamente y ponía "sí, disponible" con
+     cualquiera de los tres. Esa fila mentía justo en el teléfono que
+     importa: three.js r185 pide un contexto `webgl2` y nada más —la rama de
+     WebGL 1 se quitó en r163—, así que un iPhone con iOS 13 o 14 salía en
+     verde en esta página y después se quedaba con el velo de "Cargando
+     panorámica…" girando para siempre.
+
+     El semáforo de arriba es ahora el mismo que aplica `src/lib/webgl.ts`
+     antes de montar el visor: WebGL 2 o nada. WebGL 1 se sigue preguntando,
+     pero solo como dato, para poder decir CUÁL de los dos falta; no cambia
+     el veredicto.
+
+     Los contextos se sueltan en cuanto contestan. Un celular aguanta pocos
+     vivos a la vez (ocho o dieciséis), y esta página se abre justo antes de
+     entrar al visor, que necesita uno.
+     --------------------------------------------------------------------- */
+  var gl2 = null, gl1 = null, motivo = '';
   try {
     var c = document.createElement('canvas');
-    gl = c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl');
+    gl2 = c.getContext('webgl2');
+    if (!gl2) gl1 = c.getContext('webgl') || c.getContext('experimental-webgl');
   } catch (e) { motivo = e.message; }
 
-  add('WebGL', gl ? 'sí, disponible' : ('NO disponible' + (motivo ? ' (' + motivo + ')' : '')), !!gl);
+  var gl = gl2 || gl1;
+
+  add('WebGL 2 (lo que necesita el visor)',
+      gl2 ? 'sí — el recorrido en 3D puede abrir'
+          : (gl1 ? 'NO — este navegador solo tiene WebGL 1; el motor 3D necesita WebGL 2 (llegó a Safari en la 15)'
+                 : 'NO — el navegador no entregó un contexto WebGL' + (motivo ? ' (' + motivo + ')' : '')),
+      !!gl2);
+  add('WebGL 1', gl2 ? 'sí (viene incluido con WebGL 2)' : (gl1 ? 'sí, pero no alcanza' : 'no'));
 
   if (gl) {
     add('Versión de WebGL', intenta(function () { return gl.getParameter(gl.VERSION); }, '?'));
@@ -77,6 +104,13 @@
       var d = gl.getExtension('WEBGL_debug_renderer_info');
       return d ? gl.getParameter(d.UNMASKED_RENDERER_WEBGL) : 'no lo dice';
     }, 'no lo dice'));
+
+    intenta(function () {
+      var soltar = gl.getExtension('WEBGL_lose_context');
+      if (soltar) soltar.loseContext();
+      c.width = 0; c.height = 0;
+      return 'ok';
+    }, 'ok');
   }
 
   /* ---------------------------------------------------------------------
