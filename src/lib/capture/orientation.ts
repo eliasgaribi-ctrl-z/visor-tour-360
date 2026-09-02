@@ -244,6 +244,15 @@ export class OrientationTracker {
   /** Se avisa solo cuando cambia el ESTADO, no en cada lectura. */
   onStateChange: ((state: OrientationState) => void) | null = null
 
+  /**
+   * Se avisa en CADA lectura, después de actualizar `reading`. Es para quien
+   * necesita reaccionar al evento mismo y no puede esperar a su propio
+   * requestAnimationFrame: el visor lo usa para mover la cámara sin abrir un
+   * bucle de dibujo que siga vivo con el teléfono quieto (ver useGyroLook.ts).
+   * La captura no lo usa: lee `reading` desde su rAF, como siempre.
+   */
+  onReading: (() => void) | null = null
+
   private previous = new THREE.Quaternion()
   private previousAt = 0
   private hasPrevious = false
@@ -357,6 +366,7 @@ export class OrientationTracker {
     this.hasPrevious = true
 
     this.setState('activo')
+    this.onReading?.()
   }
 
   /**

@@ -1,11 +1,23 @@
 import type { Hotspot } from '../types'
 import type { StoredScene, StoredTour } from './types'
 import { FORMAT_VERSION } from './types'
+import type { Ficha } from '../types'
+import type { MarcaGuardada } from './types'
+import { limpiarEscena, limpiarFicha, limpiarMarca, migrarRecorrido } from './migrar'
 import { createZip, readZip, type ZipEntry } from './zip'
 import { leerBytes } from './bytes'
+import { PaqueteError } from './entregar'
 import { STORE_BLOBS, STORE_TOURS, idbPut, tx } from './idb'
 import { getImage, getTour } from './tours'
 import { newId } from './ids'
+
+/* La clase del error y la entrega del archivo viven en `./entregar`, no aquí,
+   para que las dos pantallas que las necesitan puedan importarlas SIN bajar este
+   módulo. Ver su encabezado: una razón es de peso (7.6 kB medidos) y la otra es
+   que un `await` antes de `navigator.share()` gasta la activación del toque en
+   iOS. Se reexportan desde aquí para que este siga siendo el módulo del que se
+   pide todo lo del `.tour`. */
+export { PaqueteError, entregarArchivo, mensajeDePaquete } from './entregar'
 
 /**
  * ============================================================================
@@ -22,6 +34,7 @@ import { newId } from './ids'
  *   recorrido.json     qué habitaciones hay, cómo se llaman, sus puntos
  *   fotos/000.jpg      la panorámica de la primera habitación
  *   fotos/000.min.jpg  su miniatura
+ *   marca/logo.png     el logo de la inmobiliaria, si el recorrido trae
  *
  * Se puede abrir con cualquier descompresor, así que las fotos nunca quedan
  * secuestradas dentro de un formato propio.
@@ -40,8 +53,21 @@ type EscenaManifiesto = {
   hotspots: Hotspot[]
   origin?: StoredScene['origin']
   coverageDeg?: number
+  /* Desde la v2, junto con marca y ficha. Opcionales: un archivo v1 se lee igual. */
+  rumbo?: number
+  nivel?: { tiltX: number; tiltZ: number }
   createdAt: number
 }
+
+/**
+ * La marca dentro del manifiesto.
+ *
+ * Igual que `MarcaGuardada` pero con `logoArchivo` —una entrada del ZIP— en vez
+ * de `logoId`, que es una llave del IndexedDB del teléfono que exportó y no
+ * significa nada en otro aparato. Mismo patrón que `archivo`/`miniatura` de las
+ * escenas, y por la misma razón.
+ */
+type MarcaManifiesto = Omit<MarcaGuardada, 'logoId'> & { logoArchivo?: string }
 
 type Manifiesto = {
   formato: string
@@ -54,15 +80,10 @@ type Manifiesto = {
     startSceneId: string
     createdAt: number
     scenes: EscenaManifiesto[]
-  }
-}
-
-export class PaqueteError extends Error {
-  consejo?: string
-  constructor(message: string, consejo?: string) {
-    super(message)
-    this.name = 'PaqueteError'
-    this.consejo = consejo
+    /* Desde la v2. Los dos opcionales, así que un archivo v1 se lee igual. */
+    marca?: MarcaManifiesto
+    ficha?: Ficha
+    autogiro?: boolean
   }
 }
 
@@ -94,20 +115,36 @@ export function nombreDeArchivo(tour: { title: string }): string {
 export async function exportarTour(
   tourId: string,
   avance?: (hechas: number, total: number) => void,
-): Promise<{ blob: Blob; nombre: string }> {
+): Promise<{ blob: Blob; nombre: string; faltantes: string[] }> {
   const tour = await getTour(tourId)
   if (!tour) throw new PaqueteError('Ese recorrido ya no está guardado en este teléfono.')
 
   const entradas: ZipEntry[] = []
   const escenas: EscenaManifiesto[] = []
+  /** Habitaciones que se quedaron fuera porque su foto ya no estaba. */
+  const faltantes: string[] = []
 
   for (const [indice, scene] of tour.scenes.entries()) {
     const foto = await getImage(scene.imageId)
+    /* ── Una foto perdida ya no cancela el respaldo entero ──────────────────
+     *
+     * Antes esto lanzaba y el `.tour` no se armaba. El problema es CUÁNDO pasa:
+     * el archivo existe precisamente porque Safari en iOS borra el
+     * almacenamiento de los sitios que pasan siete días sin abrirse, y ese
+     * borrado no es limpio ni ordenado. En ese escenario —el único en el que el
+     * respaldo de verdad importa— negarse en bloque por una habitación se lleva
+     * también las nueve que sí estaban.
+     *
+     * Y era incoherente además: los DOS lectores (`importarTour` y el visor)
+     * omiten la habitación sin foto y siguen. El escritor era el estricto.
+     *
+     * Se exporta lo que hay y se dice qué se quedó fuera; el error duro se
+     * guarda para cuando no queda ninguna, que es el mismo criterio que ya usa
+     * la importación. */
     if (!foto) {
-      throw new PaqueteError(
-        `A la habitación "${scene.name}" le falta su foto.`,
-        'Vuelve a tomarla o bórrala del recorrido y exporta de nuevo.',
-      )
+      faltantes.push(scene.name)
+      avance?.(indice + 1, tour.scenes.length)
+      continue
     }
 
     /* El nombre dentro del ZIP va por número de habitación y no por su id.
@@ -138,11 +175,25 @@ export async function exportarTour(
       hotspots: scene.hotspots,
       origin: scene.origin,
       coverageDeg: scene.coverageDeg,
+      rumbo: scene.rumbo,
+      nivel: scene.nivel,
       createdAt: scene.createdAt,
     })
 
     avance?.(indice + 1, tour.scenes.length)
   }
+
+  if (escenas.length === 0) {
+    throw new PaqueteError(
+      'Ninguna habitación de este recorrido tiene su foto en el teléfono.',
+      'Vuelve a tomarlas, o abre el último archivo que hayas exportado.',
+    )
+  }
+
+  /* El logo viaja como ARCHIVO. Con solo la `marca` en bloque llegaban al otro
+     teléfono los colores y el nombre, y el logo desaparecía sin un solo error:
+     `logoId` es una llave local y del otro lado no apunta a nada. */
+  const marca = await marcaParaArchivo(tour.marca, entradas)
 
   const manifiesto: Manifiesto = {
     formato: MARCA,
@@ -152,9 +203,16 @@ export async function exportarTour(
       id: tour.id,
       title: tour.title,
       subtitle: tour.subtitle,
-      startSceneId: tour.startSceneId,
+      startSceneId: escenas.some((e) => e.id === tour.startSceneId)
+        ? tour.startSceneId
+        : escenas[0].id,
       createdAt: tour.createdAt,
       scenes: escenas,
+      marca,
+      ficha: tour.ficha,
+      /* Solo si está encendido: un `false` explícito no dice nada que la
+         ausencia no diga, y un archivo v2 viejo no trae el campo. */
+      autogiro: tour.autogiro === true ? true : undefined,
     },
   }
 
@@ -163,7 +221,61 @@ export async function exportarTour(
     data: new TextEncoder().encode(JSON.stringify(manifiesto, null, 2)),
   })
 
-  return { blob: createZip(entradas), nombre: nombreDeArchivo(tour) }
+  return { blob: createZip(entradas), nombre: nombreDeArchivo(tour), faltantes }
+}
+
+/** Extensiones de logo que se aceptan, y con qué tipo se vuelve a guardar. */
+const LOGOS: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/webp': '.webp',
+}
+const TIPO_DE_LOGO: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+}
+
+/**
+ * Pasa la marca de la forma que se guarda a la forma que viaja: mete el logo
+ * como entrada del ZIP y cambia `logoId` por `logoArchivo`.
+ *
+ * Los campos se copian a MANO y no con `const { logoId, ...resto }`. El object
+ * rest es de ES2018 y el bundle se compila para Safari 13, así que TypeScript
+ * emite un helper para bajarlo de nivel — y ese helper resultó ser un chunk
+ * propio de 10 kB que se PRECARGABA en el arranque. Está medido y documentado
+ * igual en `resolveTour`.
+ *
+ * Un formato que no esté en la lista se omite en silencio: mejor un recorrido sin
+ * logo que un `.tour` con un SVG dentro, que es un vector de XSS y sanearlo bien
+ * es su propio trabajo.
+ */
+async function marcaParaArchivo(
+  guardada: MarcaGuardada | undefined,
+  entradas: ZipEntry[],
+): Promise<MarcaManifiesto | undefined> {
+  if (!guardada) return undefined
+
+  const marca: MarcaManifiesto = {
+    nombre: guardada.nombre,
+    colores: guardada.colores,
+    hudFondo: guardada.hudFondo,
+    fondoApp: guardada.fondoApp,
+    tipografia: guardada.tipografia,
+  }
+
+  if (guardada.logoId) {
+    const logo = await getImage(guardada.logoId)
+    const extension = logo ? LOGOS[logo.type] : undefined
+    if (logo && extension) {
+      const nombre = `marca/logo${extension}`
+      entradas.push({ name: nombre, data: await bytes(logo) })
+      marca.logoArchivo = nombre
+    }
+  }
+
+  return marca
 }
 
 /* ------------------------------------------------- LO QUE VIENE DE AFUERA */
@@ -286,6 +398,13 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     throw new PaqueteError('El recorrido viene dañado: no trae habitaciones.')
   }
 
+  /* Un solo paso por la escalera de versiones, aquí y no repartido: de aquí en
+     adelante el resto de esta función solo ve la forma de la versión actual. */
+  manifiesto.recorrido = migrarRecorrido(
+    manifiesto.recorrido as unknown as Record<string, unknown>,
+    typeof manifiesto.version === 'number' ? manifiesto.version : 1,
+  ) as unknown as Manifiesto['recorrido']
+
   const porNombre = new Map(contenido.map((f) => [f.name, f.data]))
   const tourId = newId('tour')
   const escenas: StoredScene[] = []
@@ -299,7 +418,13 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
      antes de dibujar nada. */
   const idsVistos = new Set<string>()
 
-  for (const escena of manifiesto.recorrido.scenes) {
+  for (const crudo of manifiesto.recorrido.scenes) {
+    /* Campo por campo, igual que la marca y la ficha. Antes los numéricos
+       entraban tal cual y un `"initialYaw": "90"` se guardaba como string: en el
+       rig, `'90' + 0` es `'900'`. Ver `limpiarEscena` en migrar.ts. */
+    const escena = limpiarEscena(crudo)
+    if (!escena) continue
+
     const foto = porNombre.get(escena.archivo)
     if (!foto) continue // habitación sin foto: se omite en vez de tumbar todo
 
@@ -313,6 +438,19 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
       blobs.push({ id: thumbId, blob: new Blob([mini], { type: 'image/jpeg' }) })
     }
 
+    /* ── Al id repetido se le da uno nuevo, y los enlaces NO se reescriben ───
+     *
+     * Reescribirlos era peor que el problema que arreglaban. El bucle mandaba
+     * TODOS los puntos que apuntaban al id repetido a la habitación renombrada,
+     * incluidos los que apuntaban a la que SÍ conservó ese id — o sea que la
+     * puerta que decía "A la sala" abría la bodega colada al final del archivo,
+     * exactamente el fallo que el comentario decía prevenir. Y se contradecía
+     * con `startSceneId`, que resuelve el duplicado a la PRIMERA.
+     *
+     * Sin reescritura, los enlaces siguen llevando a la habitación que se quedó
+     * con el id y la renombrada queda inalcanzable. Eso es la única lectura
+     * honesta de un archivo ambiguo: la habitación se conserva y se puede volver
+     * a enlazar desde el editor, pero nadie inventa a dónde llevaba una puerta. */
     /* Del id solo se acepta la forma que produce `newId`: letras, dígitos,
        guion y guion bajo. No es paranoia gratuita —hoy el id no toca el disco—
        pero sí termina en la URL (`#/ver/...`) y en el nombre de una entrada del
@@ -334,7 +472,9 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
       hotspots: saneaHotspots(escena.hotspots),
       origin: escena.origin,
       coverageDeg: escena.coverageDeg,
-      createdAt: escena.createdAt ?? Date.now(),
+      rumbo: escena.rumbo,
+      nivel: escena.nivel,
+      createdAt: escena.createdAt,
     })
   }
 
@@ -342,9 +482,45 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     throw new PaqueteError('El archivo no traía ninguna foto utilizable.')
   }
 
+  /* El archivo viene de fuera y pudo editarse a mano, así que la marca y la
+     ficha se filtran campo por campo. No es paranoia de más: los colores de la
+     marca acaban dentro de un `style.setProperty()`, y un string arbitrario ahí
+     es una inyección de CSS. Ver `limpiarMarca` en migrar.ts. */
+  const marca = limpiarMarca(manifiesto.recorrido.marca)
+  const ficha = limpiarFicha(manifiesto.recorrido.ficha)
+
+  /* El logo llega como archivo del ZIP y se vuelve a guardar como blob local.
+     `limpiarMarca` deja fuera cualquier `logoId` del manifiesto a propósito: esa
+     llave es del otro teléfono. La única forma de tener logo es traerlo.
+
+     El tipo del Blob se decide por la EXTENSIÓN de la lista blanca y nunca por
+     lo que diga el archivo: un `marca/logo.png` con un SVG dentro se guardará
+     como `image/png`, así que su `blob:` URL no puede acabar siendo
+     `image/svg+xml` — que es donde un logo subido por un tercero dejaría de ser
+     una imagen y pasaría a ser un documento con scripts. */
+  const logoArchivo = manifiesto.recorrido.marca?.logoArchivo
+  if (marca && typeof logoArchivo === 'string') {
+    const datos = porNombre.get(logoArchivo)
+    const punto = logoArchivo.lastIndexOf('.')
+    const tipo = punto < 0 ? undefined : TIPO_DE_LOGO[logoArchivo.slice(punto).toLowerCase()]
+    if (datos && tipo) {
+      const logoId = newId('img')
+      blobs.push({ id: logoId, blob: new Blob([datos], { type: tipo }) })
+      marca.logoId = logoId
+    }
+  }
+
   const ahora = Date.now()
   const tour: StoredTour = {
     id: tourId,
+    /* El importador escribe con `idbPut` directo y no con `saveTour`, así que la
+       estampa se pone a mano: sin esto, cada recorrido que entra por un archivo
+       quedaría sin versión. Ver el comentario de `formato` en ./types.ts. */
+    formato: FORMAT_VERSION,
+    marca,
+    ficha,
+    // Un booleano de verdad, o nada: `"sí"` o `1` en el archivo no encienden nada.
+    autogiro: manifiesto.recorrido.autogiro === true ? true : undefined,
     title: texto(manifiesto.recorrido.title, 80, 'Recorrido importado'),
     subtitle: textoOpcional(manifiesto.recorrido.subtitle, 120),
     startSceneId: escenas.some((s) => s.id === manifiesto.recorrido.startSceneId)
@@ -363,49 +539,4 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
   })
 
   return tour
-}
-
-/**
- * Entrega el archivo al usuario.
- *
- * IMPORTANTE: esta función no debe llevar ningún `await` antes de llamar a
- * `share()`. En iOS, compartir solo se permite mientras dure la "activación"
- * que dejó el toque del usuario, y armar un ZIP de varios megabytes se la
- * acaba. Por eso el archivo se prepara ANTES, en otro toque, y aquí solo se
- * entrega.
- *
- * Se intenta primero la hoja de compartir porque desde ahí el archivo se manda
- * a WhatsApp, a Archivos o por AirDrop en un toque, que es justo lo que la
- * gente quiere hacer. La descarga normal es el respaldo: funciona siempre, pero
- * el archivo aterriza en la carpeta de Descargas y hay que ir a buscarlo.
- */
-export function entregarArchivo(blob: Blob, nombre: string): 'compartido' | 'descargado' {
-  const file = new File([blob], nombre, { type: 'application/zip' })
-
-  if (navigator.canShare?.({ files: [file] })) {
-    void navigator.share({ files: [file], title: nombre }).catch((error: unknown) => {
-      // Cancelar la hoja de compartir NO es un fallo: descargar el archivo
-      // "por si acaso" le deja al usuario en Descargas algo que decidió no
-      // mandar.
-      if ((error as Error)?.name === 'AbortError') return
-      descargar(blob, nombre)
-    })
-    return 'compartido'
-  }
-
-  descargar(blob, nombre)
-  return 'descargado'
-}
-
-function descargar(blob: Blob, nombre: string) {
-  const url = URL.createObjectURL(blob)
-  const enlace = document.createElement('a')
-  enlace.href = url
-  enlace.download = nombre
-  document.body.append(enlace)
-  enlace.click()
-  enlace.remove()
-  // Un respiro antes de revocar: si se revoca en el mismo tick, algunos
-  // navegadores cancelan la descarga que acaban de empezar.
-  setTimeout(() => URL.revokeObjectURL(url), 60_000)
 }

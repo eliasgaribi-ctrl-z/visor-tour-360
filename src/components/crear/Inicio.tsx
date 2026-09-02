@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Ruta } from '../../lib/useHashRoute'
 import type { TourSummary } from '../../lib/store/types'
 import {
-  blobUrl,
   createTour,
   deleteTour,
   listTours,
@@ -13,7 +12,8 @@ import {
 } from '../../lib/store/tours'
 import { almacenamientoUtilizable } from '../../lib/store/tours'
 import { formatBytes, requestPersistence, storageInfo } from '../../lib/store/quota'
-import { importarTour, PaqueteError } from '../../lib/store/paquete'
+import { mensajeDePaquete } from '../../lib/store/entregar'
+import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
 export type InicioProps = {
@@ -37,22 +37,37 @@ function cuando(ms: number): string {
   return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })
 }
 
-function Portada({ coverId }: { coverId?: string }) {
-  const [url, setUrl] = useState<string | null>(null)
+/**
+ * ============================================================================
+ *  A DÓNDE LLEVA UN RECORRIDO DE LA LISTA
+ * ============================================================================
+ *
+ * Al visor, no al editor. Suena obvio y no lo era: hasta ahora la tarjeta y el
+ * importador de `.tour` llevaban los dos a `#/editar/<id>`, y el único camino a
+ * `#/ver/<id>` en toda la app era el botón "Ver" de la barra del editor.
+ *
+ * O sea que quien recibe el `.tour` por WhatsApp —el desconocido para el que se
+ * construyó la portada— caía en la pantalla de administración: "Borrar la
+ * habitación", "Preparar archivo", "Quitar la portada". Nunca veía el precio ni
+ * el botón de llamar al agente. Y el agente que quiere enseñarle la casa a un
+ * cliente que tiene al lado pasaba obligatoriamente por ahí, con los botones de
+ * borrar a la vista.
+ *
+ * La excepción es un recorrido sin ninguna habitación: ahí no hay nada que ver
+ * y mandarlo al visor solo sirve para que rebote en "Todavía no hay nada". Ese
+ * va al editor, que es donde de verdad tiene algo que hacer.
+ *
+ * Y para que el agente no pague dos toques —ni la descarga del motor 3D— cada
+ * vez que quiere editar, la fila tiene su propio lápiz al lado del bote de
+ * basura. Editar sigue estando a un toque; lo que cambió es cuál es el toque
+ * por omisión.
+ */
+function destinoDe(tourId: string, habitaciones: number): Ruta {
+  return habitaciones > 0 ? { nombre: 'ver', tourId } : { nombre: 'editar', tourId }
+}
 
-  useEffect(() => {
-    let vivo = true
-    if (!coverId) {
-      setUrl(null)
-      return
-    }
-    void blobUrl(coverId).then((u) => {
-      if (vivo) setUrl(u)
-    })
-    return () => {
-      vivo = false
-    }
-  }, [coverId])
+function Portada({ coverId }: { coverId?: string }) {
+  const url = useBlobUrl(coverId)
 
   return (
     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-black/40">
@@ -158,6 +173,16 @@ export function Inicio({ ir }: InicioProps) {
     setImportando(true)
     setError(null)
     try {
+      /* El lector de `.tour` se baja AQUÍ y no arriba, y se midió: con el
+         `import` estático, `paquete.ts` metía el escritor de ZIP, la escalera de
+         migración y la revisión de contraste —7.6 kB— en el chunk de arranque de
+         "Mis recorridos", que es el número que este proyecto cuida. Y no hace
+         falta ahí: para llegar a esta línea la persona ya eligió un archivo en el
+         diálogo del sistema, así que el módulo viaja mientras ella lo busca.
+         `mensajeDePaquete` sí se importa arriba, y a propósito: si lo que falla
+         es la descarga del módulo, el `catch` tiene que poder dar un mensaje
+         igual, y no puede depender de lo que no llegó. */
+      const { importarTour } = await import('../../lib/store/paquete')
       const tour = await importarTour(file)
       /* También aquí, no solo al crear: quien importa un recorrido acaba de
          meter todas sus fotos al teléfono y es justo el que más tiene que
@@ -166,10 +191,9 @@ export function Inicio({ ir }: InicioProps) {
          no; cuando dice que no, lo peor que pasa es que sigue como estaba. */
       void requestPersistence()
       await recargar()
-      ir({ nombre: 'editar', tourId: tour.id })
+      ir(destinoDe(tour.id, tour.scenes.length))
     } catch (e) {
-      const mensaje = e instanceof PaqueteError ? [e.message, e.consejo].filter(Boolean).join(' ') : 'No se pudo abrir el archivo.'
-      setError(mensaje)
+      setError(mensajeDePaquete(e, 'No se pudo abrir el archivo.'))
     } finally {
       setImportando(false)
       if (archivo.current) archivo.current.value = ''
@@ -233,7 +257,7 @@ export function Inicio({ ir }: InicioProps) {
           tours.map((tour) => (
             <div key={tour.id} className="flex items-stretch gap-2">
               <div className="min-w-0 flex-1">
-                <Tarjeta onClick={() => ir({ nombre: 'editar', tourId: tour.id })}>
+                <Tarjeta onClick={() => ir(destinoDe(tour.id, tour.scenes))}>
                   <div className="flex items-center gap-3">
                     <Portada coverId={tour.coverId} />
                     <div className="min-w-0 flex-1">
@@ -249,6 +273,17 @@ export function Inicio({ ir }: InicioProps) {
                   </div>
                 </Tarjeta>
               </div>
+              <button
+                type="button"
+                aria-label={`Editar ${tour.title}`}
+                onClick={() => ir({ nombre: 'editar', tourId: tour.id })}
+                className="grid w-12 shrink-0 place-items-center rounded-hud border border-white/10
+                           bg-white/5 text-ink-200 active:bg-white/15 active:text-ink-50"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 20h4l10-10a2.8 2.8 0 10-4-4L4 16v4z" strokeLinejoin="round" />
+                </svg>
+              </button>
               <button
                 type="button"
                 aria-label={`Borrar ${tour.title}`}

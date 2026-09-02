@@ -1,5 +1,7 @@
 import type { Tour, TourScene } from '../types'
 import type { StoredScene, StoredTour, TourSummary } from './types'
+import { FORMAT_VERSION } from './types'
+import { normalizarTour } from './normalizar'
 import {
   STORE_BLOBS,
   STORE_TOURS,
@@ -87,13 +89,43 @@ export async function listTours(): Promise<TourSummary[]> {
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+/**
+ * Un recorrido guardado, con la forma que los componentes esperan.
+ *
+ * Pasa por `normalizarTour` a propósito, y es el ÚNICO lugar donde hace falta:
+ * los registros de IndexedDB los escribió una versión anterior de esta misma app
+ * y nadie los re-valida nunca. Sin esto, un `StoredTour` viejo llega con los
+ * campos nuevos ausentes directo a un render, y el fallo aparece lejos de la
+ * causa. `normalizarTour` devuelve el mismo objeto cuando ya está bien, que es
+ * el caso normal, así que no cuesta nada.
+ */
 export async function getTour(id: string): Promise<StoredTour | null> {
   const tour = await tx(STORE_TOURS, 'readonly', (t) => idbGet<StoredTour>(t, STORE_TOURS, id))
-  return tour ?? null
+  return tour ? normalizarTour(tour) : null
+}
+
+/**
+ * Lo último que le pasa a un recorrido antes de escribirse: la estampa de
+ * versión y la fecha.
+ *
+ * Existe porque no hay UN camino de escritura, hay tres: `saveTour`,
+ * `guardarEscenaConFoto` y `reemplazarFoto`, y las dos últimas usan `idbPut`
+ * directo porque escriben el recorrido y sus blobs en la MISMA transacción.
+ * Los tres ponían `updatedAt: Date.now()` por su cuenta, y al agregarle la
+ * estampa de versión al modelo se me olvidaron dos de los tres — o sea que
+ * cualquier recorrido hecho con la cámara se habría quedado sin ella, en
+ * silencio, y el problema no aparecería hasta la migración a la v3.
+ *
+ * Así que la sella una sola función, y `tools/pruebas/patrones.mjs` se pone rojo
+ * si aparece un escritor nuevo del almacén de recorridos. Ver el comentario de
+ * `formato` en ./types.ts.
+ */
+function paraGuardar(tour: StoredTour): StoredTour {
+  return { ...tour, formato: FORMAT_VERSION, updatedAt: Date.now() }
 }
 
 export async function saveTour(tour: StoredTour): Promise<StoredTour> {
-  const next: StoredTour = { ...tour, updatedAt: Date.now() }
+  const next = paraGuardar(tour)
   await tx(STORE_TOURS, 'readwrite', (t) => idbPut(t, STORE_TOURS, next))
   return next
 }
@@ -102,7 +134,13 @@ export async function deleteTour(id: string): Promise<void> {
   const tour = await getTour(id)
   if (!tour) return
 
-  const imageIds = tour.scenes.flatMap((s) => [s.imageId, s.thumbId]).filter(Boolean) as string[]
+  /* El logo entra en la lista igual que las fotos: desde que viaja dentro del
+     `.tour` hay un blob de logo por cada recorrido importado, y sin esto cada
+     borrado dejaba uno huérfano ocupando espacio que nadie iba a reclamar. */
+  const imageIds = [
+    ...tour.scenes.flatMap((s) => [s.imageId, s.thumbId]),
+    tour.marca?.logoId,
+  ].filter(Boolean) as string[]
   for (const imageId of imageIds) releaseBlobUrl(imageId)
 
   await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
@@ -145,6 +183,8 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
       image,
       thumbnail,
       initialYaw: scene.initialYaw ?? 0,
+      rumbo: scene.rumbo,
+      nivel: scene.nivel,
       // Un hotspot que apunta a una habitación que ya no existe se cae aquí:
       // dejarlo mostraría un botón que no lleva a ningún lado.
       hotspots: scene.hotspots.filter(
@@ -157,11 +197,36 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
     ? stored.startSceneId
     : (scenes[0]?.id ?? '')
 
+  /* La marca viaja casi igual; lo único que cambia es el logo, que en la base es
+     una llave de Blob y el visor necesita como URL. Mismo puente que las fotos. */
+  let marca: Tour['marca']
+  if (stored.marca) {
+    /* Se copian los campos a mano en vez de usar `const { logoId, ...resto }`.
+       El object rest es de ES2018 y el bundle se compila para Safari 13, así que
+       TypeScript emite un helper para bajarlo de nivel — y ese helper resultó ser
+       un chunk propio de 10 kB que se PRECARGABA en el arranque, subiendo el
+       peso de "Mis recorridos" de 236 a 243 kB. Por una línea más corta.
+       Medido con el mismo paso del CI que vigila ese presupuesto. */
+    const m = stored.marca
+    const logo = m.logoId ? ((await blobUrl(m.logoId)) ?? undefined) : undefined
+    marca = {
+      nombre: m.nombre,
+      colores: m.colores,
+      hudFondo: m.hudFondo,
+      fondoApp: m.fondoApp,
+      tipografia: m.tipografia,
+      logo,
+    }
+  }
+
   return {
     title: stored.title,
     subtitle: stored.subtitle,
     startSceneId,
     scenes,
+    marca,
+    ficha: stored.ficha,
+    autogiro: stored.autogiro,
   }
 }
 
@@ -182,12 +247,11 @@ export async function guardarEscenaConFoto(params: {
   miniatura?: Blob
 }): Promise<StoredTour> {
   const { tour, scene, foto, miniatura } = params
-  const siguiente: StoredTour = {
+  const siguiente = paraGuardar({
     ...tour,
     scenes: [...tour.scenes.filter((s) => s.id !== scene.id), scene],
     startSceneId: tour.startSceneId || scene.id,
-    updatedAt: Date.now(),
-  }
+  })
 
   await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
     await idbPut(t, STORE_BLOBS, { id: scene.imageId, blob: foto })
@@ -215,15 +279,16 @@ export async function reemplazarFoto(params: {
   miniatura?: Blob
   origin?: StoredScene['origin']
   coverageDeg?: number
+  rumbo?: number
 }): Promise<StoredTour> {
-  const { tour, sceneId, foto, miniatura, origin, coverageDeg } = params
+  const { tour, sceneId, foto, miniatura, origin, coverageDeg, rumbo } = params
   const anterior = tour.scenes.find((s) => s.id === sceneId)
   if (!anterior) throw new Error('Esa habitación ya no está en el recorrido.')
 
   const imageId = newId('img')
   const thumbId = miniatura ? newId('img') : undefined
 
-  const siguiente: StoredTour = {
+  const siguiente = paraGuardar({
     ...tour,
     scenes: tour.scenes.map((s) =>
       s.id === sceneId
@@ -233,11 +298,15 @@ export async function reemplazarFoto(params: {
             thumbId,
             origin: origin ?? s.origin,
             coverageDeg: coverageDeg ?? s.coverageDeg,
+            /* El rumbo de la foto NUEVA reemplaza al de la vieja, y si la nueva
+               no trae —foto importada sobre una capturada— se BORRA en vez de
+               conservarse. Un rumbo heredado de otra foto apunta a donde miraba
+               otra panorámica, o sea a ningún lado. */
+            rumbo,
           }
         : s,
     ),
-    updatedAt: Date.now(),
-  }
+  })
 
   await tx([STORE_TOURS, STORE_BLOBS], 'readwrite', async (t) => {
     await idbPut(t, STORE_BLOBS, { id: imageId, blob: foto })
@@ -279,6 +348,7 @@ export function createScene(params: {
   thumbId?: string
   origin?: StoredScene['origin']
   coverageDeg?: number
+  rumbo?: number
 }): StoredScene {
   return {
     id: params.id,
@@ -287,6 +357,7 @@ export function createScene(params: {
     thumbId: params.thumbId,
     origin: params.origin,
     coverageDeg: params.coverageDeg,
+    rumbo: params.rumbo,
     initialYaw: 0,
     hotspots: [],
     createdAt: Date.now(),

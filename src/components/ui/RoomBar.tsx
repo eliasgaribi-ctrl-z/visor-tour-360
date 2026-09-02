@@ -32,7 +32,11 @@ export function RoomBar({ scenes, activeId, onSelect }: RoomBarProps) {
             className={`relative inline-flex min-h-11 shrink-0 items-center overflow-hidden rounded-xl
                         px-4 text-sm font-medium whitespace-nowrap transition-colors ${
                           isActive
-                            ? 'bg-brand-500 text-black'
+                            /* La tinta la deriva `aplicarMarca` de la luminancia del
+                               acento, igual que en los botones: con un morado o un azul
+                               marino de marca, `text-black` fijo se pierde encima. El
+                               default de la variable deja el ámbar de THIQA como hoy. */
+                            ? 'bg-brand-500 text-[var(--tinta-marca,#000)]'
                             : 'bg-white/10 text-ink-50 active:bg-white/20'
                         }`}
           >

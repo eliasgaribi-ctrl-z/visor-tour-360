@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
 
-import { DEG, yawPitchToVector3 } from '../math'
+import { DEG } from '../math'
+import { yawPitchToVector3 } from '../math3d'
 import { fovDe } from './frames'
 import {
   avanceRecomendado,

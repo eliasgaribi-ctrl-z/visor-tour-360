@@ -7,6 +7,7 @@ import * as THREE from 'three'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredTour } from '../../lib/store/types'
+import { rumboDeEscena } from '../../lib/rumbo'
 import {
   createScene,
   getTour,
@@ -56,6 +57,7 @@ import { PanoramaStitcher } from '../../lib/capture/stitcher'
 import { detectWebGL } from '../../lib/webgl'
 
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
+import { sugerirNombre } from './nombres'
 import { GuiaCaptura } from './GuiaCaptura'
 
 /** A cuántos grados del punto guía se considera que ya estás apuntando ahí. */
@@ -977,6 +979,15 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     const rescate = fase
     setFase({ nombre: 'procesando', mensaje: 'Guardando…' })
     try {
+      /* El rumbo real del frente de la panorámica, que hasta ahora se calculaba
+         en cada captura y se tiraba al terminar: `offsetNorte` no lo leía nadie
+         en todo `src/`, así que la brújula del visor ponía su "N" en el frente
+         arbitrario de la foto. Sale de `baseYaw` —el yaw del sensor cuando
+         empezó la captura— más la corrección de la brújula. Si no hubo brújula
+         devuelve `undefined` y no se guarda nada; ver src/lib/rumbo.ts, que trae
+         escrita la derivación del signo y su prueba. */
+      const rumbo = rumboDeEscena(baseYaw.current, seguidor.offsetNorte)
+
       if (sceneId) {
         await reemplazarFoto({
           tour,
@@ -985,6 +996,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
           miniatura: fase.mini,
           origin: 'captura',
           coverageDeg: Math.round(fase.cobertura * 360),
+          rumbo,
         })
         apagar()
         ir({ nombre: 'puntos', tourId: tour.id, sceneId })
@@ -998,6 +1010,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
         thumbId: newId('img'),
         origin: 'captura',
         coverageDeg: Math.round(fase.cobertura * 360),
+        rumbo,
       })
       await guardarEscenaConFoto({ tour, scene, foto: fase.foto, miniatura: fase.mini })
       apagar()
@@ -1017,7 +1030,7 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
             : 'No se pudo guardar. Vuelve a tocar Guardar; la foto no se ha perdido.',
       })
     }
-  }, [apagar, fase, ir, nombre, sceneId, tour])
+  }, [apagar, fase, ir, nombre, sceneId, seguidor, tour])
 
   /* ------------------------------------------------------------- MODO MANUAL */
   const dispararManual = useCallback(() => {
@@ -1420,12 +1433,4 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     const id = cercano && cercano.distancia < TOLERANCIA_DEG * 1.6 ? cercano.punto.id : null
     tomarFoto(id, quaternion, yaw, pitch)
   }
-}
-
-function sugerirNombre(tour: StoredTour | null): string {
-  const usados = new Set((tour?.scenes ?? []).map((s) => s.name.toLowerCase()))
-  for (const nombre of ['Sala', 'Cocina', 'Comedor', 'Recámara', 'Baño', 'Patio', 'Cochera']) {
-    if (!usados.has(nombre.toLowerCase())) return nombre
-  }
-  return `Habitación ${(tour?.scenes.length ?? 0) + 1}`
 }

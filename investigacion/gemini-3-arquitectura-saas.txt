@@ -1,0 +1,101 @@
+Eres un arquitecto de software y a la vez alguien que ha puesto productos SaaS
+pequeños en producción cuidando el costo. Necesito una investigación actualizada
+a septiembre de 2026, con precios y fechas verificables.
+
+CONTEXTO DEL PROYECTO
+App web estática (React 19 + Vite, sin backend) que hoy se publica en GitHub
+Pages. Un agente inmobiliario captura recorridos virtuales 360 con su celular; el
+recorrido se guarda SOLO en el IndexedDB de su teléfono y la única forma de
+compartirlo es exportar un archivo ZIP. Quiero convertirlo en SaaS para
+inmobiliarias: que el agente publique el recorrido y le mande un LINK al
+comprador por WhatsApp.
+Números del producto: un recorrido son 5 a 10 habitaciones; cada habitación es
+una equirectangular 4096×2048 en JPEG calidad 0.86 ≈ 1.5 MB. Así que **un
+recorrido pesa ~8 a 15 MB**. Escala esperada primer año: 50-200 inmobiliarias,
+20-100 recorridos cada una, y los recorridos se ven mucho los primeros 30 días y
+casi nada después. Punto importante para el costo: **el gasto real no es guardar,
+es servir** — cada comprador que abre el link se descarga esos ~10 MB.
+Mercado: México. Los compradores abren el link en celular, muchos con datos
+móviles y aparatos de gama media.
+
+PREGUNTAS
+
+A) DÓNDE VIVEN LOS RECORRIDOS
+1. Compara para ESTE caso, con precios de septiembre de 2026 y el costo mensual
+   estimado a 100 inmobiliarias × 50 recorridos × 8 MB (= ~40 GB almacenados) con
+   200 GB/mes de salida:
+   - Cloudflare R2 + Workers
+   - Supabase (Storage + Auth + Postgres)
+   - Firebase (Storage + Auth + Firestore)
+   - AWS S3 + CloudFront
+   - Backblaze B2 + Cloudflare CDN
+   - Vercel Blob / Netlify Blobs
+   Para cada uno: costo de almacenamiento, costo de salida de datos (¡el que
+   mata!), si hay capa gratis útil, límite de tamaño por archivo, y qué tan fácil
+   es salirse después (lock-in).
+2. ¿Cuál recomiendas y por qué? Da el desglose del costo mensual estimado.
+3. ¿Se puede mantener el visor como sitio estático y que SOLO los assets y un
+   `tour.json` vivan en storage, sin escribir backend? ¿Con qué límites?
+4. Patrón de URL: `visor.midominio.mx/#/t/<id>` vs. `<id>.visor.midominio.mx` vs.
+   un slug legible. Qué implica cada uno para SEO, para vista previa en WhatsApp
+   y para poder borrar/expirar un recorrido.
+5. **Vista previa en WhatsApp**: para que el link muestre una imagen y un título
+   al pegarlo, se necesitan meta tags Open Graph en el HTML — pero una app de una
+   sola página con ruteo por `#` sirve el MISMO HTML para todos los recorridos, y
+   el crawler de WhatsApp no ejecuta JavaScript. ¿Cómo se resuelve esto sin
+   montar SSR? (¿Worker que inyecta meta tags? ¿un HTML por recorrido?) Da la
+   solución concreta y qué tan bien funciona con WhatsApp, Facebook y iMessage
+   en 2026.
+
+B) CUENTAS Y MULTIUSUARIO
+6. ¿Se puede tener un primer escalón "publicar sin cuenta", con un token secreto
+   largo en la URL como única credencial? Riesgos reales y cómo mitigarlos.
+   ¿Alguien lo hace así en producción?
+7. Si se necesitan cuentas: compara Supabase Auth, Firebase Auth, Clerk, WorkOS y
+   Auth0 en septiembre de 2026 para 200-2000 usuarios: precio, cuánto código hay
+   que escribir, y si funcionan bien con un frontend estático sin backend propio.
+8. Multi-tenant: el modelo más simple que soporte "inmobiliaria → agentes →
+   recorridos" con permisos. ¿Row Level Security de Postgres es suficiente o es
+   una trampa? Da el esquema de tablas mínimo.
+9. Cuotas: cómo evitar que un usuario suba 500 recorridos y reviente el presupuesto.
+
+C) MARCA POR INMOBILIARIA (WHITE LABEL)
+10. Hoy la marca son tokens de Tailwind v4 en un `@theme` de CSS, compilados en
+    el bundle. Para cambiarlos POR INMOBILIARIA en tiempo de ejecución sin
+    recompilar: ¿cuál es el patrón correcto en Tailwind v4? (¿custom properties
+    inyectadas en `:root`? ¿un `<style>` generado? ¿data attributes?) Ojo: el
+    piso de compatibilidad es Safari 13, así que `oklch()` y `color-mix()` NO se
+    pueden usar.
+11. Cómo validar un color que sube el cliente para que el HUD siga siendo legible
+    (contraste mínimo). Fórmula de contraste y umbral recomendado.
+12. Dominio propio por inmobiliaria (`recorridos.suinmobiliaria.com`): qué se
+    necesita, y cómo lo resuelven Cloudflare for SaaS, Vercel y Netlify. Costo.
+13. Logo y tipografía subidos por el cliente: formatos a aceptar, límites de peso,
+    y el riesgo de SVG subido por el usuario (XSS). Cómo sanitizarlo.
+
+D) MÉTRICAS Y PRIVACIDAD
+14. Quiero saber: cuántos abrieron el link, qué habitaciones vieron, cuánto
+    tiempo en cada una, qué hotspots tocaron, qué dispositivo. ¿Cómo se manda eso
+    desde un sitio estático de forma confiable? (`navigator.sendBeacon`,
+    `visibilitychange`, batching). Qué se pierde cuando el usuario cierra la
+    pestaña de golpe.
+15. Compara para esto: Plausible, Umami self-hosted, PostHog, Cloudflare Web
+    Analytics, y una tabla propia en el backend elegido. Precio 2026, si necesitan
+    consentimiento de cookies, y si sirven para eventos personalizados.
+16. México: qué exige la **LFPDPPP** (Ley Federal de Protección de Datos
+    Personales en Posesión de los Particulares) y su reforma más reciente para
+    este caso. ¿Un aviso de privacidad basta? ¿Se necesita consentimiento
+    expreso para analítica? ¿Y si un comprador español o estadounidense abre el
+    link (GDPR/CCPA)?
+17. Si en un recorrido aparece una persona o una placa de auto por accidente:
+    ¿qué obligación hay? ¿Vale la pena difuminar caras/placas automáticamente y
+    con qué se hace en el navegador?
+
+FORMATO DE SALIDA
+Para cada pregunta numerada: respuesta directa (3-8 renglones), tabla cuando
+compares opciones, precios con moneda y fecha, y "Fuente:" con URL y fecha. Si un
+precio no lo puedes verificar, escribe "NO VERIFICADO — verificar en <URL>".
+Cierra con dos secciones:
+- "ARQUITECTURA RECOMENDADA": un diagrama en texto y el costo mensual estimado.
+- "PRIMER ESCALÓN": lo mínimo que se puede lanzar en 2 semanas que ya permita
+  mandar un link a un comprador, y qué se deja para después.

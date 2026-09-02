@@ -1,0 +1,77 @@
+Eres un analista de producto que investiga mercados de software inmobiliario.
+Necesito una investigación actualizada a septiembre de 2026, con fuentes y fechas.
+Si un precio o una función no la puedes verificar, dilo explícitamente en vez de
+estimar.
+
+CONTEXTO
+Estoy por lanzar un SaaS de recorridos virtuales 360 para inmobiliarias, con una
+diferencia clave frente a los grandes: **el recorrido se captura con el celular
+del agente, sin cámara especial y sin hardware**. La app abre la cámara, el
+agente gira sobre su eje siguiendo puntos guía, y la app cose la panorámica en el
+teléfono. El resultado es un link que se manda por WhatsApp. Mercado inicial:
+México (Jalisco / zona metropolitana de Guadalajara), casas de rango medio y
+casas recuperadas/remates.
+
+PREGUNTAS
+
+A) COMPETENCIA
+1. Tabla comparativa, con precios de septiembre de 2026 en la moneda que
+   publiquen: Matterport, Kuula, CloudPano, EyeSpy360, Cupix, Asteroom, Zillow 3D
+   Home, Ricoh360 Tours, Metareal, Giraffe360. Para cada uno:
+   - precio por plan (mensual/anual) y qué límite tiene (recorridos, escenas, GB)
+   - si requiere cámara especial o basta el celular
+   - si publica un link público y cómo se ve en WhatsApp
+   - si tiene planta arquitectónica / dollhouse / medición
+   - si tiene marca blanca y en qué plan
+   - si tiene métricas de visitas
+   - disponibilidad y precio real en México (¿cobran en USD?)
+2. ¿Cuáles de esos ya capturan con puro celular y qué calidad logran? ¿Alguno usa
+   costura en el navegador o todos suben las fotos a un servidor?
+3. ¿Qué está haciendo el estado del arte con Gaussian Splatting / NeRF en
+   inmobiliaria en 2026? ¿Ya hay productos vendiendo eso? ¿Se puede capturar con
+   celular y procesar en la nube a un costo razonable? ¿O sigue siendo demo?
+4. Casos de empresas que cerraron o pivotaron en este nicho en los últimos 3 años,
+   y la razón pública. Qué lección hay.
+
+B) QUÉ ESPERA DE VERDAD UNA INMOBILIARIA
+5. Evidencia (estudios, encuestas de asociaciones de agentes, datos de portales)
+   sobre el impacto de un recorrido 360 en: tiempo en el anuncio, número de
+   contactos, visitas físicas ahorradas, tiempo de venta. Números con fuente, no
+   frases de marketing.
+6. ¿Cuál es el flujo de trabajo real de un agente en México? ¿Publica en
+   Inmuebles24 / Vivanuncios / Lamudi / Casas y Terrenos / Propiedades.com?
+   ¿Cuáles de esos portales ACEPTAN un link de recorrido virtual, y en qué campo?
+   ¿Alguno tiene requisitos técnicos (iframe, dominio permitido, tamaño)?
+7. ¿Qué integraciones esperan? (CRMs inmobiliarios usados en México, WhatsApp
+   Business, Facebook Marketplace). Cuáles tienen API pública.
+8. ¿Cuánto están dispuestos a pagar? Busca precios de servicios de fotografía y
+   recorridos 360 por propiedad en Guadalajara/CDMX en 2025-2026 — el costo que
+   hoy pagan por propiedad es el techo de lo que puede cobrar un SaaS.
+9. Objeciones típicas del agente al adoptar esto, documentadas.
+
+C) UX QUE SÍ IMPORTA
+10. Planta arquitectónica / minimapa dentro del recorrido: ¿cuáles competidores
+    lo tienen, cómo se ve, y hay evidencia de que la gente lo usa? ¿Vale el
+    esfuerzo o es una función de folleto?
+11. Medición de distancias en un recorrido 360: ¿quién la ofrece, con qué
+    precisión declarada, y qué necesita? (¿LiDAR del iPhone? ¿solo dos
+    panorámicas? ¿altura de cámara conocida?) ¿Es honesto ofrecerla sin
+    profundidad?
+12. Anatomía de una portada de recorrido que convierte: qué datos se muestran
+    antes de entrar (precio, m², recámaras, dirección, agente, botón de contacto).
+    Ejemplos concretos de la competencia.
+13. En 2026, ¿qué se considera aceptable en tiempo de carga de un recorrido en
+    celular con datos móviles? ¿Cuánto tarda un recorrido de Matterport y cuánto
+    uno de Kuula? Da segundos medidos si los encuentras.
+14. Accesibilidad y regulación: ¿hay algún requisito de accesibilidad que aplique
+    a anuncios inmobiliarios en línea en México o en EEUU que afecte a un visor
+    360? (por ejemplo demandas por WCAG en sitios inmobiliarios).
+
+FORMATO DE SALIDA
+Empieza con la tabla comparativa completa de la pregunta 1. Después, para cada
+pregunta numerada: respuesta directa (3-8 renglones) y "Fuente:" con URL y fecha.
+Marca "NO VERIFICADO" lo que no puedas confirmar. Cierra con tres secciones:
+- "HUECO EN EL MERCADO": en 10 renglones, dónde está el espacio real para un
+  producto de captura-con-celular y qué NO se debe intentar copiar.
+- "PRECIO SUGERIDO": rango en pesos mexicanos, con el razonamiento.
+- "LAS 5 FUNCIONES QUE SÍ DECIDEN LA COMPRA", ordenadas, con la evidencia.

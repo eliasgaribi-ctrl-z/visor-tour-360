@@ -7,7 +7,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
 import { observarTamano } from '../../lib/observarTamano'
-import { screenToYawPitch, yawPitchToScreen } from '../../lib/math'
+import { screenToYawPitch, yawPitchToScreen } from '../../lib/math3d'
 
 export type PuntosEditablesProps = {
   hotspots: Hotspot[]
@@ -186,7 +186,7 @@ export function PuntosEditables({
           >
             <span
               className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[13px] ${
-                hotspot.kind === 'link' ? 'bg-brand-500 text-black' : 'bg-white/85 text-black'
+                hotspot.kind === 'link' ? 'bg-brand-500 text-[var(--tinta-marca,#000)]' : 'bg-white/85 text-black'
               }`}
             >
               {hotspot.kind === 'link' ? '→' : 'i'}

@@ -119,7 +119,7 @@ export default function App() {
       type="button"
       onClick={alMenu}
       className="hud-glass pointer-events-auto flex h-16 shrink-0 items-center gap-2 rounded-hud
-                 bg-brand-500 px-4 text-sm font-semibold text-black active:bg-brand-600"
+                 bg-brand-500 px-4 text-sm font-semibold text-[var(--tinta-marca,#000)] active:bg-brand-600"
     >
       <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="1.8">
         <path
@@ -150,7 +150,19 @@ export default function App() {
         return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
 
       case 'ver':
-        return <VisorGuardado tourId={ruta.tourId} ir={ir} />
+        /* ── `key` y no solo la prop ──────────────────────────────────────────
+         *
+         * `VisorGuardado` guarda DOS cosas en estado: el recorrido que leyó de
+         * IndexedDB y si la persona ya entró (o sea, si la portada ya se pasó).
+         * Al navegar de `#/ver/A` a `#/ver/B` React lo mantiene montado porque
+         * ocupa la misma posición del árbol, así que los dos estados se quedan
+         * con lo de A: el recorrido B se abría SIN portada —saltándose el
+         * precio, la dirección y el contacto, que es la pantalla que vende— y
+         * mientras cargaba mostraba los datos de A bajo el id de B.
+         *
+         * Con `key` React lo desmonta y lo monta de nuevo, que es lo correcto
+         * para otro recorrido: son otras texturas y otra marca. */
+        return <VisorGuardado key={ruta.tourId} tourId={ruta.tourId} ir={ir} />
 
       /* La casa publicada. A diferencia de 'ver', no se busca en el teléfono:
          se descarga. Es la ruta por la que entra un cliente que nunca ha usado
@@ -165,7 +177,9 @@ export default function App() {
       default:
         if (inicial === null) return <Cargando texto="Abriendo…" />
         if (inicial === 'demo') return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
-        return <VisorGuardado tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
+        return (
+          <VisorGuardado key={inicial} tourId={inicial} ir={ir} alFallar={alFallarElActivo} />
+        )
     }
   }
 

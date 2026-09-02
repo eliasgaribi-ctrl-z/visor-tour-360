@@ -81,6 +81,37 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
   const moved = useRef(0)
   const pinchDistance = useRef(0)
 
+  /**
+   * Vuelve a medir la separación de los dos dedos que están pellizcando AHORA.
+   *
+   * Hay que llamarla cada vez que CAMBIA el conjunto de punteros, no solo cuando
+   * pasa a haber exactamente dos. Antes se fijaba en el `else if (size === 2)` de
+   * `onPointerDown` y se limpiaba en `endPointer` con `if (size < 2)`, y eso deja
+   * un hueco con tres dedos apoyados:
+   *
+   *   dedos A y B          →  se guarda la distancia A-B, digamos 60 px
+   *   entra un tercero, C  →  el tamaño ya no es 2, no se recalcula nada
+   *   se levanta A         →  quedan B y C, el tamaño vuelve a ser 2… pero la
+   *                           distancia guardada sigue siendo la de A-B
+   *
+   * Al siguiente `pointermove`, `distance` es la de B-C (pongamos 150) y el ratio
+   * sale 150/60 = 2.5. Con `dFov += (1 - 2.5) * 75 = -112.5`, el FOV se va de 75 a
+   * 30 —el tope— con un movimiento de UN píxel. Y tres dedos sobre la pantalla no
+   * es raro: sujetar el teléfono con una mano mientras se pellizca con la otra, o
+   * un roce de la palma, bastan.
+   *
+   * Remidiendo en cada cambio, el primer move tras el relevo da ratio ~1 y no hay
+   * salto. El zoom sigue el par que de verdad se está moviendo.
+   */
+  const remedirPellizco = useCallback(() => {
+    if (pointers.current.size < 2) {
+      pinchDistance.current = 0
+      return
+    }
+    const [a, b] = [...pointers.current.values()]
+    pinchDistance.current = Math.hypot(a.x - b.x, a.y - b.y)
+  }, [])
+
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     // Los hotspots viven en la capa de overlay, así que no llegan aquí,
     // pero por si acaso alguien mete un control dentro del canvas.
@@ -92,11 +123,9 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
     if (pointers.current.size === 1) {
       dragging.current = true
       moved.current = 0
-    } else if (pointers.current.size === 2) {
-      const [a, b] = [...pointers.current.values()]
-      pinchDistance.current = Math.hypot(a.x - b.x, a.y - b.y)
     }
-  }, [])
+    remedirPellizco()
+  }, [remedirPellizco])
 
   const onPointerMove = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
@@ -163,9 +192,10 @@ export function useDragLook(engine: TourEngine, options: DragLookOptions = {}) {
       // Ya estaba suelta; es justo lo que queríamos.
     }
 
-    if (pointers.current.size < 2) pinchDistance.current = 0
+    /* Y se vuelve a medir el pellizco con los dedos que QUEDAN: ver remedirPellizco. */
+    remedirPellizco()
     if (pointers.current.size === 0) dragging.current = false
-  }, [])
+  }, [remedirPellizco])
 
   const onWheel = useWheelZoom(engine, wheelZoomStep)
 

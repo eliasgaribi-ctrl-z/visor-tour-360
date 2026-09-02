@@ -107,6 +107,14 @@ await auditar('subir foto (cargada)')
 await page.getByRole('button', { name: 'Guardar habitación' }).click()
 await page.waitForTimeout(3000)
 await auditar('editor de puntos')
+/* La hoja de nivel trae dos controles deslizantes: un `<input type=range>` sin
+   altura mide 20 px, y esta es la única pantalla del proyecto que los tiene a la
+   vista (los de "subir foto" solo aparecen con una foto que no es 2:1). */
+await page.getByRole('button', { name: 'Nivel' }).click()
+await page.waitForTimeout(400)
+await auditar('hoja: nivel')
+await page.getByRole('button', { name: 'Listo' }).click()
+await page.waitForTimeout(600)
 await page.getByRole('button', { name: 'Poner punto en la mira' }).click()
 await page.waitForTimeout(500)
 await auditar('hoja: punto nuevo')
@@ -119,6 +127,23 @@ await auditar('editor con 1 cuarto')
 await page.getByRole('button', { name: 'Ajustes' }).click()
 await page.waitForTimeout(400)
 await auditar('hoja: ajustes')
+await page.getByRole('button', { name: 'Cerrar' }).click()
+await page.waitForTimeout(300)
+/* La hoja del recorrido trae el interruptor del modo kiosco: un `role=switch`
+   hecho a mano —la casilla nativa mide 16 px—, y lo hecho a mano se mide. */
+await page.getByRole('button', { name: 'Cambiar el nombre del recorrido' }).click()
+await page.waitForTimeout(400)
+await auditar('hoja: datos del recorrido')
+
+/* Y la lista OTRA VEZ, ahora que sí hay un recorrido: la fila trae dos botones
+   —el lápiz y el bote de basura— que en la lista vacía no existen, así que la
+   primera pasada por esta pantalla no los medía. Los dos van pegados al borde
+   derecho y son los dos que más molesta errar con el pulgar. */
+await page.getByRole('button', { name: 'Cerrar' }).click().catch(() => {})
+await page.waitForTimeout(300)
+await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(900)
+await auditar('mis recorridos con uno dentro')
 
 console.log(`\n${bien ? 'TODO SE PUEDE TOCAR' : 'HAY CONTROLES DEMASIADO CHICOS'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')

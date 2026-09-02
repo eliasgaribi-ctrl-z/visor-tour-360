@@ -44,30 +44,68 @@ export type LookInput = {
   dFov: number
 
   /**
+   * FOV ABSOLUTO de destino, en grados. Un solo uso: el rig lo toma, lo fija como
+   * objetivo y lo pone en null.
+   *
+   * Existe aparte de `dFov` porque los dos resuelven problemas distintos, y
+   * confundirlos era un bug de verdad. `dFov` es un delta y sirve para los gestos
+   * continuos (rueda, pellizco): cada evento empuja un poco más y el usuario ve el
+   * resultado mientras lo hace, así que un error se autocorrige en el evento
+   * siguiente.
+   *
+   * "Reencuadrar" no es así: es un disparo único que tiene que aterrizar en un
+   * valor EXACTO. Expresarlo como delta obliga a quien llama a restar el FOV
+   * actual… y el único FOV que la UI puede leer es `readout.fov`, que es el
+   * SUAVIZADO y va por detrás del objetivo. Tocar Reencuadrar mientras el zoom se
+   * estaba acomodando aterrizaba en un FOV que no era 75, y tocarlo dos veces
+   * rápido se pasaba de largo hasta topar en `maxFov`.
+   *
+   * Es el mismo trato que `goto` para el yaw y el pitch, y por la misma razón.
+   */
+  gotoFov: number | null
+
+  /**
    * Destino animado. Si no es null, el rig interpola hacia ahí y lo limpia al llegar.
    * Cualquier input manual del usuario lo cancela.
    */
   goto: { yaw: number; pitch: number } | null
 
   /**
-   * Hacia dónde apunta la espalda del TELÉFONO, en grados, cuando el
-   * giroscopio está al mando (ver src/lib/useGyroLook.ts). null = no está.
-   *
-   * No es `goto` reciclado, y la diferencia importa: `goto` es de un solo
-   * disparo y el rig lo pone en null en cuanto lo consume, mientras que esto
-   * es una posición sostenida que hay que volver a leer en cada cuadro. Y no
-   * es una velocidad como `axis`: el sensor dice dónde estás mirando, no
-   * cuánto quieres girar.
-   *
-   * Va sin el ladeo a propósito: si el roll se aplicara, la habitación se
-   * inclinaría cada vez que la persona ladea la muñeca.
-   *
-   * Quien lo escribe también tiene que tocar el timbre (`invalidar`), y crear
-   * un objeto NUEVO cada vez que vuelve a encender el sensor: el rig usa el
-   * cambio de identidad para saber que empieza una sesión nueva y recalcular
-   * el desfase entre el cero del giroscopio y la habitación.
+   * "Atravesar la puerta": la dirección (yaw, pitch) del punto de enlace que se
+   * acaba de tocar. Un solo uso: el rig lo toma, empuja la cámara unas unidades
+   * hacia allá mientras dura el fundido y la regresa al centro. Lo escribe solo
+   * el visor al tocar un punto de ENLACE; la barra de habitaciones no lo toca,
+   * porque ahí no hay puerta que cruzar. Ver `CameraRig`.
    */
-  absoluto: { yaw: number; pitch: number } | null
+  empuje: { yaw: number; pitch: number } | null
+
+  /**
+   * "Este recorrido gira solo": el modo kiosco. Estado CONTINUO, no de un solo
+   * uso: mientras sea true, el rig gira la cámara despacio y sigue pidiendo
+   * cuadro. Lo escribe `TourViewer` desde `tour.autogiro`; el editor de puntos
+   * no lo toca nunca, porque para colocar un punto hace falta un encuadre
+   * quieto. Apagado por defecto: encendido pelea de frente con los cero dibujos
+   * por segundo del visor parado, y esa propiedad no se regala. Ver `CameraRig`.
+   */
+  autogiro: boolean
+
+  /**
+   * "Alguien tocó la foto": un solo uso. El rig lo lee, pausa el autogiro unos
+   * segundos y lo pone en false. Existe porque un toque sin arrastre no deja
+   * ningún otro rastro en este objeto —no mueve `dragYaw` ni `axis`— y quien
+   * toca una foto que gira sola espera que se detenga.
+   */
+  pausa: boolean
+
+  /**
+   * Orientación ABSOLUTA del sensor (giroscopio), en grados del proyecto. Si no
+   * es null, MANDA sobre el objetivo: el joystick, el arrastre y el `goto`
+   * ajustan un offset en vez del objetivo, así que al encenderlo la cámara no
+   * salta y al mover el teléfono la vista sigue a la mano. El pitch lo manda
+   * solo el sensor. Lo escribe `useGyroLook` —con zona muerta angular, para que
+   * un teléfono quieto siga dando cero dibujos— y lo pone en null al apagarse.
+   */
+  orientacion: { yaw: number; pitch: number } | null
 }
 
 /** Lo que la cámara le cuenta a la UI. El CameraRig lo escribe cada frame. */
@@ -75,6 +113,8 @@ export type CameraReadout = {
   yaw: number
   pitch: number
   fov: number
+  /** Cuánto se ha desplazado la cámara del centro por el empuje, en unidades de escena. 0 en reposo. */
+  avance: number
 }
 
 export type TourEngine = {
@@ -166,8 +206,19 @@ export const createTourEngine = (): TourEngine => {
   }
 
   return {
-    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, goto: null, absoluto: null },
-    readout: { yaw: 0, pitch: 0, fov: 75 },
+    input: {
+      axis: { x: 0, y: 0 },
+      dragYaw: 0,
+      dragPitch: 0,
+      dFov: 0,
+      gotoFov: null,
+      goto: null,
+      empuje: null,
+      autogiro: false,
+      pausa: false,
+      orientacion: null,
+    },
+    readout: { yaw: 0, pitch: 0, fov: 75, avance: 0 },
     invalidar,
     conectarRender: (fn) => {
       render = fn

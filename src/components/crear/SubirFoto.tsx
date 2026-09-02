@@ -25,6 +25,7 @@ import {
 } from '../../lib/capture/importar'
 import { conGPano } from '../../lib/capture/xmp'
 import { Aviso, Boton, Campo, Cargando, Pantalla, Tarjeta } from './ui'
+import { sugerirNombre } from './nombres'
 
 export type SubirFotoProps = {
   tourId: string
@@ -419,12 +420,4 @@ export function SubirFoto({ tourId, sceneId, ir }: SubirFotoProps) {
       </div>
     </Pantalla>
   )
-}
-
-function sugerirNombre(tour: StoredTour | null): string {
-  const usados = new Set((tour?.scenes ?? []).map((s) => s.name.toLowerCase()))
-  for (const nombre of ['Sala', 'Cocina', 'Comedor', 'Recámara', 'Baño', 'Patio', 'Cochera']) {
-    if (!usados.has(nombre.toLowerCase())) return nombre
-  }
-  return `Habitación ${(tour?.scenes.length ?? 0) + 1}`
 }

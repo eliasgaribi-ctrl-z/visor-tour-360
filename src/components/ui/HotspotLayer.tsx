@@ -3,7 +3,8 @@ import * as THREE from 'three'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
 import { observarTamano } from '../../lib/observarTamano'
-import { DEG, yawPitchToVector3 } from '../../lib/math'
+import { DEG } from '../../lib/math'
+import { CORTE_VISOR, yawPitchToScreenQ } from '../../lib/math3d'
 
 export type HotspotLayerProps = {
   hotspots: Hotspot[]
@@ -32,6 +33,15 @@ export type HotspotLayerProps = {
  *      rotación, que el CameraRig publica como yaw/pitch),
  *   2. si queda detrás (z >= 0, porque la cámara mira hacia -Z) se esconde,
  *   3. división perspectiva con la distancia focal f = 1 / tan(fov/2).
+ *
+ * ── Asume la cámara en el CENTRO de la esfera, y hay un momento en que no lo está
+ *
+ * Durante los 0.6 s del empuje al cruzar una puerta (ver CameraRig), la cámara
+ * se desplaza hasta 40 unidades del origen y esta proyección —que solo conoce la
+ * orientación— queda unos píxeles corrida. No se ve: esos marcadores son los de
+ * la habitación que se está yendo, están desvaneciéndose con ella, y al terminar
+ * el empuje la cámara vuelve EXACTAMENTE a cero. Queda escrito para que nadie
+ * persiga ese desfase como si fuera un error de `math3d.ts`.
  */
 export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
   const engine = useTourEngine()
@@ -70,10 +80,11 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
       if (!width || !height) return
 
       const { yaw, pitch, fov } = engine.readout
-      const aspect = width / height
-      const focal = 1 / Math.tan((fov * DEG) / 2)
 
-      // Inversa de la orientación de la cámara (mismo Euler que el CameraRig).
+      /* La inversa de la orientación de la cámara se calcula UNA vez y se le
+         pasa a cada punto. Es la razón de usar `yawPitchToScreenQ` y no
+         `yawPitchToScreen`: la segunda la rearmaría por marcador, sesenta veces
+         por segundo. Mismo Euler que el CameraRig, que es quien manda. */
       euler.set(pitch * DEG, -yaw * DEG, 0, 'YXZ')
       quaternion.setFromEuler(euler).invert()
 
@@ -81,10 +92,19 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
         const node = nodes.current.get(hotspot.id)
         if (!node) continue
 
-        yawPitchToVector3(hotspot.yaw, hotspot.pitch, 1, direction).applyQuaternion(quaternion)
+        const p = yawPitchToScreenQ(
+          hotspot.yaw,
+          hotspot.pitch,
+          quaternion,
+          fov,
+          width,
+          height,
+          direction,
+          CORTE_VISOR,
+        )
 
         // Detrás de la cámara (o casi al ras): fuera.
-        if (direction.z > -0.05) {
+        if (!p) {
           if (node.style.visibility !== 'hidden') {
             node.style.visibility = 'hidden'
             node.style.opacity = '0'
@@ -92,14 +112,9 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
           continue
         }
 
-        const ndcX = (direction.x / -direction.z) * (focal / aspect)
-        const ndcY = (direction.y / -direction.z) * focal
-        const x = (ndcX * 0.5 + 0.5) * width
-        const y = (1 - (ndcY * 0.5 + 0.5)) * height
-
         node.style.visibility = 'visible'
         node.style.opacity = '1'
-        node.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
+        node.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -50%)`
       }
     })
 
@@ -132,14 +147,18 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
         >
           <span
             className={`grid h-7 w-7 shrink-0 place-items-center rounded-full text-[13px] ${
-              hotspot.kind === 'link' ? 'bg-brand-500 text-black' : 'bg-white/85 text-black'
+              hotspot.kind === 'link' ? 'bg-brand-500 text-[var(--tinta-marca,#000)]' : 'bg-white/85 text-black'
             }`}
           >
             {hotspot.kind === 'link' ? '→' : 'i'}
           </span>
           <span className="whitespace-nowrap drop-shadow">{hotspot.label}</span>
+          {/* Plano + `opacity-20` y no `bg-brand-500/20`: la variante con alfa
+              compila a un rgba() con el color QUEMADO como respaldo para Safari
+              anterior a la 16.2, así que con una marca ajena este aro se quedaba
+              ámbar. La opacidad aparte sí respeta el token. Ver lib/marca.ts. */}
           {hotspot.kind === 'link' && (
-            <span className="absolute -inset-1 -z-10 animate-ping rounded-full bg-brand-500/20" />
+            <span className="absolute -inset-1 -z-10 animate-ping rounded-full bg-brand-500 opacity-20" />
           )}
         </button>
       ))}

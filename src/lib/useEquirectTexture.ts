@@ -16,8 +16,14 @@ import { registrarOlvido } from './texturasVivas'
  * celular tira la pestaña mucho antes de eso. Se guardan las últimas usadas y
  * las demás se sueltan; volver a una vieja cuesta una recarga, que es
  * exactamente el trato correcto.
+ *
+ * El tope ya no es una constante de este archivo: lo decide `aparato()`, junto
+ * con la resolución a la que se sube la foto y cuántas vecinas se precargan. Las
+ * cuatro son el MISMO presupuesto de memoria de video, y tenerlas repartidas
+ * entre dos archivos era la única decisión de presupuesto del proyecto que no
+ * pasaba por `dispositivo.ts`.
  */
-const MAXIMO_EN_CACHE = 5
+const maximoEnCache = () => aparato().maximoEnCache
 const cache = new Map<string, THREE.Texture>()
 
 /**
@@ -87,7 +93,7 @@ function refrescar(url: string, texture: THREE.Texture) {
   cache.set(url, texture)
 
   for (const vieja of [...cache.keys()]) {
-    if (cache.size <= MAXIMO_EN_CACHE) break
+    if (cache.size <= maximoEnCache()) break
     if (enUso.has(vieja)) continue
     const textura = cache.get(vieja)
     if (textura) liberar(textura)

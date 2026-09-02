@@ -1,0 +1,231 @@
+# ============================================================================
+#  Revisión automática en cada push y cada pull request
+# ============================================================================
+#
+# El proyecto no tenía CI, así que lo único que garantizaba que `main` estuviera
+# sano era que alguien se acordara de correr los comandos a mano. Esto los corre
+# siempre.
+#
+# ── Lo que este archivo NO hace, a propósito ────────────────────────────────
+#
+# NO publica nada. El sitio se sigue sirviendo desde la carpeta `docs/`
+# commiteada, con Pages configurado como "deploy from a branch". Cambiar eso a
+# "GitHub Actions" es una decisión aparte que hay que tomar en la interfaz de
+# GitHub, y hasta que se tome, un workflow de deploy aquí no serviría de nada o
+# pelearía con el que ya funciona. Se agrega valor sin romper lo que hay.
+#
+# Cuando se quiera dar ese paso: Settings → Pages → Source: GitHub Actions, y
+# entonces sí conviene sacar `docs/` del repositorio (hoy cada `build:pages`
+# mete ~1.2 MB de binarios nuevos al historial porque los hashes cambian).
+
+name: Revisión
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+# Un push nuevo sobre la misma rama cancela la corrida anterior: nadie necesita
+# el resultado de un commit que ya quedó atrás.
+concurrency:
+  group: revision-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Lo rápido: tipos, lint y que el build salga. Segundos, no minutos.
+  # ──────────────────────────────────────────────────────────────────────────
+  estatico:
+    name: Tipos, lint, build y pruebas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # La misma que dicen .nvmrc y `engines` del package.json.
+          node-version: '22.12'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Tipos
+        run: npm run typecheck
+
+      # Vitest: la aritmética que no necesita navegador (geometría, ZIP, XMP, el
+      # anillo de la costura, la publicación, el offset del giroscopio). Viven
+      # junto a lo que prueban, con sufijo .test.ts.
+      - name: Pruebas unitarias
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # `damp` es la interpolacion por la que pasa TODA la suavidad de la camara.
+      # Vive escrita a mano en src/lib/math.ts para que ese modulo no importe
+      # three, asi que hay que comprobar que siga siendo IDENTICA BIT A BIT a
+      # THREE.MathUtils.damp.
+      #
+      # --experimental-strip-types deja que el arnes importe la funcion REAL sin
+      # compilar nada. Importa: la primera version del arnes transcribia la
+      # formula a su propio archivo y comparaba ESA copia contra three, o sea el
+      # oraculo contra una copia del oraculo. Pasaba en verde con la formula de
+      # produccion reemplazada por un lerp lineal. Verificado en las dos
+      # direcciones: ahora se rompe produccion y el paso falla.
+      - name: La formula de `damp` sigue siendo la de three
+        run: node --experimental-strip-types tools/pruebas/damp.mjs
+
+      # Formas de escribir algo que ya se demostraron equivocadas. Una prueba de
+      # navegador no las atrapa: solo mira la pantalla donde alguien se acordó de
+      # mirar, y este archivo existe porque el mismo cálculo de FOV mal hecho
+      # sobrevivió en un segundo llamador con la prueba del primero en verde.
+      - name: Patrones que no deben volver
+        run: node tools/pruebas/patrones.mjs
+
+      # De esta cuenta depende que el visor siga siendo usable con una marca
+      # ajena: si la luminancia estuviera mal, el editor de marca aprobaria
+      # colores ilegibles y no se sabria hasta ver un visor roto.
+      - name: La cuenta del contraste
+        run: node --experimental-strip-types tools/pruebas/contraste.mjs
+
+      # La brújula del visor apuntaba al frente arbitrario de la foto y decía
+      # "N". Al arreglarlo, el plan traía el signo AL REVÉS —guardar
+      # `offsetNorte - baseYaw` en vez de `baseYaw + offsetNorte`— y con ese
+      # signo el norte queda a 180° de donde está. Eso no se ve como un error:
+      # se ve como que "la brújula anda raro", nadie lo reporta y nadie lo
+      # encuentra. La prueba compara contra escenarios físicos descritos en
+      # palabras, no contra la fórmula, que es lo único que caza un signo.
+      - name: La brújula apunta al norte de verdad
+        run: node --experimental-strip-types tools/pruebas/rumbo.mjs
+
+      # La corrección de nivel rota la esfera con dos ángulos, y un signo al
+      # revés se ve como "se ve peor y nadie sabe por qué". Sin GPU: se ladea una
+      # panorámica sintética con una rotación conocida y se busca el nivel que la
+      # endereza, en vez de suponer el signo.
+      - name: La corrección de nivel endereza
+        run: node --experimental-strip-types tools/pruebas/nivel.mjs
+
+      # El presupuesto de descarga es una decisión medida del proyecto (README
+      # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco
+      # pantallas con 3D se cargan con lazy(). Es fácil romperlo sin notarlo —
+      # basta un import estático mal puesto para que three.js acabe en el
+      # arranque. Aquí se mide y se imprime; el tope es holgado a propósito,
+      # para avisar de un salto grande y no de un kilobyte.
+      - name: Peso del arranque
+        run: |
+          ARRANQUE=$(grep -o 'assets/[^"]*\.js' dist/index.html \
+            | sed 's|assets/||' | sort -u \
+            | while read -r f; do stat -c%s "dist/assets/$f"; done \
+            | paste -sd+ | bc)
+          echo "JavaScript que se descarga al abrir la app: $ARRANQUE bytes"
+          echo '### Peso del arranque' >> "$GITHUB_STEP_SUMMARY"
+          echo "\`$ARRANQUE\` bytes de JavaScript al abrir la app." >> "$GITHUB_STEP_SUMMARY"
+          if [ "$ARRANQUE" -gt 400000 ]; then
+            echo "::error::El arranque pesa $ARRANQUE bytes. El presupuesto es ~236 kB y el tope de alarma 400 kB."
+            echo "Lo más probable: un import estático nuevo arrastró three.js o React Three Fiber"
+            echo "a la pantalla de la lista. Revisa que las pantallas con 3D sigan detrás de lazy()"
+            echo "en src/App.tsx, y mira los nombres de los chunks del build de arriba."
+            exit 1
+          fi
+
+      # El Worker de Cloudflare (publicar por link) es un paquete aparte con sus
+      # propias dependencias; aquí solo se comprueba que compile.
+      - name: El Worker compila
+        working-directory: worker
+        run: npm ci && npm run typecheck
+
+      # El sitio publicado es la carpeta `docs/` guardada en el repositorio, así
+      # que se puede cambiar el código y dejar el link mostrando la versión de
+      # hace tres semanas. El `git add -A` no es adorno: cada build renombra los
+      # archivos con un hash, o sea que el build nuevo son archivos SIN SEGUIR,
+      # y `git diff` a secas no los mira.
+      - name: docs/ está al día
+        run: npm run build:pages && git add -A docs && git diff --cached --quiet -- docs
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Los arneses de Playwright que hasta ahora solo se corrían a mano.
+  #
+  # Playwright se instala con --no-save a propósito: no está en las
+  # devDependencies del proyecto y esa es una decisión deliberada (los scripts
+  # hacen `await import('playwright')` con try/catch para no obligar a nadie a
+  # bajarlo). Aquí se instala igual que lo haría una persona siguiendo el
+  # README, sin cambiar el manifiesto.
+  # ──────────────────────────────────────────────────────────────────────────
+  arneses:
+    name: Arneses del visor
+    runs-on: ubuntu-latest
+    needs: estatico
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # La misma que dicen .nvmrc y `engines` del package.json.
+          node-version: '22.12'
+          cache: npm
+
+      - run: npm ci
+
+      - name: Instalar Playwright
+        run: |
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+
+      # `npm run dev` y no `preview` a propósito: el badge de ángulos que leen
+      # rendimiento.mjs y tactil.mjs solo existe en modo desarrollo.
+      - name: Levantar el servidor
+        run: |
+          npm run dev > /tmp/dev.log 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -sf http://localhost:5173/ > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://localhost:5173/ > /dev/null || { cat /tmp/dev.log; exit 1; }
+
+      # Cada arnés se corre por separado para que el nombre del paso diga qué
+      # se rompió sin tener que abrir el log.
+      - name: Batería, tirones y que todo responda
+        run: node tools/pruebas/rendimiento.mjs http://localhost:5173/
+
+      - name: Memoria de video (aparato normal)
+        run: node tools/pruebas/memoria.mjs http://localhost:5173/
+
+      - name: Memoria de video (gama baja)
+        run: node tools/pruebas/memoria.mjs http://localhost:5173/ modesto
+
+      - name: Todo se puede tocar con el pulgar
+        run: node tools/pruebas/tactil.mjs http://localhost:5173/
+
+      # Reordenar arrastrando se hizo a mano, sin librería, y lo que un arrastre
+      # a mano rompe con facilidad es exactamente lo que se mide: que un toque
+      # no reordene, que el orden sobreviva a recargar, y que los botones ↑/↓
+      # —la única ruta con teclado— sigan funcionando.
+      - name: El orden se guarda al arrastrar
+        run: node tools/pruebas/reordenar.mjs http://localhost:5173/
+
+      # Mirar moviendo el teléfono. Chromium no emula los sensores, así que el
+      # arnés despacha DeviceOrientationEvent a mano. Lo que protege es la
+      # propiedad más valiosa del visor: con el teléfono QUIETO —sesenta lecturas
+      # por segundo que no paran— tiene que seguir dando cero dibujos.
+      - name: El giroscopio sigue a la mano y quieto no dibuja
+        run: node tools/pruebas/giroscopio.mjs http://localhost:5173/
+
+      # La promesa que se hizo al subir FORMAT_VERSION a 2: los .tour de la
+      # version 1 se siguen abriendo. El archivo de fixtures esta escrito a mano
+      # con el manifiesto de la v1, no generado por el codigo de hoy.
+      - name: Los .tour viejos siguen abriendo
+        run: node tools/pruebas/formato.mjs http://localhost:5173/
+
+      # Toda la personalizacion se apoya en que Tailwind emita las utilidades por
+      # referencia y no con el hex quemado. Si eso cambiara, aplicarMarca()
+      # seguiria corriendo sin errores y no pintaria nada: un fallo silencioso que
+      # solo se veria en la demo a un cliente. Se mide en pixeles, no leyendo CSS.
+      - name: La marca reviste el visor
+        run: node tools/pruebas/marca.mjs http://localhost:5173/
+
+      - name: El log del servidor, si algo falló
+        if: failure()
+        run: cat /tmp/dev.log

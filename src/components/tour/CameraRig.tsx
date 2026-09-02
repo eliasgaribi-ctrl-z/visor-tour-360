@@ -2,11 +2,75 @@
    useFrame es justamente el diseño: cero renders de React por frame. */
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
-import type { PerspectiveCamera } from 'three'
+import { Vector3, type PerspectiveCamera } from 'three'
 import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
-import { anclarSesionGiro, desfaseHacia } from '../../lib/useGyroLook'
-import { menosMovimiento } from '../../lib/movimiento'
+import { yawPitchToVector3 } from '../../lib/math3d'
+import { useMenosMovimiento } from '../../lib/menosMovimiento'
+import { desenvolver, offsetHacia, offsetSinSalto } from '../../lib/giro'
+
+/**
+ * ============================================================================
+ *  EL EMPUJE: ATRAVESAR LA PUERTA
+ * ============================================================================
+ *
+ * Al tocar un punto de enlace, la cámara se desplaza unas unidades HACIA ese
+ * punto mientras dura el fundido a la habitación nueva, y regresa al centro.
+ * Dentro de una esfera de radio 500, 40 unidades hacia la puerta hacen que lo
+ * que hay al frente crezca ~8 %: se lee como dar dos pasos y cruzar, en vez de
+ * un corte entre dos fotos. Es el cambio que más sube la calidad percibida del
+ * visor, y son treinta líneas.
+ *
+ * La curva es una campana `sin²`: arranca y termina con velocidad cero, así que
+ * no hay tirón ni al salir ni al llegar, y a los 0.6 s la cámara está EXACTAMENTE
+ * en el origen otra vez — no "casi", porque los marcadores del HUD se proyectan
+ * asumiendo la cámara en el centro (ver HotspotLayer) y un residuo los dejaría
+ * despegados un píxel para siempre.
+ *
+ * Con `prefers-reduced-motion` no hay empuje: un desplazamiento de cámara es
+ * exactamente el tipo de movimiento que molesta a quien activó ese ajuste. El
+ * fundido corto de PanoSphere se encarga solo del cambio.
+ *
+ * Y la regla de oro del proyecto se conserva: mientras el empuje dura, este rig
+ * pide cuadro; cuando termina, deja de pedirlo, y el visor vuelve a cero dibujos
+ * por segundo. `rendimiento.mjs` lo mide.
+ */
+const EMPUJE = 40
+const DURACION_EMPUJE = 0.6
+
+/**
+ * ============================================================================
+ *  EL AUTOGIRO: EL MODO KIOSCO
+ * ============================================================================
+ *
+ * Con `input.autogiro` la cámara gira sola, despacio, como en una pantalla de
+ * oficina o de feria. Pelea de frente con el diseño del visor —girar es dibujar
+ * sin parar— y por eso está apagado por defecto, es una opción por recorrido, y
+ * se rinde ante tres cosas, en este orden de importancia:
+ *
+ *   · `prefers-reduced-motion`: nunca gira. Una foto a pantalla completa que se
+ *     mueve sola es exactamente lo que molesta a quien pidió menos movimiento.
+ *   · La pestaña oculta: no gira ni pide cuadro. Un kiosco en segundo plano
+ *     calentando el teléfono no le sirve a nadie.
+ *   · Cualquier interacción —un toque, el arrastre, el joystick, el zoom, un
+ *     cambio de habitación— lo pausa PAUSA_AUTOGIRO segundos. "Se detiene al
+ *     tocar, sigue solo a los cinco segundos" es lo que hacen los visores
+ *     comerciales, y es lo que espera quien toca una foto que gira.
+ *
+ * Mientras dura la pausa NO se pide ningún cuadro: el visor vuelve a cero
+ * dibujos por segundo como si el autogiro no existiera. Eso deja una pregunta
+ * que el resto del rig no tiene: ¿quién vuelve a llamar a `useFrame` cuando la
+ * pausa termine? Un solo `setTimeout` que toca el timbre en ese momento, y que
+ * solo se re-arma si el plazo cambió. `rendimiento.mjs` mide las tres cosas.
+ *
+ * Los dos números son provisionales, y así está escrito en el plan: 6°/s es
+ * una vuelta por minuto —lo bastante lento para leerse como "la casa se
+ * muestra" y no como un video—, y 5 s de pausa es lo que tarda alguien en
+ * decidir si quería mirar algo. Se ajustan con la investigación de la Pestaña 1
+ * (pregunta 15), no antes.
+ */
+const VELOCIDAD_AUTOGIRO = 6
+const PAUSA_AUTOGIRO = 5
 
 export type CameraRigProps = {
   /** Grados por segundo con el joystick a tope. 90 ≈ un cuarto de vuelta por segundo. */
@@ -82,6 +146,7 @@ export function CameraRig({
 }: CameraRigProps) {
   const engine = useTourEngine()
   const invalidate = useThree((s) => s.invalidate)
+  const menosMovimiento = useMenosMovimiento()
 
   /* El canvas dibuja "a pedido" (ver Escena360). Aquí se conecta el timbre:
      desde este momento, cualquiera que le escriba al input puede pedir cuadro. */
@@ -100,13 +165,45 @@ export function CameraRig({
   const targetFov = useRef(fov)
   const currentFov = useRef(fov)
 
-  /* Giroscopio. `desfaseGiro` son los grados que hay que sumarle a la lectura
-     del sensor para que caiga sobre la habitación (el cero del giroscopio es
-     arbitrario), y `sesionGiro` es la identidad del objeto que publica
-     useGyroLook: cuando cambia es que el sensor se acaba de encender y el
-     desfase de la sesión anterior ya no sirve. Ver src/lib/useGyroLook.ts. */
-  const desfaseGiro = useRef(0)
-  const sesionGiro = useRef<object | null>(null)
+  /* El empuje: hacia dónde y cuánto tiempo lleva. `Infinity` es "en reposo". */
+  const direccionEmpuje = useRef(new Vector3())
+  const tiempoEmpuje = useRef(Infinity)
+
+  /* El giroscopio: el yaw del sensor DESENVUELTO (crece sin límite, como el
+     objetivo, para que 179° → -179° no sea una vuelta entera) y el offset que
+     el gesto ajusta encima. `conSensor` recuerda si el cuadro anterior ya venía
+     con sensor, para fijar el offset sin salto la primera vez. */
+  const conSensor = useRef(false)
+  const sensorYaw = useRef(0)
+  const offsetYaw = useRef(0)
+
+  /* El autogiro: hasta cuándo dura la pausa, y el despertador que la termina. */
+  const pausaHasta = useRef(0)
+  const despertador = useRef<{ id: number; para: number } | null>(null)
+  const despertarEn = (cuando: number) => {
+    if (despertador.current?.para === cuando) return
+    if (despertador.current) window.clearTimeout(despertador.current.id)
+    const id = window.setTimeout(() => {
+      despertador.current = null
+      engine.invalidar()
+    }, Math.max(0, cuando - performance.now()))
+    despertador.current = { id, para: cuando }
+  }
+  useEffect(
+    () => () => {
+      if (despertador.current) window.clearTimeout(despertador.current.id)
+    },
+    [],
+  )
+  /* La pestaña que vuelve a verse: mientras estuvo oculta no se pidió cuadro, así
+     que hay que tocar el timbre para que el autogiro retome. */
+  useEffect(() => {
+    const alCambiar = () => {
+      if (document.visibilityState === 'visible') engine.invalidar()
+    }
+    document.addEventListener('visibilitychange', alCambiar)
+    return () => document.removeEventListener('visibilitychange', alCambiar)
+  }, [engine])
 
   useFrame((state, delta) => {
     const camera = state.camera as PerspectiveCamera
@@ -121,10 +218,42 @@ export function CameraRig({
     // hasta 10 fps sin penalizar, y sigue evitando el salto de la pestaña.
     const dt = Math.min(delta, 1 / 10)
 
+    /* ------------------------------------------------------------ AUTOGIRO
+     * Va ANTES de consumir nada: aquí todavía se ve todo lo que la persona hizo
+     * en este cuadro, y cualquier cosa que haya hecho pausa el giro. */
+    const ahora = performance.now()
+    const interaccion =
+      input.pausa ||
+      input.axis.x !== 0 ||
+      input.axis.y !== 0 ||
+      input.dragYaw !== 0 ||
+      input.dragPitch !== 0 ||
+      input.dFov !== 0 ||
+      input.gotoFov !== null ||
+      input.goto !== null ||
+      input.empuje !== null
+    input.pausa = false
+    if (interaccion) pausaHasta.current = ahora + PAUSA_AUTOGIRO * 1000
+    const girando =
+      input.autogiro &&
+      // Con el teléfono en la mano no hay kiosco: el sensor manda.
+      input.orientacion === null &&
+      !menosMovimiento.current &&
+      document.visibilityState === 'visible' &&
+      ahora >= pausaHasta.current
+    if (girando) targetYaw.current += VELOCIDAD_AUTOGIRO * dt
+
     /* ---------------------------------------------------------------- ZOOM */
     if (input.dFov !== 0) {
       targetFov.current = clamp(targetFov.current + input.dFov, minFov, maxFov)
       input.dFov = 0
+    }
+    /* El destino absoluto va DESPUÉS del delta, y a propósito: si en el mismo
+       cuadro llegan un pellizco y un "Reencuadrar", manda el reencuadre. Es un
+       botón explícito contra un gesto continuo. */
+    if (input.gotoFov !== null) {
+      targetFov.current = clamp(input.gotoFov, minFov, maxFov)
+      input.gotoFov = null
     }
     currentFov.current = damp(currentFov.current, targetFov.current, 10, dt)
     if (Math.abs(camera.fov - currentFov.current) > 1e-3) {
@@ -132,106 +261,84 @@ export function CameraRig({
       camera.updateProjectionMatrix()
     }
 
-    /* ------------------------------------------------- CANCELAR ANIMACIÓN
-     * Y, de paso, resolver quién manda: si la persona está conduciendo —dedo,
-     * joystick o teclado— el giroscopio se apaga aquí mismo. Es el único sitio
-     * donde vive esa regla, para que no pueda quedarse a medias en uno de los
-     * tres caminos; el porqué está en `soltarGiroscopio` (src/lib/tourEngine.ts).
-     *
-     * El pellizco de zoom no entra en la cuenta a propósito: mueve `dFov` y no
-     * la dirección, así que acercarse mientras se mira con el teléfono es un
-     * gesto perfectamente compatible y no tiene por qué apagar nada. */
+    /* ------------------------------------------------- CANCELAR ANIMACIÓN */
     const userIsDriving =
       input.axis.x !== 0 || input.axis.y !== 0 || input.dragYaw !== 0 || input.dragPitch !== 0
-    if (userIsDriving) {
-      input.goto = null
-      if (input.absoluto !== null) {
-        input.absoluto = null
-        engine.soltarGiroscopio()
-      }
-    }
+    if (userIsDriving) input.goto = null
 
     /* ------------------------------------------ JOYSTICK → VELOCIDAD ANGULAR
      * El joystick NO da una posición absoluta: da una velocidad. Mantenerlo
      * empujado a la derecha gira de forma continua, como en un juego.
      * Multiplicar por dt (y no por frame) hace que gire igual a 60 y a 120 Hz. */
     const speed = maxSpeedDeg * (currentFov.current / 75)
-    targetYaw.current += input.axis.x * speed * dt
-    targetPitch.current += (invertY ? -input.axis.y : input.axis.y) * speed * dt
+    /* Con el sensor encendido, joystick, arrastre y destino NO tocan el objetivo:
+       van al offset, en el bloque GIROSCOPIO de abajo. */
+    const sensor = input.orientacion
+    if (!sensor) {
+      targetYaw.current += input.axis.x * speed * dt
+      targetPitch.current += (invertY ? -input.axis.y : input.axis.y) * speed * dt
+    }
 
     /* -------------------------------------------- ARRASTRE → DELTAS DIRECTOS
      * El dedo sobre la foto ya viene convertido a grados (ver useDragLook),
      * así que se suma tal cual y se consume. */
-    targetYaw.current += input.dragYaw
-    targetPitch.current += input.dragPitch
-    input.dragYaw = 0
-    input.dragPitch = 0
-
-    /* ------------------------------------------------ ¿MANDA EL GIROSCOPIO?
-     * Un objeto distinto al de la vuelta pasada significa sesión nueva: el
-     * sensor se acaba de encender y hay que anotar cuántos grados separan su
-     * cero arbitrario de la dirección que la cámara ya tenía, o la vista daría
-     * un latigazo de hasta media vuelta al tocar el botón.
-     *
-     * El ancla es `yaw.current` —lo que se está dibujando— y no el objetivo;
-     * el porqué, con la secuencia que lo rompe, está en `anclarSesionGiro`.
-     * Aquí se le pasan los dos para que la elección viva allá, en una función
-     * con prueba, y no en cuál de estos dos refs quedó escrito en esta línea. */
-    const absoluto = input.absoluto
-    if (absoluto === null) {
-      sesionGiro.current = null
-    } else if (sesionGiro.current !== absoluto) {
-      sesionGiro.current = absoluto
-      desfaseGiro.current = anclarSesionGiro(
-        { yaw: yaw.current, targetYaw: targetYaw.current },
-        absoluto.yaw,
-      )
+    if (!sensor) {
+      targetYaw.current += input.dragYaw
+      targetPitch.current += input.dragPitch
+      input.dragYaw = 0
+      input.dragPitch = 0
     }
 
     /* -------------------------------------------------- DESTINO PROGRAMADO
      * Un solo disparo: movemos el OBJETIVO por el camino corto y dejamos que
-     * el suavizado de abajo haga la animación.
-     *
-     * Con el giroscopio al mando el destino no puede mover la cámara: su
-     * orientación la dicta un teléfono que está donde está, y un cuadro después
-     * la lectura del sensor volvería a pisar el destino. Lo que se mueve es la
-     * habitación debajo, o sea el desfase. La persona entra al cuarto nuevo
-     * mirando a su frente sin haber girado el cuerpo, que es justo lo que
-     * espera de un enlace. El pitch del destino se ignora: la inclinación la
-     * decide el teléfono. */
-    if (input.goto) {
-      if (absoluto !== null) {
-        desfaseGiro.current = desfaseHacia(absoluto.yaw, desfaseGiro.current, input.goto.yaw)
-      } else {
-        targetYaw.current += shortestDelta(targetYaw.current, input.goto.yaw)
-        targetPitch.current = input.goto.pitch
-      }
+     * el suavizado de abajo haga la animación. */
+    if (!sensor && input.goto) {
+      targetYaw.current += shortestDelta(targetYaw.current, input.goto.yaw)
+      targetPitch.current = input.goto.pitch
       input.goto = null
     }
 
-    /* --------------------------------------------- GIROSCOPIO → POSICIÓN
-     * No es una velocidad como el joystick ni un delta como el arrastre: es la
-     * dirección en la que está apuntando el teléfono, y la cámara se planta
-     * ahí. Por el camino corto, porque el yaw interno crece sin límite y el
-     * del sensor vive en (-180, 180]: sin esto, cruzar el sur daría una vuelta
-     * completa de latigazo.
+    /* ----------------------------------------------------------- GIROSCOPIO
+     * El sensor es ABSOLUTO y el gesto ajusta un OFFSET, no el objetivo:
      *
-     * El pitch NO lleva desfase, y es a propósito: el yaw del giroscopio
-     * arranca en un cero arbitrario, pero el pitch lo da la gravedad y
-     * significa algo de verdad —cero es el horizonte—. Corregirlo rompería lo
-     * único que hace que esto se sienta como una ventana: que enderezar el
-     * teléfono te deje mirando al frente. El precio es que al encender, la
-     * vista salta a la inclinación en la que ya venía el teléfono en la mano.
-     * Es el mismo precio que pagan Photo Sphere Viewer, Pannellum y view360. */
-    if (absoluto !== null) {
-      targetYaw.current += shortestDelta(targetYaw.current, absoluto.yaw + desfaseGiro.current)
-      targetPitch.current = absoluto.pitch
+     *   objetivo = yaw del sensor (desenvuelto) + offset
+     *
+     * · Al encenderse, el offset se elige para que el objetivo NO cambie: la
+     *   cámara se queda donde estaba y desde ahí sigue a la mano. Sin esto,
+     *   encender el giroscopio pegaba un latigazo hacia donde apuntara el
+     *   teléfono en ese instante.
+     * · Joystick y arrastre suman al offset; el `goto` de un cambio de
+     *   habitación también (por el camino corto). Así "mirar con el teléfono" y
+     *   "corregir con el dedo" no se pelean: el dedo desplaza el marco y el
+     *   teléfono sigue mandando dentro de él.
+     * · El pitch lo manda SOLO el sensor y el arrastre vertical se ignora. Es lo
+     *   que hace Street View, y evita de raíz un fallo feo: si el arrastre
+     *   acumulara un offset de pitch y la persona empujara contra el tope de
+     *   85°, el offset seguiría creciendo y bajar la vista no haría nada hasta
+     *   desenrollarlo.
+     * · El yaw del sensor llega envuelto a (-180, 180]; se acumula por el camino
+     *   corto para que cruzar la costura no sea una vuelta entera de suavizado. */
+    if (sensor) {
+      if (!conSensor.current) {
+        sensorYaw.current = sensor.yaw
+        offsetYaw.current = offsetSinSalto(targetYaw.current, sensor.yaw)
+        conSensor.current = true
+      } else {
+        sensorYaw.current = desenvolver(sensorYaw.current, sensor.yaw)
+      }
+      offsetYaw.current += input.axis.x * speed * dt + input.dragYaw
+      if (input.goto) {
+        offsetYaw.current = offsetHacia(sensorYaw.current, offsetYaw.current, input.goto.yaw)
+        input.goto = null
+      }
+      input.dragYaw = 0
+      input.dragPitch = 0
+      targetYaw.current = sensorYaw.current + offsetYaw.current
+      targetPitch.current = sensor.pitch
+    } else {
+      conSensor.current = false
     }
 
-    /* El tope de inclinación se aplica igual al sensor: con el teléfono
-       apuntando al piso la lectura llega a −90, y ahí la equirectangular se
-       retuerce en el polo. La vista se queda en el tope mientras el teléfono
-       sigue bajando, que es el comportamiento normal de un visor 360. */
     targetPitch.current = clamp(targetPitch.current, -maxPitchDeg, maxPitchDeg)
 
     /* ------------------------------------------------------------ SUAVIZADO
@@ -246,12 +353,13 @@ export function CameraRig({
      * dejaría el pitch pasarse de los 85° y la panorámica se retorcería en el
      * polo, que es exactamente lo que el clamp está evitando.
      *
-     * Con el giroscopio tampoco hay inercia, y por un motivo distinto: la
-     * lectura ya viene filtrada por el OrientationTracker, con un lambda que
-     * se adapta a la velocidad del giro (6 quieto, hasta 25 girando). Suavizar
-     * dos veces una señal que ya viene suave no se siente como suavidad, se
-     * siente como que el teléfono va tarde. */
-    if (absoluto !== null || menosMovimiento()) {
+     * Con el giroscopio SÍ se conserva la inercia, a diferencia de lo que hacía
+     * la otra implementación de esta misma pantalla: la lectura ya viene
+     * suavizada por el seguidor, pero el offset que el dedo y el joystick le
+     * suman no, y `giroscopio.mjs` mide la respuesta con las tolerancias de
+     * siempre (±3°). Si algún día se siente tarde, se quita aquí y se vuelve a
+     * medir; no antes. */
+    if (menosMovimiento.current) {
       yaw.current = targetYaw.current
       pitch.current = targetPitch.current
     } else {
@@ -259,8 +367,31 @@ export function CameraRig({
       pitch.current = damp(pitch.current, targetPitch.current, smoothing, dt)
     }
 
+    /* --------------------------------------------------------------- EMPUJE
+     * Un solo disparo: se toma la dirección de la puerta y arranca el reloj. Se
+     * consume aunque el aparato pida menos movimiento, para que no se quede
+     * pendiente y salte después. */
+    if (input.empuje) {
+      if (!menosMovimiento.current) {
+        yawPitchToVector3(input.empuje.yaw, input.empuje.pitch, 1, direccionEmpuje.current)
+        tiempoEmpuje.current = 0
+      }
+      input.empuje = null
+    }
+    let avance = 0
+    if (tiempoEmpuje.current < DURACION_EMPUJE) {
+      tiempoEmpuje.current += dt
+      const f = tiempoEmpuje.current / DURACION_EMPUJE
+      // Campana sin²(πf): 0 → EMPUJE → 0, con velocidad cero en los dos extremos.
+      if (f < 1) avance = EMPUJE * 0.5 * (1 - Math.cos(2 * Math.PI * f))
+    }
+
     /* ------------------------------------------------- APLICAR A LA CÁMARA */
-    camera.position.set(0, 0, 0)
+    if (avance > 0) {
+      camera.position.copy(direccionEmpuje.current).multiplyScalar(avance)
+    } else {
+      camera.position.set(0, 0, 0)
+    }
     camera.rotation.order = 'YXZ'
     camera.rotation.set(pitch.current * DEG, -yaw.current * DEG, 0)
 
@@ -268,6 +399,7 @@ export function CameraRig({
     readout.yaw = wrap360(yaw.current)
     readout.pitch = pitch.current
     readout.fov = currentFov.current
+    readout.avance = avance
 
     /* ------------------------------------------------- ¿HACE FALTA OTRO CUADRO?
      * Mientras el dedo empuje o la cámara siga acomodándose hacia su objetivo,
@@ -287,8 +419,16 @@ export function CameraRig({
       input.axis.y !== 0 ||
       Math.abs(targetYaw.current - yaw.current) > 0.05 ||
       Math.abs(targetPitch.current - pitch.current) > 0.05 ||
-      Math.abs(targetFov.current - currentFov.current) > 0.05
+      Math.abs(targetFov.current - currentFov.current) > 0.05 ||
+      // El empuje es una animación: mientras dure hay que seguir pidiendo.
+      tiempoEmpuje.current < DURACION_EMPUJE ||
+      // Y el autogiro es la única que no termina sola.
+      girando
     if (enMovimiento) engine.invalidar()
+    else if (input.autogiro && !menosMovimiento.current && ahora < pausaHasta.current) {
+      // En pausa: nadie pide cuadro. El despertador toca el timbre al terminar.
+      despertarEn(pausaHasta.current)
+    }
   })
 
   return null
