@@ -25,6 +25,28 @@ export type PanoSphereProps = {
 }
 
 /**
+ * Fundido corto para quien pidió menos movimiento.
+ *
+ * El proyecto ya respeta `prefers-reduced-motion` en otros dos lugares —el aro
+ * de los enlaces deja de latir (`src/index.css`) y `rendimiento.mjs` lo
+ * verifica— pero el fundido entre habitaciones era el único que seguía durando
+ * lo mismo para todo el mundo. Un cambio de imagen a pantalla completa es
+ * justamente el tipo de movimiento que molesta a quien activó ese ajuste.
+ *
+ * No se pone en cero: un corte seco deja un frame en negro si la textura nueva
+ * todavía no está lista, que es el problema que el fundido existe para evitar.
+ * 120 ms es suficiente para cubrirlo y ya no se lee como una animación.
+ *
+ * Se consulta al vuelo y no una sola vez: el ajuste se puede cambiar con la
+ * pestaña abierta, y `matchMedia` en un navegador sin soporte devuelve
+ * `matches: false`, que es el comportamiento de hoy.
+ */
+const FUNDIDO_REDUCIDO = 0.12
+
+const menosMovimiento = () =>
+  typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+
+/**
  * La esfera que envuelve a la cámara.
  *
  * ── scale={[-1, 1, 1]} + BackSide ──────────────────────────────────────────
@@ -77,7 +99,8 @@ export function PanoSphere({
 
   useFrame((_state, delta) => {
     if (!incoming || !overlayMaterial.current) return
-    fade.current = Math.min(1, fade.current + delta / Math.max(fadeSeconds, 0.001))
+    const duracion = menosMovimiento() ? FUNDIDO_REDUCIDO : fadeSeconds
+    fade.current = Math.min(1, fade.current + delta / Math.max(duracion, 0.001))
     overlayMaterial.current.opacity = fade.current
     if (fade.current >= 1) {
       setBase(incoming)

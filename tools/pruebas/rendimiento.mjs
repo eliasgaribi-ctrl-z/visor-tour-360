@@ -431,6 +431,44 @@ const detalle = aroQuieto ? 'quieto' : `SIGUE LATIENDO (${animaciones.aro})`
 console.log(`  ${'aro de los enlaces'.padEnd(28)} ${detalle}`)
 console.log(`  ${'rueda de cargando'.padEnd(28)} ${animaciones.rueda}`)
 if (!aroQuieto) bien = false
+
+/* El fundido entre habitaciones también se acorta con "reducir movimiento"
+ * (0.55 s -> 0.12 s, ver PanoSphere). Lo que hay que proteger al acortarlo NO
+ * es la duración, es que la foto siga APARECIENDO: el fundido existe para que
+ * no haya un frame en negro mientras la textura nueva termina de subir a la
+ * GPU, y bajarlo a cero traería ese problema de vuelta.
+ *
+ * La duración en sí no se cronometra a propósito: los draws de esos primeros
+ * cientos de milisegundos los domina la animación de la cámara hacia el
+ * arriveYaw del punto, no el fundido, así que un número medido ahí diría más
+ * sobre el damp de la cámara que sobre lo que se quiere verificar. Medir mal es
+ * peor que no medir. */
+const confirmado = await hoja.evaluate(() => !!matchMedia('(prefers-reduced-motion: reduce)').matches)
+await hoja.getByRole('button', { name: 'Cocina', exact: true }).click()
+await hoja.waitForTimeout(3000)
+const pngQuieta = await hoja.screenshot({ clip: { x: 60, y: 350, width: 260, height: 200 } })
+const brilloQuieta = await hoja.evaluate(async (datos) => {
+  const img = new Image()
+  img.src = 'data:image/png;base64,' + datos
+  await img.decode()
+  const c = document.createElement('canvas')
+  c.width = img.width
+  c.height = img.height
+  const x = c.getContext('2d')
+  x.drawImage(img, 0, 0)
+  const d = x.getImageData(0, 0, c.width, c.height).data
+  let suma = 0
+  for (let i = 0; i < d.length; i += 4) suma += (d[i] + d[i + 1] + d[i + 2]) / 3
+  return Math.round(suma / (d.length / 4))
+}, pngQuieta.toString('base64'))
+const pintoQuieta = confirmado && brilloQuieta > 40
+console.log(
+  `  ${'fundido corto: la foto sale'.padEnd(28)} ${
+    pintoQuieta ? `sí (brillo ${brilloQuieta})` : `NO (reduce=${confirmado}, brillo ${brilloQuieta})`
+  }`,
+)
+if (!pintoQuieta) bien = false
+
 await quieta.close()
 
 console.log(`\n${bien ? 'TODO BIEN' : 'HAY ALGO MAL'}`)
