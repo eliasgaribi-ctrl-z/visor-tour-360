@@ -32,6 +32,35 @@ function cuando(ms: number): string {
   return new Date(ms).toLocaleDateString('es-MX', { day: 'numeric', month: 'long' })
 }
 
+/**
+ * ============================================================================
+ *  A DÓNDE LLEVA UN RECORRIDO DE LA LISTA
+ * ============================================================================
+ *
+ * Al visor, no al editor. Suena obvio y no lo era: hasta ahora la tarjeta y el
+ * importador de `.tour` llevaban los dos a `#/editar/<id>`, y el único camino a
+ * `#/ver/<id>` en toda la app era el botón "Ver" de la barra del editor.
+ *
+ * O sea que quien recibe el `.tour` por WhatsApp —el desconocido para el que se
+ * construyó la portada— caía en la pantalla de administración: "Borrar la
+ * habitación", "Preparar archivo", "Quitar la portada". Nunca veía el precio ni
+ * el botón de llamar al agente. Y el agente que quiere enseñarle la casa a un
+ * cliente que tiene al lado pasaba obligatoriamente por ahí, con los botones de
+ * borrar a la vista.
+ *
+ * La excepción es un recorrido sin ninguna habitación: ahí no hay nada que ver
+ * y mandarlo al visor solo sirve para que rebote en "Todavía no hay nada". Ese
+ * va al editor, que es donde de verdad tiene algo que hacer.
+ *
+ * Y para que el agente no pague dos toques —ni la descarga del motor 3D— cada
+ * vez que quiere editar, la fila tiene su propio lápiz al lado del bote de
+ * basura. Editar sigue estando a un toque; lo que cambió es cuál es el toque
+ * por omisión.
+ */
+function destinoDe(tourId: string, habitaciones: number): Ruta {
+  return habitaciones > 0 ? { nombre: 'ver', tourId } : { nombre: 'editar', tourId }
+}
+
 function Portada({ coverId }: { coverId?: string }) {
   const url = useBlobUrl(coverId)
 
@@ -107,7 +136,7 @@ export function Inicio({ ir }: InicioProps) {
     try {
       const tour = await importarTour(file)
       await recargar()
-      ir({ nombre: 'editar', tourId: tour.id })
+      ir(destinoDe(tour.id, tour.scenes.length))
     } catch (e) {
       const mensaje = e instanceof PaqueteError ? [e.message, e.consejo].filter(Boolean).join(' ') : 'No se pudo abrir el archivo.'
       setError(mensaje)
@@ -174,7 +203,7 @@ export function Inicio({ ir }: InicioProps) {
           tours.map((tour) => (
             <div key={tour.id} className="flex items-stretch gap-2">
               <div className="min-w-0 flex-1">
-                <Tarjeta onClick={() => ir({ nombre: 'editar', tourId: tour.id })}>
+                <Tarjeta onClick={() => ir(destinoDe(tour.id, tour.scenes))}>
                   <div className="flex items-center gap-3">
                     <Portada coverId={tour.coverId} />
                     <div className="min-w-0 flex-1">
@@ -190,6 +219,17 @@ export function Inicio({ ir }: InicioProps) {
                   </div>
                 </Tarjeta>
               </div>
+              <button
+                type="button"
+                aria-label={`Editar ${tour.title}`}
+                onClick={() => ir({ nombre: 'editar', tourId: tour.id })}
+                className="grid w-12 shrink-0 place-items-center rounded-hud border border-white/10
+                           bg-white/5 text-ink-200 active:bg-white/15 active:text-ink-50"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 20h4l10-10a2.8 2.8 0 10-4-4L4 16v4z" strokeLinejoin="round" />
+                </svg>
+              </button>
               <button
                 type="button"
                 aria-label={`Borrar ${tour.title}`}
