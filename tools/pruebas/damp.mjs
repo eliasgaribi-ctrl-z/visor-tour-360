@@ -18,19 +18,32 @@
  * bien: se compara contra la de three, caso por caso, y se exige que sea
  * IDÉNTICA BIT A BIT. No "parecida": idéntica.
  *
- * Es la única prueba del proyecto que no necesita un navegador, así que corre en
- * milisegundos y puede vivir en el CI sin costo.
+ * ── EL ERROR QUE ESTA PRUEBA COMETIÓ, Y QUE NO SE DEBE REPETIR ────────────
+ *
+ * La primera versión de este arnés **transcribía `damp` a mano aquí dentro** y
+ * comparaba ESA transcripción contra three. `src/lib/math.ts` no se leía nunca.
+ * O sea que comparaba el oráculo contra una segunda copia del oráculo, y el paso
+ * del CI llamado "La copia de `damp` sigue siendo exacta" pasaba en verde con la
+ * fórmula de producción reemplazada por un lerp lineal —justo el defecto que este
+ * encabezado llama carísimo—. Se demostró: 401/401 "idénticos", exit 0, con la
+ * suavidad de toda la cámara rota.
+ *
+ * Y lo que tapó el hueco fue la justificación que estaba escrita al lado: "no se
+ * importa, para que la prueba siga siendo una comprobación independiente". Tener
+ * un oráculo independiente está bien, y `THREE.MathUtils.damp` **es** ese
+ * oráculo. Lo que no vale nada es comparar el oráculo contra una copia suya.
+ *
+ * Ahora se importa la función REAL. Node 22 la carga sin compilar nada con
+ * `--experimental-strip-types`: el `import type` de math.ts se despoja al vuelo y
+ * no arrastra three, así que esto sigue corriendo en milisegundos y sin navegador.
+ *
+ * REGLA GENERAL, que este archivo aprendió a la mala: un arnés que reimplementa
+ * lo que prueba no prueba nada. Si hay que copiar algo para probarlo, lo que hay
+ * que arreglar es cómo importarlo.
  */
 import * as THREE from 'three'
 
-/* La copia de src/lib/math.ts, escrita aquí a mano A PROPÓSITO y no importada.
-   Importarla obligaría a compilar TypeScript solo para esto, y además la prueba
-   dejaría de ser una comprobación independiente: si alguien cambia la de
-   `math.ts` por accidente, esta tiene que seguir diciendo cuál era la buena. */
-const damp = (current, target, lambda, dt) => {
-  const k = 1 - Math.exp(-lambda * dt)
-  return current * (1 - k) + target * k
-}
+import { damp } from '../../src/lib/math.ts'
 
 const casos = []
 
@@ -80,7 +93,7 @@ for (const [c, t, l, dt] of casos) {
   else distintos.push({ current: c, target: t, lambda: l, dt, three: esperado, copia: obtenido })
 }
 
-console.log('=== `damp` contra THREE.MathUtils.damp ===')
+console.log('=== `damp` de src/lib/math.ts contra THREE.MathUtils.damp ===')
 console.log(`  casos probados            ${casos.length}`)
 console.log(`  idénticos bit a bit       ${iguales}`)
 

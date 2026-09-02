@@ -100,8 +100,31 @@ export function PanoSphere({
 
   useFrame((_state, delta) => {
     if (!incoming || !overlayMaterial.current) return
+    /* ── El tope del delta, y por qué sin él NO HABÍA FUNDIDO ────────────────
+     *
+     * El MISMO tope que pone `CameraRig` (src/components/tour/CameraRig.tsx:108),
+     * y por una razón hermana. El canvas dibuja A PEDIDO: con la cámara quieta no
+     * se renderiza, así que R3F no llama a `clock.getDelta()`, y el PRIMER cuadro
+     * después de un rato parado trae como `delta` TODO el tiempo transcurrido.
+     *
+     * Sin topar, ese único cuadro dividía el intervalo completo por la duración y
+     * `fade` saltaba de 0 a 1 de golpe: `setBase(incoming)` y `setIncoming(null)`
+     * en el mismo cuadro, o sea un CORTE SECO. Medido con el dev server: al entrar
+     * a una habitación que todavía se estaba descargando llegaba un `delta` de
+     * 20 118 ms; contando cuadros con las dos esferas dibujadas, el fundido
+     * ocupaba 1 cuadro en vez de los ~30 que corresponden a 0.55 s.
+     *
+     * O sea que el fundido —que existe para que no haya un frame en negro— no
+     * estaba funcionando justo cuando más hacía falta: viniendo de un visor
+     * dormido, que es el caso normal.
+     *
+     * Con el tope de 1/10 s el fundido dura al menos 6 cuadros aunque venga de un
+     * canvas parado, y 2 con `prefers-reduced-motion`. Si se cambia el valor, hay
+     * que cambiarlo en los dos sitios: los dos `useFrame` de este canvas reciben
+     * el mismo `delta`. */
+    const dt = Math.min(delta, 1 / 10)
     const duracion = menosMovimiento.current ? FUNDIDO_REDUCIDO : fadeSeconds
-    fade.current = Math.min(1, fade.current + delta / Math.max(duracion, 0.001))
+    fade.current = Math.min(1, fade.current + dt / Math.max(duracion, 0.001))
     overlayMaterial.current.opacity = fade.current
     if (fade.current >= 1) {
       setBase(incoming)

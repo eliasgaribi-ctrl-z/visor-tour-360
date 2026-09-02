@@ -5,7 +5,6 @@ import { useWheelZoom } from '../lib/useDragLook'
 import type { Hotspot, Tour } from '../lib/types'
 import { TourEngineProvider, useCreateTourEngine } from '../lib/tourEngine'
 import { useKeyboardLook } from '../lib/useKeyboardLook'
-import { aplicarMarca } from '../lib/marca'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
 
@@ -72,23 +71,6 @@ export function TourViewer({
   )
 
   useKeyboardLook(engine)
-
-  /**
-   * Viste el visor con la marca del recorrido, y la quita al salir.
-   *
-   * La limpieza NO es opcional: sin ella, salir de un recorrido con marca ajena y
-   * entrar a otro sin marca dejaría los colores del anterior pegados en `:root`.
-   * Es un fallo que solo aparece navegando de verdad entre dos recorridos, o sea
-   * nunca mientras se desarrolla uno.
-   *
-   * Vive aquí y no en `App.tsx` porque aquí está el `Tour` ya resuelto —con el
-   * logo convertido a URL por `resolveTour`— y porque el desmontaje del visor es
-   * exactamente el momento en que la marca deja de aplicar.
-   */
-  useEffect(() => {
-    aplicarMarca(tour.marca)
-    return () => aplicarMarca(undefined)
-  }, [tour.marca])
 
   const dismissHint = useCallback(() => {
     if (hintDismissed.current) return

@@ -167,6 +167,37 @@ revisar('y el contacto de WhatsApp', enPortada.whatsapp)
 const wa = await page.getByRole('link', { name: 'WhatsApp' }).getAttribute('href').catch(() => null)
 revisar('el link de WhatsApp va limpio', wa === 'https://wa.me/523312345678', String(wa))
 
+/* ── El correo se conserva al reeditar ────────────────────────────────────
+ * La hoja del editor reconstruye el objeto `agente` desde cero. Cuando le
+ * faltaba el campo de correo, abrir "Cambiar los datos" y tocar Guardar sin
+ * escribir nada BORRABA el correo que viniera de un .tour importado. */
+await page.goto(`${BASE}#/editar/${idTour}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+await page.getByRole('button', { name: /Cambiar los datos/ }).click()
+await page.waitForTimeout(500)
+await campo(/^Correo/).fill('elias@thiqa.mx')
+await page.getByRole('button', { name: 'Guardar', exact: true }).click()
+await page.waitForTimeout(1200)
+await page.getByRole('button', { name: /Cambiar los datos/ }).click()
+await page.waitForTimeout(500)
+const correoTrasReeditar = await campo(/^Correo/).inputValue()
+await page.getByRole('button', { name: 'Guardar', exact: true }).click()
+await page.waitForTimeout(1200)
+await page.getByRole('button', { name: /Cambiar los datos/ }).click()
+await page.waitForTimeout(500)
+const correoTrasGuardarVacio = await campo(/^Correo/).inputValue()
+revisar(
+  'el correo sobrevive a reeditar',
+  correoTrasReeditar === 'elias@thiqa.mx' && correoTrasGuardarVacio === 'elias@thiqa.mx',
+  `${correoTrasReeditar} / ${correoTrasGuardarVacio}`,
+)
+
+/* Ese bloque dejó la página en el editor; el resto del flujo sigue en el visor.
+   (La primera versión no volvía y el clic de "Ver el recorrido" se colgaba 30 s
+   buscando un botón que estaba en otra pantalla.) */
+await page.goto(`${BASE}#/ver/${idTour}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(2500)
+
 /* Y la portada NO puede necesitar WebGL: es su mayor valor en un iPhone viejo,
    donde el visor 3D no puede funcionar. */
 const sinCanvas = await page.evaluate(() => document.querySelectorAll('canvas').length === 0)
@@ -176,6 +207,44 @@ await page.getByRole('button', { name: /Ver el recorrido/ }).click()
 await page.waitForTimeout(4000)
 const entro = await page.evaluate(() => document.querySelectorAll('canvas').length > 0)
 revisar('y al entrar sí aparece el visor 3D', entro)
+
+/* ==========================================================================
+ * SEGURIDAD: un .tour ajeno se abre en el telefono de un COMPRADOR.
+ *
+ * La portada interpola los datos de contacto dentro de `href`. Un archivo
+ * preparado a mano metia un BCC en el `mailto:` —comprobado leyendo el DOM— y
+ * cadenas MMI en el `tel:`. Se sanean en limpiarFicha, en la frontera, y aqui se
+ * comprueba que la frontera aguanta por el camino REAL del importador.
+ * ========================================================================== */
+console.log('\n=== Un .tour ajeno no puede inyectar en los enlaces ===')
+
+const maliciosos = [
+  ['BCC en el mailto', { correo: 'cliente@casa.mx?subject=Confirma&bcc=espia@mal.mx' }, 'correo'],
+  ['MMI en el tel', { telefono: '*21*5551234#' }, 'telefono'],
+  ['javascript: en el correo', { correo: 'javascript:alert(1)' }, 'correo'],
+  ['salto de linea en el correo', { correo: 'a@b.mx\nbcc:x@y.mx' }, 'correo'],
+]
+const limpio = await page.evaluate(async (casos) => {
+  const salida = []
+  for (const [, agente] of casos) {
+    // Se pasa por el MISMO filtro que usa el importador.
+    const mod = await import('/src/lib/store/migrar.ts')
+    salida.push(mod.limpiarFicha({ precio: '$1', agente })?.agente ?? null)
+  }
+  return salida
+}, maliciosos)
+
+maliciosos.forEach(([que, , campoMalo], i) => {
+  const r = limpio[i]
+  const valor = r?.[campoMalo]
+  /* La unica respuesta correcta es rechazarlo, o dejarlo sin los caracteres que
+     le daban el significado peligroso. Nunca pasarlo tal cual. */
+  const seguro =
+    valor === undefined ||
+    (!/[?&#\n\r,;]/.test(String(valor)) && !/^javascript:/i.test(String(valor)))
+  console.log(`  ${que.padEnd(30)} ${(seguro ? 'contenido' : 'PASA TAL CUAL').padEnd(14)} ${JSON.stringify(valor)}`)
+  if (!seguro) bien = false
+})
 
 console.log(`\n${bien ? 'LO VIEJO SIGUE ABRIENDO' : 'HAY ALGO MAL'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')

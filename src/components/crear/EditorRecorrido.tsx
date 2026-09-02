@@ -255,6 +255,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                 agenteNombre: tour.ficha?.agente?.nombre ?? '',
                 agenteWhatsapp: tour.ficha?.agente?.whatsapp ?? '',
                 agenteTelefono: tour.ficha?.agente?.telefono ?? '',
+                agenteCorreo: tour.ficha?.agente?.correo ?? '',
               })
             }
           >
@@ -405,6 +406,17 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
               placeholder="33 1234 5678"
               maxLength={30}
             />
+            {/* Faltaba, y no era solo una omisión: la hoja reconstruía el objeto
+                `agente` desde cero con los tres campos que sí tenía, así que
+                abrir "Cambiar los datos" y tocar Guardar sin escribir nada BORRABA
+                el correo que viniera de un `.tour` importado. Comprobado. */}
+            <Campo
+              etiqueta="Correo"
+              valor={ficha.agenteCorreo}
+              onChange={(agenteCorreo) => setFicha({ ...ficha, agenteCorreo })}
+              placeholder="elias@inmobiliaria.mx"
+              maxLength={120}
+            />
 
             <Boton
               tipo="principal"
@@ -425,6 +437,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                     nombre: ficha.agenteNombre,
                     whatsapp: ficha.agenteWhatsapp,
                     telefono: ficha.agenteTelefono,
+                    correo: ficha.agenteCorreo,
                   },
                 })
                 await guardar({ ...tour, ficha: armada })

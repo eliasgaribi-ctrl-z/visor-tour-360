@@ -6,6 +6,7 @@ import type { Tour } from '../../lib/types'
 import type { Ruta } from '../../lib/useHashRoute'
 import { getTour, resolveTour } from '../../lib/store/tours'
 import { fijarRecorridoActivo } from '../../lib/useHashRoute'
+import { aplicarMarca } from '../../lib/marca'
 import { Portada } from '../tour/Portada'
 import { Aviso, Boton, Cargando, Pantalla } from './ui'
 
@@ -51,6 +52,36 @@ export function VisorGuardado({ tourId, ir, alFallar }: VisorGuardadoProps) {
    * portada vacía es peor que ninguna— así que ahí este estado no se usa.
    */
   const [entro, setEntro] = useState(false)
+
+  /**
+   * ============================================================================
+   *  UN SOLO DUEÑO DE LA MARCA
+   * ============================================================================
+   *
+   * `aplicarMarca` escribe en `:root`, que es un global. Estaba llamada desde DOS
+   * componentes —`Portada` y `TourViewer`— cada uno con su limpieza al
+   * desmontarse, y eso causaba exactamente el parpadeo que sus comentarios decían
+   * evitar: React desmonta la portada ANTES de montar el visor, así que la
+   * limpieza de la portada corría primero y dejaba un hueco sin marca.
+   *
+   * Medido con un recorrido de marca morada, muestreando `--color-brand-500` por
+   * cuadro al tocar "Ver el recorrido":
+   *
+   *     #7c3aed ×3  →  #e19100 ×18  →  #7c3aed …
+   *
+   * Dieciocho cuadros del ámbar de THIQA en medio del recorrido de otra
+   * inmobiliaria. Dos dueños de un global es un dueño de más.
+   *
+   * Ahora vive aquí, que es el componente que contiene LAS DOS pantallas: se
+   * aplica una vez y se limpia al salir del recorrido, que es cuando de verdad
+   * deja de aplicar. El visor de la demo (`App.tsx` monta `TourViewer` directo)
+   * no pasa por aquí, y no le hace falta: `demoTour` no trae marca.
+   */
+  const marca = tour !== null && typeof tour === 'object' ? tour.marca : undefined
+  useEffect(() => {
+    aplicarMarca(marca)
+    return () => aplicarMarca(undefined)
+  }, [marca])
 
   useEffect(() => {
     let vivo = true

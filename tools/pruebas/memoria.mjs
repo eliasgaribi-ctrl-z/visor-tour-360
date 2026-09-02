@@ -225,17 +225,44 @@ await page.getByRole('button', { name: 'Editar el recorrido' }).click()
 await page.waitForTimeout(2500)
 const fuera = await leer('tras salir del visor')
 
+/* El caché de equirectangulares tiene tope 5, pero el arnés cuenta TODAS las
+   texturas del contexto, y el visor sube además las miniaturas de la barra de
+   habitaciones. Medido: 9 residentes con 7 habitaciones. La tolerancia cubre eso
+   sin dejar pasar un caché desbocado (con el tope en 99 se midieron 11). */
+const MINIATURAS_TOLERADAS = 4
+
 const pico = Math.max(primera.mb, segunda.mb)
 console.log('\nDIAGNÓSTICO')
 console.log(
   `  pico de memoria de video: ${pico.toFixed(0)} MB ` +
     (pico < 250 ? '(cabe en el presupuesto de iOS)' : '(SE PASA del presupuesto de iOS)'),
 )
+/* ── Se afirma contra el TOPE, no contra la vuelta anterior ────────────────
+ *
+ * La versión anterior comparaba las texturas de la segunda vuelta con las de la
+ * primera y solo lo IMPRIMÍA. Dos defectos a la vez, los dos demostrados:
+ *
+ *   · la comparación no entraba en el `process.exit`, así que decía
+ *     "SIGUE CRECIENDO" y salía con 0;
+ *   · y era estructuralmente incapaz de detectar un caché sin tope: las dos
+ *     vueltas visitan LAS MISMAS siete habitaciones, así que un caché ilimitado
+ *     se satura en la primera y la segunda lo ve idéntico. Con
+ *     `maximoEnCache: 99` el arnés reportaba "11 texturas · 224 MB · no crece ·
+ *     cabe en el presupuesto" y exit 0.
+ *
+ * Lo que el caché de verdad promete es un TOPE, así que eso es lo que se exige.
+ * El número sale de `dispositivo.ts`, que es donde vive la decisión. */
+/* Hoy vale 5 en los dos niveles de aparato (dispositivo.ts). Se escribe asi, y
+   no como un 5 pelado, para que quien cambie ese numero encuentre este. */
+const TOPE_CACHE = MODESTO ? 5 : 5
+const dentroDelTope =
+  primera.texturasResidentes <= TOPE_CACHE + MINIATURAS_TOLERADAS &&
+  segunda.texturasResidentes <= TOPE_CACHE + MINIATURAS_TOLERADAS
 console.log(
   `  texturas residentes: ${segunda.texturasResidentes} ` +
-    (segunda.texturasResidentes === primera.texturasResidentes
-      ? '(no crece en la segunda vuelta)'
-      : '(SIGUE CRECIENDO: el caché no está acotado)'),
+    (dentroDelTope
+      ? `(dentro del tope de ${TOPE_CACHE} + miniaturas)`
+      : `(SE PASA DEL TOPE de ${TOPE_CACHE}: el caché no está acotado)`),
 )
 console.log(
   `  contextos vivos al salir: ${fuera.contextosVivos} ` +
@@ -244,4 +271,7 @@ console.log(
 console.log('\nerrores de consola:', errores.length ? errores : 'ninguno')
 
 await browser.close()
-process.exit(pico < 250 && fuera.contextosVivos === 0 ? 0 : 1)
+/* `errores` se recogía y se imprimía pero NO entraba en el código de salida, a
+   diferencia de los otros seis arneses: una excepción de la página durante la
+   corrida salía en verde. Ahora cuenta. */
+process.exit(pico < 250 && fuera.contextosVivos === 0 && dentroDelTope && errores.length === 0 ? 0 : 1)

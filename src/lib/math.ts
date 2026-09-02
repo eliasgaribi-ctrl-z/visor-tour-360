@@ -13,7 +13,9 @@
  *
  * ── Lo que este split ahorró de verdad, que es menos de lo que parece ──────
  *
- * De esos ocho, CUATRO ya importaban three por su cuenta y siguen igual:
+ * De esos ocho, uno —`EditorPuntos.tsx`— importaba escalares Y proyecciones, así
+ * que no cuenta en ninguna de las dos columnas de abajo. De los siete restantes,
+ * CUATRO ya importaban three por su cuenta y siguen igual:
  * `Capturar.tsx`, `capture/stitcher.ts` (que construye un `THREE.WebGLRenderer`),
  * `capture/orientation.ts` y `capture/importar.ts`. Los que de verdad quedaron
  * libres son tres: `useDragLook.ts`, `capture/plan.ts` y `capture/frames.ts`.

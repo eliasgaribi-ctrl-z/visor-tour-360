@@ -25,36 +25,28 @@
  * Corre sin navegador: va en el job rápido del CI.
  */
 
-/* La copia de las funciones de src/lib/marca.ts, escrita aquí a mano y no
-   importada, por lo mismo que en damp.mjs: importarla obligaría a compilar
-   TypeScript solo para esto, y la prueba dejaría de ser independiente. */
-function canales(hex) {
-  const limpio = hex.trim().replace(/^#/, '')
-  const largo = limpio.length === 3 ? 1 : 2
-  const leer = (i) => {
-    const trozo = limpio.slice(i * largo, i * largo + largo)
-    return parseInt(largo === 1 ? trozo + trozo : trozo, 16)
-  }
-  return [leer(0), leer(1), leer(2)]
-}
+/*
+ * ── EL ERROR QUE ESTA PRUEBA COMETIÓ, Y QUE NO SE DEBE REPETIR ────────────
+ *
+ * La primera versión reimplementaba aquí `canales`, `luminancia`, `contraste` y
+ * `tintaPara`, y probaba ESA reimplementación: `src/lib/marca.ts` no se tocaba.
+ * Se demostró cambiando la `luminancia` de producción por el promedio de canales
+ * —el error exacto que este encabezado nombra— y las catorce aserciones pasaron
+ * en verde, exit 0. Con ese promedio, `contrasteOk` aprobaría acentos ilegibles y
+ * el CI no diría nada.
+ *
+ * Peor: la copia ya había DIVERGIDO de la real. La `canales` de producción valida
+ * el hex y devuelve null —y entonces `contraste` devuelve 1—, la del arnés no
+ * validaba nada, así que ese camino no se probaba en ninguna parte. Ahora sí.
+ *
+ * Se importan las funciones REALES, con `--experimental-strip-types`. Misma
+ * regla que aprendió damp.mjs: un arnés que reimplementa lo que prueba no prueba
+ * nada.
+ */
+import { contraste, contrasteOk, tintaPara as tintaReal } from '../../src/lib/marca.ts'
 
-function luminancia(rgb) {
-  const [r, g, b] = rgb.map((c) => {
-    const n = c / 255
-    return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4)
-  })
-  return 0.2126 * r + 0.7152 * g + 0.0722 * b
-}
-
-function contraste(a, b) {
-  const la = luminancia(canales(a))
-  const lb = luminancia(canales(b))
-  const [claro, oscuro] = la > lb ? [la, lb] : [lb, la]
-  return (claro + 0.05) / (oscuro + 0.05)
-}
-
-const tintaPara = (fondo) =>
-  contraste(fondo, '#000000') >= contraste(fondo, '#ffffff') ? 'negro' : 'blanco'
+/** El arnés habla de "negro"/"blanco"; la función devuelve el hex. */
+const tintaPara = (fondo) => (tintaReal(fondo) === '#000000' ? 'negro' : 'blanco')
 
 /** Razones de contraste publicadas. Cada una es citable, no estimada. */
 const REFERENCIAS = [
@@ -112,6 +104,23 @@ for (const [color, deberia] of [
   const pasa = r >= 3
   const ok = pasa === deberia
   console.log(`  ${color}   ${r.toFixed(2).padStart(5)}  ${(pasa ? 'pasa' : 'no pasa').padEnd(8)} ${ok ? 'ok' : 'MAL'}`)
+  if (!ok) bien = false
+}
+
+/* ── El camino que la copia divergente del arnés NO probaba ───────────────
+ *
+ * La `canales` de producción valida el hex y devuelve null para lo que no lo sea;
+ * entonces `contraste` devuelve 1 y `contrasteOk` dice que no pasa. Ese
+ * comportamiento importa: es lo que impide que un color basura de un `.tour`
+ * ajeno se cuele como "aprobado". La reimplementación que vivía aquí no validaba
+ * nada, así que este camino no se probaba en ninguna parte. */
+console.log('\n=== Entradas que no son hex ===')
+for (const malo of ['navy', 'rgb(11,29,81)', '#0b1d51ff', '#12345', '', 'var(--x)']) {
+  const r = contraste(malo, '#ffffff')
+  /* 1 es el valor de "no pude leer esto", y es el correcto: cualquier otro
+     numero seria una aprobacion inventada. */
+  const ok = r === 1 && contrasteOk(malo) === false
+  console.log(`  ${(malo || '(vacío)').padEnd(16)} contraste ${r.toFixed(2)}  ${ok ? 'se rechaza · ok' : 'MAL'}`)
   if (!ok) bien = false
 }
 

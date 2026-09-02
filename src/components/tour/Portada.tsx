@@ -1,7 +1,4 @@
-import { useEffect } from 'react'
-
 import type { Ficha, Marca } from '../../lib/types'
-import { aplicarMarca } from '../../lib/marca'
 
 export type PortadaProps = {
   titulo: string
@@ -55,14 +52,6 @@ export function Portada({
   onEntrar,
   accion,
 }: PortadaProps) {
-  /* La marca se aplica también aquí, y no solo en el visor: la portada es lo
-     primero que se ve, y entrar de THIQA a la marca del cliente a medio camino
-     se notaría como un parpadeo. Se limpia al desmontar, igual que allá. */
-  useEffect(() => {
-    aplicarMarca(marca)
-    return () => aplicarMarca(undefined)
-  }, [marca])
-
   const datos = [
     ficha.superficie && { que: 'Superficie', valor: ficha.superficie },
     ficha.recamaras !== undefined && {

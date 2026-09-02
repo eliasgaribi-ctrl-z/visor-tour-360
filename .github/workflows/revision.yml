@@ -57,12 +57,19 @@ jobs:
       - name: Build
         run: npm run build
 
-      # La única prueba del proyecto que no necesita un navegador, así que corre
-      # en milisegundos y va aquí y no con los arneses: comprueba que la copia a
-      # mano de `damp` en src/lib/math.ts siga siendo IDÉNTICA BIT A BIT a la de
-      # THREE.MathUtils.damp. Toda la suavidad de la cámara pasa por esa función.
-      - name: La copia de `damp` sigue siendo exacta
-        run: node tools/pruebas/damp.mjs
+      # `damp` es la interpolacion por la que pasa TODA la suavidad de la camara.
+      # Vive escrita a mano en src/lib/math.ts para que ese modulo no importe
+      # three, asi que hay que comprobar que siga siendo IDENTICA BIT A BIT a
+      # THREE.MathUtils.damp.
+      #
+      # --experimental-strip-types deja que el arnes importe la funcion REAL sin
+      # compilar nada. Importa: la primera version del arnes transcribia la
+      # formula a su propio archivo y comparaba ESA copia contra three, o sea el
+      # oraculo contra una copia del oraculo. Pasaba en verde con la formula de
+      # produccion reemplazada por un lerp lineal. Verificado en las dos
+      # direcciones: ahora se rompe produccion y el paso falla.
+      - name: La formula de `damp` sigue siendo la de three
+        run: node --experimental-strip-types tools/pruebas/damp.mjs
 
       # Formas de escribir algo que ya se demostraron equivocadas. Una prueba de
       # navegador no las atrapa: solo mira la pantalla donde alguien se acordó de
@@ -75,7 +82,7 @@ jobs:
       # ajena: si la luminancia estuviera mal, el editor de marca aprobaria
       # colores ilegibles y no se sabria hasta ver un visor roto.
       - name: La cuenta del contraste
-        run: node tools/pruebas/contraste.mjs
+        run: node --experimental-strip-types tools/pruebas/contraste.mjs
 
       # El presupuesto de descarga es una decisión medida del proyecto (README
       # sección 10): la pantalla "Mis recorridos" baja ~236 kB porque las cinco

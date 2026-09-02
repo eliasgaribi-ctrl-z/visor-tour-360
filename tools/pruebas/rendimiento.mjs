@@ -532,7 +532,16 @@ const animaciones = await hoja.evaluate(() => {
 const aroQuieto = animaciones.aro === 'none'
 const detalle = aroQuieto ? 'quieto' : `SIGUE LATIENDO (${animaciones.aro})`
 console.log(`  ${'aro de los enlaces'.padEnd(28)} ${detalle}`)
-console.log(`  ${'rueda de cargando'.padEnd(28)} ${animaciones.rueda}`)
+/* La otra mitad del contrato, que solo se imprimía: con "reducir movimiento" el
+   aro deja de latir PERO la rueda de cargando tiene que SEGUIR girando, porque
+   ahí el movimiento sí dice algo (que la foto viene en camino). Se demostró que
+   no se afirmaba: poniendo `.animate-spin { animation: none }` dentro del bloque
+   de reduced-motion, el arnés lo imprimía y salía en verde. */
+const ruedaGira = animaciones.rueda !== 'none' && animaciones.rueda !== 'no está en pantalla'
+console.log(
+  `  ${'rueda de cargando'.padEnd(28)} ${ruedaGira ? animaciones.rueda : `SE PARÓ (${animaciones.rueda})`}`,
+)
+if (!ruedaGira) bien = false
 if (!aroQuieto) bien = false
 
 /* El fundido entre habitaciones también se acorta con "reducir movimiento"

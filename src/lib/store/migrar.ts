@@ -109,16 +109,48 @@ export function limpiarFicha(crudo: unknown): Ficha | undefined {
   const descripcion = texto(f.descripcion, 600)
   if (descripcion) ficha.descripcion = descripcion
 
+  /* ── Los tres datos de contacto se sanean AQUÍ, y no es cosmético ─────────
+   *
+   * La portada los interpola dentro de `href`: `https://wa.me/${whatsapp}`,
+   * `tel:${telefono}`, `mailto:${correo}`. Y el `.tour` llega por WhatsApp de un
+   * tercero y se abre en el teléfono de un COMPRADOR, que no eligió confiar en
+   * nadie. Con solo `trim` y truncado, un archivo preparado a mano metía:
+   *
+   *   correo: "cliente@casa.mx?subject=Confirma%20tus%20datos&bcc=espia@mal.mx"
+   *
+   * y el comprador toca "Correo" y su cliente de correo abre un mensaje con un
+   * BCC que él no puso. Comprobado metiendo un `.tour` por el camino real del
+   * importador y leyendo el `href` del DOM.
+   *
+   * Con `telefono` es lo mismo: una cadena MMI/USSD en un `tel:` puede hacer que
+   * el marcador ejecute un código de operadora en vez de llamar.
+   *
+   * Así que cada uno se acota a los caracteres que su esquema necesita y nada
+   * más. No es una lista negra de lo peligroso —esas siempre se quedan cortas—
+   * sino una lista blanca de lo que un número de teléfono o un correo pueden
+   * tener. */
   const agente: NonNullable<Ficha['agente']> = {}
   const nombre = texto(agenteCrudo.nombre, 80)
   if (nombre) agente.nombre = nombre
-  const telefono = texto(agenteCrudo.telefono, 30)
-  if (telefono) agente.telefono = telefono
+
+  /* Un número para marcar: dígitos, y los signos que de verdad aparecen escritos
+     en un teléfono. Fuera queda todo lo que da significado a una cadena MMI:
+     `*`, `#`, `,`, `;` y `p`/`w` (pausa y espera). */
+  const telefono = texto(agenteCrudo.telefono, 30)?.replace(/[^0-9+\-() ]/g, '').trim()
+  if (telefono && /\d/.test(telefono)) agente.telefono = telefono
+
   // Solo dígitos: es lo que espera el enlace de wa.me.
   const whatsapp = texto(agenteCrudo.whatsapp, 20)?.replace(/\D/g, '')
   if (whatsapp) agente.whatsapp = whatsapp
-  const correo = texto(agenteCrudo.correo, 120)
-  if (correo) agente.correo = correo
+
+  /* Una sola dirección y nada más. El `?` es la puerta de los encabezados de
+     `mailto:` (subject, cc, bcc, body), así que se exige la forma de un correo
+     completa y se rechaza cualquier cosa que traiga otro carácter. */
+  const correo = texto(agenteCrudo.correo, 120)?.trim()
+  if (correo && /^[^\s@,;:<>()[\]\\"?&#/]+@[^\s@,;:<>()[\]\\"?&#/]+\.[a-z]{2,}$/i.test(correo)) {
+    agente.correo = correo
+  }
+
   if (Object.keys(agente).length > 0) ficha.agente = agente
 
   return Object.keys(ficha).length > 0 ? ficha : undefined
