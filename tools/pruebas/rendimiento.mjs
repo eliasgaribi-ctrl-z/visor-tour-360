@@ -127,16 +127,19 @@ const sobreLaFoto = async () => {
  *  Se reconocen por el `transform` en línea que les escribe el pulso del HUD
  *  (ver src/components/ui/HotspotLayer.tsx); así no se confunden con los
  *  botones fijos del HUD, que también viven en esa capa. */
-const sobreUnMarcador = async () =>
-  page.evaluate(() => {
+const sobreUnMarcador = async (pg = page, filtro = null) =>
+  pg.evaluate((patron) => {
+    const re = patron ? new RegExp(patron) : null
     for (const b of document.querySelectorAll('button[style*="translate3d"]')) {
       const r = b.getBoundingClientRect()
       if (getComputedStyle(b).visibility !== 'visible' || r.width < 20) continue
       if (r.left < 0 || r.top < 40 || r.right > innerWidth || r.bottom > innerHeight - 40) continue
-      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), texto: b.textContent.trim() }
+      const texto = b.textContent.trim()
+      if (re && !re.test(texto)) continue
+      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2), texto }
     }
     return null
-  })
+  }, filtro ? filtro.source : null)
 
 /* ------------------------------------------------------------- 1. MEDIR --- */
 console.log(`=== Trabajo del teléfono · CPU limitada ${CPU}x ===`)
@@ -175,19 +178,54 @@ await page.waitForTimeout(2500)
 
 /* ------------------------------------------------- 2. ¿TODO RESPONDE? --- */
 console.log('\n=== Cada forma de mover la cámara ===')
-const angulos = async () => {
+const angulos = async (pg = page) => {
   /* El badge de ángulos solo existe en modo desarrollo. En el sitio ya
      publicado no está, y sin límite de espera propio esto se quedaba 30 s
      colgado y reventaba en vez de avisar. */
   let t = null
   try {
-    t = await page.locator('pre').first().textContent({ timeout: 1500 })
+    t = await pg.locator('pre').first().textContent({ timeout: 1500 })
   } catch {
     return null
   }
-  const m = /yaw\s+(-?[\d.]+)°\s+pitch\s+(-?[\d.]+)°\s+fov\s+(\d+)/.exec(t || '')
-  return m ? { yaw: +m[1], pitch: +m[2], fov: +m[3] } : null
+  /* `empuje` es opcional en la expresión: es el desplazamiento de la cámara al
+     cruzar una puerta (ver CameraRig) y el badge lo agrega al final. */
+  const m = /yaw\s+(-?[\d.]+)°\s+pitch\s+(-?[\d.]+)°\s+fov\s+(\d+)°?(?:\s+empuje\s+(-?[\d.]+))?/.exec(t || '')
+  return m ? { yaw: +m[1], pitch: +m[2], fov: +m[3], empuje: m[4] === undefined ? null : +m[4] } : null
 }
+
+/**
+ * Lee el empuje del badge muchas veces seguidas durante `ms` milisegundos.
+ * Es la única forma de ver una animación de 0.6 s desde fuera: una sola lectura
+ * cae donde cae.
+ */
+const muestrearEmpuje = async (pg, ms = 1600, paso = 40) => {
+  const valores = []
+  const fin = Date.now() + ms
+  while (Date.now() < fin) {
+    const a = await angulos(pg)
+    if (a && a.empuje !== null) valores.push(a.empuje)
+    await pg.waitForTimeout(paso)
+  }
+  return valores
+}
+
+/** Gira con la flecha hasta que se vea un marcador de ENLACE (una puerta). */
+const buscarPuerta = async (pg) => {
+  let marcador = await sobreUnMarcador(pg, /Cocina|Recámara|Volver a sala/)
+  for (let vuelta = 0; !marcador && vuelta < 14; vuelta++) {
+    await pg.keyboard.down('ArrowRight')
+    await pg.waitForTimeout(400)
+    await pg.keyboard.up('ArrowRight')
+    await pg.waitForTimeout(700)
+    marcador = await sobreUnMarcador(pg, /Cocina|Recámara|Volver a sala/)
+  }
+  return marcador
+}
+
+/** El nombre de la habitación que muestra la barra de arriba. */
+const habitacionVisible = (pg) =>
+  pg.evaluate(() => document.querySelector('p.truncate.text-xs')?.textContent?.trim() ?? '')
 /**
  * Con la CPU limitada, la cámara puede seguir acomodándose cuando se lee. Si
  * la primera lectura no muestra movimiento se espera y se vuelve a leer: eso
@@ -477,6 +515,61 @@ if (!a) {
       `${acercado.fov}\u2192${doble.fov} (esperado 75)`,
   )
   if (!exacto) bien = false
+
+  /* ------------------------------------------------------------------------
+   * ATRAVESAR LA PUERTA
+   *
+   * Al tocar un punto de ENLACE la cámara se empuja hacia él y vuelve al centro
+   * (ver CameraRig). Tres cosas, y las tres tienen que cumplirse:
+   *   1. la cámara SALE del centro: en algún momento el empuje pasa de 5;
+   *   2. y VUELVE exactamente a 0, no a "casi cero" — los marcadores del HUD se
+   *      proyectan asumiendo la cámara en el centro;
+   *   3. y desde la barra de habitaciones NO hay empuje: ahí se salta de cuarto
+   *      en cuarto, no se cruza ninguna puerta.
+   * Y después de todo eso, parado, el visor tiene que volver a CERO dibujos:
+   * una animación que se quedara pidiendo cuadro sería justo lo que la regla de
+   * oro del proyecto prohíbe.
+   * ---------------------------------------------------------------------- */
+  await page.getByRole('button', { name: 'Reencuadrar' }).click()
+  await page.waitForTimeout(1600)
+  const puerta = await buscarPuerta(page)
+  if (!puerta) {
+    console.log(`  ${'atravesar la puerta'.padEnd(28)} NO SE ENCONTRÓ NINGUNA PUERTA`)
+    bien = false
+  } else {
+    const destino = /Cocina/.test(puerta.texto) ? 'Cocina' : /Recámara/.test(puerta.texto) ? 'Recámara' : 'Sala'
+    await page.mouse.click(puerta.x, puerta.y)
+    const empujes = await muestrearEmpuje(page)
+    await page.waitForTimeout(1200)
+    const reposo = await angulos()
+    const llego = (await habitacionVisible(page)).startsWith(destino)
+    const pico = empujes.length ? Math.max(...empujes) : 0
+    const cruza = pico > 5 && reposo?.empuje === 0 && llego
+    console.log(
+      `  ${'atravesar la puerta'.padEnd(28)} ${(cruza ? 'empuja y vuelve' : 'MAL').padEnd(10)} ` +
+        `pico ${pico} · reposo ${reposo?.empuje} · ${empujes.length} lecturas · llegó a ${destino}: ${llego}`,
+    )
+    if (!cruza) bien = false
+
+    /* Desde la barra de habitaciones, a un cuarto distinto del actual: sin empuje. */
+    const otro = destino === 'Cocina' ? 'Recámara' : 'Cocina'
+    await page.getByRole('button', { name: otro, exact: true }).click()
+    const sinPuerta = await muestrearEmpuje(page, 1200)
+    const picoBarra = sinPuerta.length ? Math.max(...sinPuerta) : null
+    const quietaLaBarra = picoBarra === 0
+    console.log(
+      `  ${'la barra no empuja'.padEnd(28)} ${(quietaLaBarra ? 'sin empuje' : 'EMPUJÓ').padEnd(10)} ` +
+        `pico ${picoBarra} · ${sinPuerta.length} lecturas`,
+    )
+    if (!quietaLaBarra) bien = false
+  }
+
+  await page.waitForTimeout(2500)
+  const trasPuerta = await muestrear('parado tras cruzar una puerta')
+  if (trasPuerta.draws > 0 || trasPuerta.raf > 0) {
+    console.log('     ↑ MAL: el empuje dejó algo pidiendo cuadro')
+    bien = false
+  }
 }
 
 /* La foto de la habitación nueva tiene que APARECER. Se mide con una captura
@@ -556,6 +649,28 @@ if (!aroQuieto) bien = false
  * sobre el damp de la cámara que sobre lo que se quiere verificar. Medir mal es
  * peor que no medir. */
 const confirmado = await hoja.evaluate(() => !!matchMedia('(prefers-reduced-motion: reduce)').matches)
+
+/* Y el empuje al cruzar una puerta es exactamente el tipo de movimiento que
+   molesta a quien pidió menos: con el ajuste activo tiene que ser CERO en todas
+   las lecturas, no solo más corto. La habitación tiene que cambiar igual. */
+const puertaQuieta = await buscarPuerta(hoja)
+if (!puertaQuieta) {
+  console.log(`  ${'puerta sin empuje'.padEnd(28)} NO SE ENCONTRÓ NINGUNA PUERTA`)
+  bien = false
+} else {
+  const antesDeCruzar = await habitacionVisible(hoja)
+  await hoja.mouse.click(puertaQuieta.x, puertaQuieta.y)
+  const lecturas = await muestrearEmpuje(hoja, 1400)
+  await hoja.waitForTimeout(800)
+  const cambio = (await habitacionVisible(hoja)) !== antesDeCruzar
+  const nunca = lecturas.length > 0 && lecturas.every((v) => v === 0)
+  console.log(
+    `  ${'puerta sin empuje'.padEnd(28)} ${(nunca && cambio ? 'quieta, y cambia' : 'MAL').padEnd(16)} ` +
+      `máximo ${lecturas.length ? Math.max(...lecturas) : 'sin lecturas'} · cambió de cuarto: ${cambio}`,
+  )
+  if (!(nunca && cambio)) bien = false
+}
+
 await hoja.getByRole('button', { name: 'Cocina', exact: true }).click()
 await hoja.waitForTimeout(3000)
 const pngQuieta = await hoja.screenshot({ clip: { x: 60, y: 350, width: 260, height: 200 } })

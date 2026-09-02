@@ -69,6 +69,15 @@ export type LookInput = {
    * Cualquier input manual del usuario lo cancela.
    */
   goto: { yaw: number; pitch: number } | null
+
+  /**
+   * "Atravesar la puerta": la dirección (yaw, pitch) del punto de enlace que se
+   * acaba de tocar. Un solo uso: el rig lo toma, empuja la cámara unas unidades
+   * hacia allá mientras dura el fundido y la regresa al centro. Lo escribe solo
+   * el visor al tocar un punto de ENLACE; la barra de habitaciones no lo toca,
+   * porque ahí no hay puerta que cruzar. Ver `CameraRig`.
+   */
+  empuje: { yaw: number; pitch: number } | null
 }
 
 /** Lo que la cámara le cuenta a la UI. El CameraRig lo escribe cada frame. */
@@ -76,6 +85,8 @@ export type CameraReadout = {
   yaw: number
   pitch: number
   fov: number
+  /** Cuánto se ha desplazado la cámara del centro por el empuje, en unidades de escena. 0 en reposo. */
+  avance: number
 }
 
 export type TourEngine = {
@@ -146,8 +157,16 @@ export const createTourEngine = (): TourEngine => {
   }
 
   return {
-    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, gotoFov: null, goto: null },
-    readout: { yaw: 0, pitch: 0, fov: 75 },
+    input: {
+      axis: { x: 0, y: 0 },
+      dragYaw: 0,
+      dragPitch: 0,
+      dFov: 0,
+      gotoFov: null,
+      goto: null,
+      empuje: null,
+    },
+    readout: { yaw: 0, pitch: 0, fov: 75, avance: 0 },
     invalidar,
     conectarRender: (fn) => {
       render = fn

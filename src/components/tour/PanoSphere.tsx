@@ -57,9 +57,18 @@ const FUNDIDO_REDUCIDO = 0.12
  * necesitando BackSide para ser visible desde adentro.
  *
  * ── El fundido ─────────────────────────────────────────────────────────────
- * Dos esferas: la de abajo con la habitación actual y una interior, transparente,
+ * Dos esferas: la de abajo con la habitación actual y otra encima, transparente,
  * con la que está entrando. Cuando la opacidad llega a 1, la nueva pasa a ser la
  * base y la de encima se desmonta. Así nunca hay un frame en negro.
+ *
+ * Las dos tienen el MISMO radio, y el orden de dibujo lo fija `renderOrder` con
+ * `depthTest` apagado en la entrante, no un radio menor. Antes la entrante medía
+ * `radius * 0.98`, y con la cámara en el centro exacto eso no cambiaba ni un
+ * píxel: la proyección de un punto depende solo de su dirección, no de su
+ * distancia. Pero el empuje de `CameraRig` saca la cámara del centro durante el
+ * fundido, y con la cámara descentrada dos esferas de radios distintos SÍ
+ * proyectan distinto: la misma pared aparecía en dos sitios a la vez mientras las
+ * fotos se mezclaban. Con radios iguales, las dos se mueven juntas.
  */
 export function PanoSphere({
   url,
@@ -146,7 +155,7 @@ export function PanoSphere({
 
       {incoming && (
         <mesh scale={[-1, 1, 1]} renderOrder={1}>
-          <sphereGeometry args={[radius * 0.98, 64, 40, PHI_START]} />
+          <sphereGeometry args={[radius, 64, 40, PHI_START]} />
           <meshBasicMaterial
             ref={overlayMaterial}
             map={incoming}
@@ -155,6 +164,7 @@ export function PanoSphere({
             transparent
             opacity={0}
             depthWrite={false}
+            depthTest={false}
           />
         </mesh>
       )}

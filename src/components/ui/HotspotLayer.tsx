@@ -33,6 +33,15 @@ export type HotspotLayerProps = {
  *      rotación, que el CameraRig publica como yaw/pitch),
  *   2. si queda detrás (z >= 0, porque la cámara mira hacia -Z) se esconde,
  *   3. división perspectiva con la distancia focal f = 1 / tan(fov/2).
+ *
+ * ── Asume la cámara en el CENTRO de la esfera, y hay un momento en que no lo está
+ *
+ * Durante los 0.6 s del empuje al cruzar una puerta (ver CameraRig), la cámara
+ * se desplaza hasta 40 unidades del origen y esta proyección —que solo conoce la
+ * orientación— queda unos píxeles corrida. No se ve: esos marcadores son los de
+ * la habitación que se está yendo, están desvaneciéndose con ella, y al terminar
+ * el empuje la cámara vuelve EXACTAMENTE a cero. Queda escrito para que nadie
+ * persiga ese desfase como si fuera un error de `math3d.ts`.
  */
 export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
   const engine = useTourEngine()

@@ -12,13 +12,17 @@ export function DebugAngles() {
 
   useEffect(() => {
     return engine.suscribirHud(() => {
-      const { yaw, pitch, fov } = engine.readout
+      const { yaw, pitch, fov, avance } = engine.readout
       if (ref.current) {
         const signedYaw = yaw > 180 ? yaw - 360 : yaw
+        /* `empuje` va al final y solo mientras dura, para que el texto de siempre
+           no cambie de forma. `rendimiento.mjs` lee este badge para medir que la
+           cámara sale del centro al cruzar una puerta y VUELVE exactamente a 0. */
         ref.current.textContent =
           `yaw ${signedYaw.toFixed(1).padStart(6)}°  ` +
           `pitch ${pitch.toFixed(1).padStart(5)}°  ` +
-          `fov ${fov.toFixed(0).padStart(3)}°`
+          `fov ${fov.toFixed(0).padStart(3)}°` +
+          `  empuje ${avance.toFixed(1).padStart(4)}`
       }
     })
   }, [engine])

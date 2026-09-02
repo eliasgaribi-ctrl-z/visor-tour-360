@@ -2,9 +2,40 @@
    useFrame es justamente el diseño: cero renders de React por frame. */
 import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
-import type { PerspectiveCamera } from 'three'
+import { Vector3, type PerspectiveCamera } from 'three'
 import { useTourEngine } from '../../lib/tourEngine'
 import { DEG, clamp, damp, shortestDelta, wrap360 } from '../../lib/math'
+import { yawPitchToVector3 } from '../../lib/math3d'
+import { useMenosMovimiento } from '../../lib/menosMovimiento'
+
+/**
+ * ============================================================================
+ *  EL EMPUJE: ATRAVESAR LA PUERTA
+ * ============================================================================
+ *
+ * Al tocar un punto de enlace, la cámara se desplaza unas unidades HACIA ese
+ * punto mientras dura el fundido a la habitación nueva, y regresa al centro.
+ * Dentro de una esfera de radio 500, 40 unidades hacia la puerta hacen que lo
+ * que hay al frente crezca ~8 %: se lee como dar dos pasos y cruzar, en vez de
+ * un corte entre dos fotos. Es el cambio que más sube la calidad percibida del
+ * visor, y son treinta líneas.
+ *
+ * La curva es una campana `sin²`: arranca y termina con velocidad cero, así que
+ * no hay tirón ni al salir ni al llegar, y a los 0.6 s la cámara está EXACTAMENTE
+ * en el origen otra vez — no "casi", porque los marcadores del HUD se proyectan
+ * asumiendo la cámara en el centro (ver HotspotLayer) y un residuo los dejaría
+ * despegados un píxel para siempre.
+ *
+ * Con `prefers-reduced-motion` no hay empuje: un desplazamiento de cámara es
+ * exactamente el tipo de movimiento que molesta a quien activó ese ajuste. El
+ * fundido corto de PanoSphere se encarga solo del cambio.
+ *
+ * Y la regla de oro del proyecto se conserva: mientras el empuje dura, este rig
+ * pide cuadro; cuando termina, deja de pedirlo, y el visor vuelve a cero dibujos
+ * por segundo. `rendimiento.mjs` lo mide.
+ */
+const EMPUJE = 40
+const DURACION_EMPUJE = 0.6
 
 export type CameraRigProps = {
   /** Grados por segundo con el joystick a tope. 90 ≈ un cuarto de vuelta por segundo. */
@@ -76,6 +107,7 @@ export function CameraRig({
 }: CameraRigProps) {
   const engine = useTourEngine()
   const invalidate = useThree((s) => s.invalidate)
+  const menosMovimiento = useMenosMovimiento()
 
   /* El canvas dibuja "a pedido" (ver Escena360). Aquí se conecta el timbre:
      desde este momento, cualquiera que le escriba al input puede pedir cuadro. */
@@ -93,6 +125,10 @@ export function CameraRig({
 
   const targetFov = useRef(fov)
   const currentFov = useRef(fov)
+
+  /* El empuje: hacia dónde y cuánto tiempo lleva. `Infinity` es "en reposo". */
+  const direccionEmpuje = useRef(new Vector3())
+  const tiempoEmpuje = useRef(Infinity)
 
   useFrame((state, delta) => {
     const camera = state.camera as PerspectiveCamera
@@ -161,8 +197,31 @@ export function CameraRig({
     yaw.current = damp(yaw.current, targetYaw.current, smoothing, dt)
     pitch.current = damp(pitch.current, targetPitch.current, smoothing, dt)
 
+    /* --------------------------------------------------------------- EMPUJE
+     * Un solo disparo: se toma la dirección de la puerta y arranca el reloj. Se
+     * consume aunque el aparato pida menos movimiento, para que no se quede
+     * pendiente y salte después. */
+    if (input.empuje) {
+      if (!menosMovimiento.current) {
+        yawPitchToVector3(input.empuje.yaw, input.empuje.pitch, 1, direccionEmpuje.current)
+        tiempoEmpuje.current = 0
+      }
+      input.empuje = null
+    }
+    let avance = 0
+    if (tiempoEmpuje.current < DURACION_EMPUJE) {
+      tiempoEmpuje.current += dt
+      const f = tiempoEmpuje.current / DURACION_EMPUJE
+      // Campana sin²(πf): 0 → EMPUJE → 0, con velocidad cero en los dos extremos.
+      if (f < 1) avance = EMPUJE * 0.5 * (1 - Math.cos(2 * Math.PI * f))
+    }
+
     /* ------------------------------------------------- APLICAR A LA CÁMARA */
-    camera.position.set(0, 0, 0)
+    if (avance > 0) {
+      camera.position.copy(direccionEmpuje.current).multiplyScalar(avance)
+    } else {
+      camera.position.set(0, 0, 0)
+    }
     camera.rotation.order = 'YXZ'
     camera.rotation.set(pitch.current * DEG, -yaw.current * DEG, 0)
 
@@ -170,6 +229,7 @@ export function CameraRig({
     readout.yaw = wrap360(yaw.current)
     readout.pitch = pitch.current
     readout.fov = currentFov.current
+    readout.avance = avance
 
     /* ------------------------------------------------- ¿HACE FALTA OTRO CUADRO?
      * Mientras el dedo empuje o la cámara siga acomodándose hacia su objetivo,
@@ -184,7 +244,9 @@ export function CameraRig({
       input.axis.y !== 0 ||
       Math.abs(targetYaw.current - yaw.current) > 0.05 ||
       Math.abs(targetPitch.current - pitch.current) > 0.05 ||
-      Math.abs(targetFov.current - currentFov.current) > 0.05
+      Math.abs(targetFov.current - currentFov.current) > 0.05 ||
+      // El empuje es una animación: mientras dure hay que seguir pidiendo.
+      tiempoEmpuje.current < DURACION_EMPUJE
     if (enMovimiento) engine.invalidar()
   })
 

@@ -951,6 +951,31 @@ contra la utilidad del mismo nombre, que vive en `utilities`.
 
 ---
 
+### Atravesar la puerta, sin romper la regla
+
+Al tocar un punto de enlace, la cámara se desplaza hasta 40 unidades hacia la
+puerta mientras dura el fundido y regresa al centro: dentro de una esfera de
+radio 500 se lee como dar dos pasos y cruzar, en vez de un corte entre dos fotos.
+Es el detalle que más sube la calidad percibida, y está hecho con la regla de oro
+en mente: la curva es una campana `sin²` de 0.6 s que termina en **cero exacto**
+—no un `damp` que se acerca para siempre—, mientras dura el rig pide cuadro, y
+cuando termina deja de pedirlo. `rendimiento.mjs` lee el desplazamiento en el
+badge de desarrollo y exige que suba, que vuelva a `0.0`, y que parado después
+sigan siendo 0 dibujos/s.
+
+Solo el punto de enlace empuja: desde la barra de habitaciones se salta de cuarto
+en cuarto y no se cruza nada. Y con `prefers-reduced-motion` no hay empuje — un
+desplazamiento de cámara es justo lo que molesta a quien pidió menos movimiento.
+
+Un efecto secundario que hay que saber: las dos esferas del fundido tienen ahora
+el mismo radio. Con la cámara en el centro exacto, el `radius * 0.98` de antes no
+cambiaba ni un píxel (la proyección depende solo de la dirección), pero con la
+cámara descentrada dos radios distintos proyectan distinto y la misma pared
+aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
+`renderOrder` con `depthTest` apagado en la entrante.
+
+---
+
 ## 12. Qué se verificó
 
 ### Los nueve arneses, y por qué son arneses y no un framework

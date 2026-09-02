@@ -90,7 +90,7 @@ export function TourViewer({
   )
 
   const goToScene = useCallback(
-    (id: string, arriveYaw?: number) => {
+    (id: string, arriveYaw?: number, puerta?: { yaw: number; pitch: number }) => {
       const next = tour.scenes.find((s) => s.id === id)
       if (!next || next.id === sceneId) return
       setInfo(null)
@@ -98,6 +98,10 @@ export function TourViewer({
       setSceneId(next.id)
       // La cámara viaja al frente de la nueva habitación por el camino corto.
       engine.input.goto = { yaw: arriveYaw ?? next.initialYaw ?? 0, pitch: 0 }
+      /* Y si se vino por una PUERTA, la atraviesa: el rig empuja la cámara hacia
+         el punto tocado mientras dura el fundido. Desde la barra de habitaciones
+         no hay puerta —se salta de cuarto en cuarto— y no se empuja. */
+      if (puerta) engine.input.empuje = puerta
       engine.invalidar()
     },
     [engine, sceneId, tour.scenes],
@@ -106,8 +110,11 @@ export function TourViewer({
   const handleHotspot = useCallback(
     (hotspot: Hotspot) => {
       dismissHint()
-      if (hotspot.kind === 'link') goToScene(hotspot.to, hotspot.arriveYaw)
-      else setInfo({ title: hotspot.label, body: hotspot.body })
+      if (hotspot.kind === 'link') {
+        goToScene(hotspot.to, hotspot.arriveYaw, { yaw: hotspot.yaw, pitch: hotspot.pitch })
+      } else {
+        setInfo({ title: hotspot.label, body: hotspot.body })
+      }
     },
     [dismissHint, goToScene],
   )
