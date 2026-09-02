@@ -7,8 +7,9 @@ import { useWheelZoom } from '../../lib/useDragLook'
 import type { Ruta } from '../../lib/useHashRoute'
 import type { Hotspot } from '../../lib/types'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
-import { blobUrl, getTour, saveTour } from '../../lib/store/tours'
+import { getTour, saveTour } from '../../lib/store/tours'
 import { newId } from '../../lib/store/ids'
+import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { TourEngineProvider, useCreateTourEngine } from '../../lib/tourEngine'
 import { wrap180 } from '../../lib/math'
 import { screenToYawPitch } from '../../lib/math3d'
@@ -60,7 +61,6 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
   const [webgl] = useState(detectWebGL)
 
   const [tour, setTour] = useState<StoredTour | null | 'no-existe'>(null)
-  const [url, setUrl] = useState<string | null>(null)
   const [cargando, setCargando] = useState(true)
   const [seleccion, setSeleccion] = useState<string | null>(null)
   const [borrador, setBorrador] = useState<Borrador | null>(null)
@@ -72,20 +72,11 @@ export function EditorPuntos({ tourId, sceneId, ir }: EditorPuntosProps) {
   const escena: StoredScene | null =
     tour && tour !== 'no-existe' ? (tour.scenes.find((s) => s.id === sceneId) ?? null) : null
 
+  const url = useBlobUrl(escena?.imageId)
+
   useEffect(() => {
     void getTour(tourId).then((t) => setTour(t ?? 'no-existe'))
   }, [tourId])
-
-  useEffect(() => {
-    if (!escena) return
-    let vivo = true
-    void blobUrl(escena.imageId).then((u) => {
-      if (vivo) setUrl(u)
-    })
-    return () => {
-      vivo = false
-    }
-  }, [escena])
 
   const aplicar = useCallback(
     async (cambiar: (scene: StoredScene) => StoredScene, aviso?: string) => {

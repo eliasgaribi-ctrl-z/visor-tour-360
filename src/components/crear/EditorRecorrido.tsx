@@ -4,8 +4,9 @@ import { useCallback, useEffect, useState } from 'react'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
-import { blobUrl, deleteImage, getTour, saveTour } from '../../lib/store/tours'
+import { deleteImage, getTour, saveTour } from '../../lib/store/tours'
 import { entregarArchivo, exportarTour, PaqueteError } from '../../lib/store/paquete'
+import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { contextoSeguro } from '../../lib/capture/camera'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
@@ -15,16 +16,7 @@ export type EditorRecorridoProps = {
 }
 
 function Miniatura({ scene }: { scene: StoredScene }) {
-  const [url, setUrl] = useState<string | null>(null)
-  useEffect(() => {
-    let vivo = true
-    void blobUrl(scene.thumbId ?? scene.imageId).then((u) => {
-      if (vivo) setUrl(u)
-    })
-    return () => {
-      vivo = false
-    }
-  }, [scene.thumbId, scene.imageId])
+  const url = useBlobUrl(scene.thumbId ?? scene.imageId)
 
   return (
     <div className="h-14 w-20 shrink-0 overflow-hidden rounded-lg bg-black/40">

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Ruta } from '../../lib/useHashRoute'
 import type { TourSummary } from '../../lib/store/types'
 import {
-  blobUrl,
   createTour,
   deleteTour,
   listTours,
@@ -14,6 +13,7 @@ import {
 import { almacenamientoUtilizable } from '../../lib/store/tours'
 import { formatBytes, requestPersistence, storageInfo } from '../../lib/store/quota'
 import { importarTour, PaqueteError } from '../../lib/store/paquete'
+import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
 export type InicioProps = {
@@ -33,21 +33,7 @@ function cuando(ms: number): string {
 }
 
 function Portada({ coverId }: { coverId?: string }) {
-  const [url, setUrl] = useState<string | null>(null)
-
-  useEffect(() => {
-    let vivo = true
-    if (!coverId) {
-      setUrl(null)
-      return
-    }
-    void blobUrl(coverId).then((u) => {
-      if (vivo) setUrl(u)
-    })
-    return () => {
-      vivo = false
-    }
-  }, [coverId])
+  const url = useBlobUrl(coverId)
 
   return (
     <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-black/40">

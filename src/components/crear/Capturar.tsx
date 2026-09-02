@@ -54,6 +54,7 @@ import { PanoramaStitcher } from '../../lib/capture/stitcher'
 import { detectWebGL } from '../tour/Escena360'
 
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla } from './ui'
+import { sugerirNombre } from './nombres'
 import { GuiaCaptura } from './GuiaCaptura'
 
 /** A cuántos grados del punto guía se considera que ya estás apuntando ahí. */
@@ -1024,12 +1025,4 @@ export function Capturar({ tourId, sceneId, ir }: CapturarProps) {
     const id = cercano && cercano.distancia < TOLERANCIA_DEG * 1.6 ? cercano.punto.id : null
     tomarFoto(id, quaternion, yaw, pitch)
   }
-}
-
-function sugerirNombre(tour: StoredTour | null): string {
-  const usados = new Set((tour?.scenes ?? []).map((s) => s.name.toLowerCase()))
-  for (const nombre of ['Sala', 'Cocina', 'Comedor', 'Recámara', 'Baño', 'Patio', 'Cochera']) {
-    if (!usados.has(nombre.toLowerCase())) return nombre
-  }
-  return `Habitación ${(tour?.scenes.length ?? 0) + 1}`
 }
