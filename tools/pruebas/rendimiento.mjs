@@ -285,6 +285,53 @@ if (!a) {
   const vuelve = Math.abs(centrado.yaw) < 1 && Math.abs(centrado.pitch) < 1 && Math.abs(centrado.fov - 75) < 2
   console.log(`  ${'reencuadrar'.padEnd(28)} ${vuelve ? 'vuelve a 0/0/75' : 'NO VOLVIÓ'}`)
   if (!vuelve) bien = false
+
+  /* ------------------------------------------------------------------------
+   * REENCUADRAR DOS VECES SEGUIDAS  ·  regresión de un bug real
+   *
+   * "Reencuadrar" tiene que aterrizar en 75° EXACTOS, y no lo hacía. Pedía el
+   * cambio como un delta calculado contra `readout.fov`, que es el FOV
+   * SUAVIZADO y va por detrás del objetivo. Con el zoom todavía acomodándose,
+   * el delta salía mal:
+   *
+   *   estando en 45 y subiendo hacia 75, el segundo toque calculaba
+   *   75 − 50 = +25  sobre un objetivo que ya era 75  →  100, el tope.
+   *
+   * O sea que tocarlo dos veces dejaba la cámara en el FOV MÁS ABIERTO
+   * posible, justo lo contrario de reencuadrar. Ahora el rig recibe el destino
+   * ABSOLUTO (`input.gotoFov`) y el segundo toque es idempotente.
+   *
+   * Los dos toques van en el MISMO task de JavaScript, con `evaluate` y no con
+   * dos `click()` de Playwright, y eso es lo que hace la prueba fiable: entre
+   * ellos no se dibuja ni un cuadro, así que `readout.fov` no alcanza a
+   * moverse y el delta se suma dos veces enteras. Con dos clicks normales la
+   * prueba NO sirve —se probó— porque con la CPU limitada 4x pasan cientos de
+   * milisegundos entre uno y otro, el zoom ya terminó, el delta sale 0 y el
+   * segundo toque no hace nada. Un bug de carrera hay que provocarlo, no
+   * esperar a tener suerte.
+   * ---------------------------------------------------------------------- */
+  const acercar = page.getByRole('button', { name: 'Acercar' })
+  for (let i = 0; i < 4; i++) await acercar.click()
+  await page.waitForTimeout(900)
+  const acercado = await angulos()
+
+  await page.evaluate(() => {
+    const boton = [...document.querySelectorAll('button')].find(
+      (b) => b.getAttribute('aria-label') === 'Reencuadrar' || b.textContent?.includes('Reencuadrar'),
+    )
+    if (!boton) throw new Error('no se encontró el botón de reencuadrar')
+    boton.click()
+    boton.click()
+  })
+  await page.waitForTimeout(1800)
+  const doble = await angulos()
+
+  const exacto = Math.abs(doble.fov - 75) < 1
+  console.log(
+    `  ${'reencuadrar x2 rápido'.padEnd(28)} ${(exacto ? 'fov 75 exacto' : 'SE PASÓ').padEnd(10)} ` +
+      `${acercado.fov}\u2192${doble.fov} (esperado 75)`,
+  )
+  if (!exacto) bien = false
 }
 
 /* La foto de la habitación nueva tiene que APARECER. Se mide con una captura

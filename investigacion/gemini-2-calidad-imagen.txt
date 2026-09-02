@@ -1,0 +1,112 @@
+Eres un ingeniero de visión por computadora especializado en panorámicas y
+fotogrametría. Necesito una investigación técnica actualizada a septiembre de
+2026, con fuentes y fecha en cada afirmación, y con matemática explícita cuando
+aplique.
+
+CONTEXTO DEL PROYECTO
+App web que arma panorámicas equirectangulares 360×180 **desde el navegador de un
+teléfono**. El usuario gira sobre su propio eje siguiendo puntos guía en pantalla;
+la app captura ~30 tomas con `getUserMedia`, lee la orientación del teléfono con
+DeviceOrientation, y cose todo en la GPU con WebGL (proyección inversa
+equirectangular, escrita a mano en un shader). Resultado: una equirectangular de
+4096×2048 en JPEG q80, ~1 MB.
+Ya está verificado con una prueba de extremo a extremo que reconstruye una
+panorámica conocida: cobertura de la esfera 100.00%, diferencia media contra el
+original 1.40 de 255 niveles, 19 ms de costura por toma.
+Restricciones: todo corre en el teléfono, sin servidor. No se puede usar OpenCV
+nativo. Piso Safari 13. Techo de memoria de video 384 MB.
+Se conoce por sensor el ladeo (roll), la elevación (pitch) y el rumbo (yaw) de
+cada toma, con el error típico de un magnetómetro/giroscopio de celular.
+
+PREGUNTAS
+
+A) CORRECCIÓN DE NIVEL (enderezar el horizonte)
+   DATO IMPORTANTE QUE YA VERIFIQUÉ, para que no me contestes lo obvio: la costura
+   YA mete el cuaternión COMPLETO de cada toma (ladeo incluido) en la proyección
+   inversa. O sea que una panorámica capturada ya sale nivelada contra la gravedad
+   que reporta el acelerómetro. Lo que me queda son DOS problemas distintos:
+     (i)  un error GLOBAL de referencia de gravedad, de 1 a 3 grados;
+     (ii) las fotos IMPORTADAS por el usuario, donde no hay ni un dato de sensor y
+          el ladeo puede ser de 5 a 8 grados.
+   Las preguntas van sobre esos dos, no sobre "aplicar el ladeo conocido".
+
+1. Cuando alguien gira sobre su eje sosteniendo el teléfono a pulso y el eje de
+   rotación queda inclinado, ¿qué deformación produce eso en la equirectangular?
+   Describe la firma visual (¿horizonte senoidal? ¿de qué amplitud?) y la
+   matemática. ¿Cuánto de eso queda DESPUÉS de corregir por el cuaternión de cada
+   toma, y cuál es el error residual típico de la referencia de gravedad de un
+   acelerómetro de celular?
+2. Dos caminos: (a) corregir durante la costura, metiendo la rotación en la
+   proyección; (b) dejar la panorámica ladeada y corregirla al VERLA, rotando la
+   esfera del visor con un cuaternión. Compara: costo, reversibilidad, pérdida de
+   calidad por remuestreo, y qué hacen los productos reales. Ojo al caso (ii) de
+   arriba: para una foto importada no hay tomas que recoser, así que corregir "en
+   la costura" significaría remuestrear una 4096×2048 y recomprimirla.
+3. Si no hubiera dato de sensor: algoritmos de auto-nivelación por contenido
+   (detección de líneas verticales, vanishing points, horizon line estimation,
+   "upright adjustment"). ¿Alguno corre en tiempo razonable en JS/WebGL en un
+   celular? Nombra papers y librerías con su año.
+4. Cómo se VERIFICA numéricamente que una panorámica quedó a nivel. Dame una
+   métrica que se pueda calcular en código.
+
+B) ALINEACIÓN FINA POR CORRELACIÓN (quitar el error residual de los sensores)
+   DATO QUE YA TENGO: en el proyecto ya está escrita y verificada una correlación
+   cruzada NORMALIZADA en 1-D con afinado subpíxel por parábola de tres puntos (se
+   usa hoy para calibrar el campo de visión real del lente, y su prueba de banco da
+   12 de 12 casos dentro de 0.7°). Así que mi hipótesis es que extenderla a 2-D en
+   pirámide es mucho más barato que meter una FFT. Confírmalo o túmbalo.
+   La pregunta 9 es la que más me importa de toda esta sección.
+
+5. Compara para este caso: (a) phase correlation por FFT, (b) suma de diferencias
+   absolutas en pirámide de imágenes (coarse-to-fine), (c) detección de features
+   tipo ORB/AKAZE + RANSAC, (d) flujo óptico denso. Para cada una: precisión
+   esperada en píxeles, costo en ms para dos tomas de ~640×480 en un celular de
+   gama media, complejidad de implementación en JS/WebGL puro, y robustez cuando
+   hay poca textura (una pared blanca de una casa vacía — caso MUY común aquí).
+6. El giro entre dos tomas consecutivas del plan de captura es grande (5° a 16°).
+   ¿Eso rompe la correlación? ¿Cuál es el traslape mínimo que necesita cada
+   método?
+7. **Paralaje**: si la persona gira sobre su propio eje en vez de sobre el nodal
+   point del lente, hay paralaje irreducible. ¿Cuánto error en píxeles produce un
+   desplazamiento del centro de rotación de ~10 cm, para objetos a 1 m, 3 m y
+   10 m? Da la fórmula. ¿La alineación por correlación puede quitarlo o solo
+   puede repartirlo?
+8. Si el paralaje es irreducible: ¿qué hacen los productos comerciales? (seam
+   carving / graph-cut para poner la costura donde menos se note, multi-band
+   blending, deghosting). ¿Cuál de esos es realista implementar en WebGL?
+9. Veredicto honesto: en una casa vacía, con paredes lisas, ¿la alineación por
+   correlación mejora de verdad el resultado sobre solo-sensores, o es el punto
+   de menor retorno del proyecto?
+
+C) MOSAICOS MULTIRRESOLUCIÓN Y FORMATOS
+10. Para panorámicas mayores a 8K en web: compara equirectangular en tiles vs.
+    cubemap de 6 caras en tiles. Cuál usan Marzipano, Pannellum multires, Photo
+    Sphere Viewer, Krpano, Matterport. Estructura de carpetas y niveles típica.
+11. ¿Se puede generar el árbol de tiles EN EL TELÉFONO, o hay que hacerlo en un
+    servidor? Da el costo estimado (tiempo y memoria pico) de cortar una 8192×4096
+    en tiles de 512 px con canvas en un iPhone de gama media.
+    DATO QUE YA TENGO: Safari en iOS topa un canvas en 16,777,216 px de área, y un
+    equirectangular 8K son 8192×4096 = 33.5 Mpx, o sea que NO cabe en un canvas ni
+    para partirlo. Confirma ese límite en 2026 (¿cambió? ¿es distinto en iPad?) y
+    dime si hay alguna forma de partir una imagen así en el navegador sin pasar por
+    un canvas del tamaño completo (¿`createImageBitmap` con `resizeWidth` por
+    región? ¿WebCodecs? ¿decodificación progresiva por tiras?).
+12. Límites reales de `MAX_TEXTURE_SIZE` en iOS y Android en 2026. ¿A partir de
+    qué resolución de panorámica es obligatorio pasar a tiles?
+13. Texturas comprimidas para GPU (KTX2/Basis Universal, ASTC, ETC2): ¿cuánta
+    memoria de video ahorran de verdad para una equirectangular? ¿Cuánto pesa el
+    encoder wasm de Basis en 2026 y cuántos segundos tarda en codificar una
+    4096×2048 en un celular? ¿Existe ya una alternativa más ligera?
+14. AVIF y JPEG XL en septiembre de 2026: ¿ya se pueden usar para panorámicas en
+    Safari iOS y Chrome Android? ¿Cuánto peso ahorran contra JPEG q80 a calidad
+    percibida igual? ¿El tiempo de decodificación es peor y cuánto?
+15. ¿Qué resolución de panorámica es "suficiente" percibida, en función del FOV
+    del visor y el ancho de pantalla? Da la fórmula de píxeles de textura por
+    píxel de pantalla y el número a partir del cual subir resolución ya no se ve.
+
+FORMATO DE SALIDA
+Para cada pregunta numerada: respuesta directa (2-6 renglones), la matemática o
+los números cuando los pida, y luego "Fuente:" con URL y fecha. Si algo no lo
+puedes verificar, escribe "NO VERIFICADO". Cierra con "RECOMENDACIÓN" de máximo
+12 renglones ordenando las tres áreas (A, B, C) por relación valor/esfuerzo, y
+diciendo explícitamente cuál dejarías para después y por qué.

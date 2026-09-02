@@ -44,6 +44,27 @@ export type LookInput = {
   dFov: number
 
   /**
+   * FOV ABSOLUTO de destino, en grados. Un solo uso: el rig lo toma, lo fija como
+   * objetivo y lo pone en null.
+   *
+   * Existe aparte de `dFov` porque los dos resuelven problemas distintos, y
+   * confundirlos era un bug de verdad. `dFov` es un delta y sirve para los gestos
+   * continuos (rueda, pellizco): cada evento empuja un poco más y el usuario ve el
+   * resultado mientras lo hace, así que un error se autocorrige en el evento
+   * siguiente.
+   *
+   * "Reencuadrar" no es así: es un disparo único que tiene que aterrizar en un
+   * valor EXACTO. Expresarlo como delta obliga a quien llama a restar el FOV
+   * actual… y el único FOV que la UI puede leer es `readout.fov`, que es el
+   * SUAVIZADO y va por detrás del objetivo. Tocar Reencuadrar mientras el zoom se
+   * estaba acomodando aterrizaba en un FOV que no era 75, y tocarlo dos veces
+   * rápido se pasaba de largo hasta topar en `maxFov`.
+   *
+   * Es el mismo trato que `goto` para el yaw y el pitch, y por la misma razón.
+   */
+  gotoFov: number | null
+
+  /**
    * Destino animado. Si no es null, el rig interpola hacia ahí y lo limpia al llegar.
    * Cualquier input manual del usuario lo cancela.
    */
@@ -125,7 +146,7 @@ export const createTourEngine = (): TourEngine => {
   }
 
   return {
-    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, goto: null },
+    input: { axis: { x: 0, y: 0 }, dragYaw: 0, dragPitch: 0, dFov: 0, gotoFov: null, goto: null },
     readout: { yaw: 0, pitch: 0, fov: 75 },
     invalidar,
     conectarRender: (fn) => {

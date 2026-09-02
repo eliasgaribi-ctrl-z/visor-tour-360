@@ -112,6 +112,13 @@ export function CameraRig({
       targetFov.current = clamp(targetFov.current + input.dFov, minFov, maxFov)
       input.dFov = 0
     }
+    /* El destino absoluto va DESPUÉS del delta, y a propósito: si en el mismo
+       cuadro llegan un pellizco y un "Reencuadrar", manda el reencuadre. Es un
+       botón explícito contra un gesto continuo. */
+    if (input.gotoFov !== null) {
+      targetFov.current = clamp(input.gotoFov, minFov, maxFov)
+      input.gotoFov = null
+    }
     currentFov.current = damp(currentFov.current, targetFov.current, 10, dt)
     if (Math.abs(camera.fov - currentFov.current) > 1e-3) {
       camera.fov = currentFov.current

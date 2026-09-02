@@ -114,7 +114,7 @@ export function TourViewer({
 
   const resetView = useCallback(() => {
     engine.input.goto = { yaw: scene.initialYaw ?? 0, pitch: 0 }
-    engine.input.dFov += BASE_FOV - engine.readout.fov
+    engine.input.gotoFov = BASE_FOV
     engine.invalidar()
   }, [engine, scene.initialYaw])
 

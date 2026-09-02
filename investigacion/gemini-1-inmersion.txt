@@ -1,0 +1,80 @@
+Eres un ingeniero senior de gráficos web. Necesito una investigación técnica
+actualizada a septiembre de 2026, con fuentes y fecha en cada afirmación.
+
+CONTEXTO DEL PROYECTO
+Visor de recorridos virtuales 360 (fotos equirectangulares 2:1, no geometría 3D).
+Stack: React 19, TypeScript, Vite 8, three.js 0.185, @react-three/fiber 9.
+Sitio 100% estático servido por GitHub Pages (sin backend). Mobile-first: el uso
+real es un comprador de casa abriendo un link en el Safari de su iPhone.
+Piso de compatibilidad: Safari 13 (iOS 13). Techo de memoria de video conocido:
+Safari en iOS mata la pestaña alrededor de 384 MB.
+Detalle importante de arquitectura: el visor NO dibuja 60 fps siempre. Tiene
+render "a pedido" (on-demand): cuando la cámara está quieta dibuja 0 cuadros por
+segundo, para no calentar el teléfono. Un loop obligatorio rompería eso.
+
+PREGUNTAS
+
+A) GIROSCOPIO EN EL NAVEGADOR (mirar alrededor moviendo el teléfono)
+1. Estado en septiembre de 2026 de `DeviceOrientationEvent` y de la
+   Generic Sensor API (`AbsoluteOrientationSensor`, `RelativeOrientationSensor`)
+   en: Safari iOS, Chrome Android, Firefox Android. ¿Cuál es la recomendada hoy y
+   cuál está en camino de deprecarse?
+2. `DeviceOrientationEvent.requestPermission()` en iOS: ¿sigue exigiendo gesto
+   del usuario y https? ¿Cambió algo en iOS 17/18/19/26? ¿Qué pasa exactamente
+   si se llama sin gesto? ¿Se puede saber de antemano si el permiso ya se dio?
+3. `webkitCompassHeading` vs. `alpha`: ¿cuál da norte absoluto y cuál da un cero
+   arbitrario? ¿Cómo se combinan en un visor que ya tiene brújula?
+4. El problema del *screen orientation offset*: cómo corregir la lectura cuando
+   el teléfono está en horizontal. Da la matemática, no solo la idea.
+5. Suavizado: qué filtro se usa en la práctica para que el giroscopio no tiemble
+   (media móvil, exponencial, complementario, Kalman ligero). Qué constante de
+   tiempo se usa en visores 360 reales y por qué.
+6. Cómo conviven giroscopio y arrastre con el dedo en el mismo visor sin pelearse.
+   Patrones concretos usados por Pannellum, Photo Sphere Viewer y Marzipano:
+   ¿el giroscopio se apaga al tocar? ¿se suma como offset? ¿se reancla?
+7. Riesgo de mareo/accesibilidad: qué recomienda hacer con `prefers-reduced-motion`.
+
+B) WEBXR PARA UNA FOTO 360 MONOSCÓPICA
+   OJO: ya tengo una conclusión preliminar y lo que necesito es que la CONFIRMES O
+   LA TUMBES CON FUENTE, no que me des la razón. Mi conclusión preliminar es:
+   "en septiembre de 2026 Safari en iOS/iPadOS no implementa WebXR (solo visionOS),
+   y Chrome en Android no ofrece `immersive-vr` en teléfonos porque el soporte
+   Cardboard se retiró y solo queda `immersive-ar` vía ARCore; por lo tanto el
+   público de un modo VR aquí es Quest Browser / Pico / Vision Pro, o sea
+   prácticamente cero para un link que se manda por WhatsApp."
+   Si eso es correcto, dilo y dame la fuente. Si está mal o incompleto, corrígelo.
+
+8. Estado de WebXR en septiembre de 2026: ¿Safari iOS lo soporta en modo
+   `immersive-vr`? ¿Y `immersive-ar`? ¿Vision Pro? ¿Quest Browser? ¿Android?
+   ¿Qué porcentaje real de visitantes móviles podría entrar a modo VR?
+9. `@react-three/xr`: versión actual, peso real minificado+gzip del paquete y de
+   sus dependencias añadidas, y si es tree-shakeable. ¿Se puede cargar en un
+   chunk aparte y no tocar el bundle de la pantalla de lista?
+10. Verdad incómoda: para una panorámica MONOSCÓPICA (una sola foto, sin par
+    estéreo), ¿qué gana de verdad el usuario en VR más allá de ver la misma
+    imagen plana en ambos ojos? ¿Vale la pena? Dame el argumento a favor y el
+    argumento en contra con honestidad.
+11. En una sesión XR el navegador exige dibujar en cada `XRFrame`. ¿Hay alguna
+    forma de mantener render on-demand dentro de XR, o hay que aceptar el loop
+    completo mientras dure la sesión? ¿Cómo lo resuelven otros?
+12. `immersive-vr` vs. el viejo "modo cardboard" (dos viewports lado a lado con
+    barrel distortion a mano). Para un comprador de casa con un visor de cartón
+    de $200 pesos, ¿cuál llega a más gente en 2026?
+
+C) TRANSICIONES ENTRE HABITACIONES
+13. Cómo se hace hoy una transición que no se sienta como un corte, en un visor
+    de fotos 360 sin geometría: fundido cruzado, zoom-through hacia el hotspot,
+    desenfoque de movimiento, "puerta" con máscara. Qué usa Matterport, qué usa
+    Kuula, qué usa Zillow 3D Home. Describe el efecto y cómo se implementa con
+    dos esferas y un shader.
+14. ¿Cuánto cuesta cada opción en memoria de video? (recuerda el techo de 384 MB:
+    dos equirectangulares de 4096×2048 vivas a la vez ya son ~90 MB con mipmaps).
+15. Autorrotación: qué velocidad y qué comportamiento de "se detiene al tocar,
+    se reanuda a los N segundos" usan los visores comerciales. Números concretos.
+
+FORMATO DE SALIDA
+Para cada pregunta numerada: respuesta directa primero (2-5 renglones), luego
+"Fuente:" con URL y fecha de publicación o de última actualización. Si un dato no
+lo puedes verificar, escribe explícitamente "NO VERIFICADO" en vez de estimar.
+Cierra con una sección "RECOMENDACIÓN" de máximo 10 renglones: qué harías tú
+primero, qué segundo, y qué NO harías, con la razón.
