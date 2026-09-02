@@ -110,6 +110,17 @@ const _quat = new THREE.Quaternion()
 const _dir = new THREE.Vector3()
 
 /**
+ * Umbral de "está detrás de la cámara" del visor.
+ *
+ * La captura usa -0.02 y el visor -0.05, y la diferencia no es descuido: en el
+ * visor cada marcador es un botón de 44 px, y esconderlo un poco antes de que la
+ * división de la perspectiva se vuelva loca se ve mejor que dejarlo estirarse
+ * hacia el borde. En la captura los puntos guía son mira fina y conviene que
+ * duren hasta el último momento.
+ */
+export const CORTE_VISOR = -0.05
+
+/**
  * (yaw, pitch) de la escena → punto de la PANTALLA.
  *
  * Es la ida de `screenToYawPitch`, y la usan tanto los hotspots del visor como
@@ -128,20 +139,15 @@ export const yawPitchToScreen = (
   width: number,
   height: number,
 ): { x: number; y: number } | null => {
-  const aspect = width / height
-  const focal = 1 / Math.tan((camera.fov * DEG) / 2)
-
+  // El visor nunca ladea la cámara, así que la orientación se arma con yaw y
+  // pitch nada más; el resto lo hace `yawPitchToScreenQ`, que es la ÚNICA copia
+  // de la fórmula que queda en el proyecto.
   _euler.set(camera.pitch * DEG, -camera.yaw * DEG, 0, 'YXZ')
   _quat.setFromEuler(_euler).invert()
-  yawPitchToVector3(yawDeg, pitchDeg, 1, _dir).applyQuaternion(_quat)
-
-  if (_dir.z > -0.05) return null
-
-  const ndcX = (_dir.x / -_dir.z) * (focal / aspect)
-  const ndcY = (_dir.y / -_dir.z) * focal
-  return { x: (ndcX * 0.5 + 0.5) * width, y: (1 - (ndcY * 0.5 + 0.5)) * height }
+  return yawPitchToScreenQ(yawDeg, pitchDeg, _quat, camera.fov, width, height, _dir, CORTE_VISOR)
 }
 
+/** Umbral de "está detrás de la cámara" del visor. Ver `yawPitchToScreen`. */
 /**
  * (yaw, pitch) → pantalla, pero orientando la cámara con un CUATERNIÓN completo.
  *
@@ -152,7 +158,13 @@ export const yawPitchToScreen = (
  * que se ve en la pantalla en cuanto alguien inclina un poco la muñeca.
  *
  * `inversa` es la orientación de la cámara YA invertida (mundo → cámara), que
- * es lo que de verdad se usa, y así no se recalcula en cada punto.
+ * es lo que de verdad se usa, y así no se recalcula en cada punto. Quien proyecta
+ * muchos puntos por cuadro —los hotspots del visor, los puntos guía— la calcula
+ * una vez fuera del bucle y la pasa: eso es la razón de que esta versión exista
+ * además de `yawPitchToScreen`.
+ *
+ * `corte` es el umbral de "detrás de la cámara". El default -0.02 es el de la
+ * captura; el visor pasa `CORTE_VISOR`. Ver el comentario de esa constante.
  */
 export const yawPitchToScreenQ = (
   yawDeg: number,
@@ -162,12 +174,13 @@ export const yawPitchToScreenQ = (
   width: number,
   height: number,
   out = new THREE.Vector3(),
+  corte = -0.02,
 ): { x: number; y: number } | null => {
   const aspect = width / height
   const focal = 1 / Math.tan((fovVerticalDeg * DEG) / 2)
 
   yawPitchToVector3(yawDeg, pitchDeg, 1, out).applyQuaternion(inversa)
-  if (out.z > -0.02) return null
+  if (out.z > corte) return null
 
   const ndcX = (out.x / -out.z) * (focal / aspect)
   const ndcY = (out.y / -out.z) * focal

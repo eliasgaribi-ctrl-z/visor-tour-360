@@ -3,7 +3,7 @@ import * as THREE from 'three'
 import type { Hotspot } from '../../lib/types'
 import { useTourEngine } from '../../lib/tourEngine'
 import { observarTamano } from '../../lib/observarTamano'
-import { DEG, yawPitchToVector3 } from '../../lib/math'
+import { CORTE_VISOR, DEG, yawPitchToScreenQ } from '../../lib/math'
 
 export type HotspotLayerProps = {
   hotspots: Hotspot[]
@@ -70,10 +70,11 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
       if (!width || !height) return
 
       const { yaw, pitch, fov } = engine.readout
-      const aspect = width / height
-      const focal = 1 / Math.tan((fov * DEG) / 2)
 
-      // Inversa de la orientación de la cámara (mismo Euler que el CameraRig).
+      /* La inversa de la orientación de la cámara se calcula UNA vez y se le
+         pasa a cada punto. Es la razón de usar `yawPitchToScreenQ` y no
+         `yawPitchToScreen`: la segunda la rearmaría por marcador, sesenta veces
+         por segundo. Mismo Euler que el CameraRig, que es quien manda. */
       euler.set(pitch * DEG, -yaw * DEG, 0, 'YXZ')
       quaternion.setFromEuler(euler).invert()
 
@@ -81,10 +82,19 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
         const node = nodes.current.get(hotspot.id)
         if (!node) continue
 
-        yawPitchToVector3(hotspot.yaw, hotspot.pitch, 1, direction).applyQuaternion(quaternion)
+        const p = yawPitchToScreenQ(
+          hotspot.yaw,
+          hotspot.pitch,
+          quaternion,
+          fov,
+          width,
+          height,
+          direction,
+          CORTE_VISOR,
+        )
 
         // Detrás de la cámara (o casi al ras): fuera.
-        if (direction.z > -0.05) {
+        if (!p) {
           if (node.style.visibility !== 'hidden') {
             node.style.visibility = 'hidden'
             node.style.opacity = '0'
@@ -92,14 +102,9 @@ export function HotspotLayer({ hotspots, onSelect }: HotspotLayerProps) {
           continue
         }
 
-        const ndcX = (direction.x / -direction.z) * (focal / aspect)
-        const ndcY = (direction.y / -direction.z) * focal
-        const x = (ndcX * 0.5 + 0.5) * width
-        const y = (1 - (ndcY * 0.5 + 0.5)) * height
-
         node.style.visibility = 'visible'
         node.style.opacity = '1'
-        node.style.transform = `translate3d(${x}px, ${y}px, 0) translate(-50%, -50%)`
+        node.style.transform = `translate3d(${p.x}px, ${p.y}px, 0) translate(-50%, -50%)`
       }
     })
 
