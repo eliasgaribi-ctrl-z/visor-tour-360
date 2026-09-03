@@ -245,7 +245,7 @@ const botonPublicar = pg.getByRole('button', { name: 'Publicar y obtener el link
 revisar('el editor ofrece publicar (VITE_PUBLICAR_BASE está puesta)', await botonPublicar.isVisible())
 
 await botonPublicar.click()
-await pg.getByLabel('Clave', { exact: true }).fill(CLAVE)
+await pg.getByLabel('Código', { exact: true }).fill(CLAVE)
 await pg.getByRole('button', { name: 'Guardar y publicar' }).click()
 
 const patronLink = new RegExp(`^${escapar(WORKER)}/t/[a-z2-9]{26}$`)
@@ -468,6 +468,134 @@ const sinFotos = await fetch(`${WORKER}/api/publicar/${llave2}`, {
   body: JSON.stringify({ title: 'x', startSceneId: 'a', scenes: [{ id: 'a', name: 'a', foto: '000.jpg', hotspots: [] }] }),
 })
 revisar('un manifiesto cuyas fotos no se subieron no se enciende', sinFotos.status === 409, String(sinFotos.status))
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 7 · CÓDIGOS DE INVITACIÓN, CÓDIGO DE RESCATE Y CUOTAS
+ *
+ * Tres identificadores y ninguno es un login: la clave maestra crea códigos;
+ * una inmobiliaria publica con el suyo y todo cuenta contra sus cuotas; cada
+ * casa recibe un código de rescate que solo vive en el teléfono que publicó.
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log('\n=== Códigos de invitación: una inmobiliaria publica con el suyo ===')
+
+const maestra = { Authorization: `Bearer ${CLAVE}`, 'Content-Type': 'application/json' }
+
+/* La clave maestra crea un código con cuotas chicas a propósito: UNA casa al
+   día, para poder chocar con la cuota aquí mismo. */
+const creado = await (
+  await fetch(`${WORKER}/api/codigos`, {
+    method: 'POST',
+    headers: maestra,
+    body: JSON.stringify({ nombre: 'Inmobiliaria de prueba', cuotas: { bytes: 40 * 1024 * 1024, recorridosPorDia: 1 } }),
+  })
+).json()
+revisar('la clave maestra crea un código', LLAVE.test(creado.codigo ?? ''), JSON.stringify({ ...creado, codigo: '…' }))
+revisar(
+  'un código no crea códigos',
+  (await fetch(`${WORKER}/api/codigos`, { method: 'POST', headers: { Authorization: `Bearer ${creado.codigo}` }, body: '{}' })).status === 403,
+)
+const listado = await (await fetch(`${WORKER}/api/codigos`, { headers: maestra })).json()
+revisar(
+  'y aparece en la lista, sin el código en claro',
+  Array.isArray(listado) &&
+    listado.some((c) => c.nombre === 'Inmobiliaria de prueba') &&
+    !JSON.stringify(listado).includes(creado.codigo),
+)
+
+/* Otro teléfono, de esa inmobiliaria. */
+const inmobiliaria = await browser.newContext(movil)
+const pi = await inmobiliaria.newPage()
+const erroresInmo = conErrores(pi)
+await pi.goto(`${VISOR}#/inicio`, { waitUntil: 'networkidle' })
+await pi.waitForTimeout(1200)
+await pi.setInputFiles('input[type=file]', {
+  name: 'v2.tour',
+  mimeType: 'application/zip',
+  buffer: tourito(manifiestoV2, [{ name: 'fotos/sala.jpg', data: SALA }]),
+})
+await pi.waitForTimeout(3500)
+const idInmo = /^#\/ver\/(.+)$/.exec(await pi.evaluate(() => location.hash))?.[1]
+await pi.goto(`${VISOR}#/editar/${idInmo}`, { waitUntil: 'networkidle' })
+await pi.waitForTimeout(1200)
+await pi.getByRole('button', { name: 'Publicar y obtener el link' }).click()
+await pi.getByLabel('Código', { exact: true }).fill(creado.codigo)
+await pi.getByRole('button', { name: 'Guardar y publicar' }).click()
+await esperarPublicacion(pi, pi.getByText(patronLink))
+const linkInmo = (await pi.getByText(patronLink).textContent()).trim()
+const llaveInmo = linkInmo.split('/t/')[1]
+revisar('con el código se publica', LLAVE.test(llaveInmo), linkInmo)
+
+const rescate = await pi.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  return (await tours.getTour(id)).publicacion?.editToken ?? null
+}, idInmo)
+revisar('y el teléfono guarda el código de rescate', typeof rescate === 'string' && LLAVE.test(rescate))
+await pi.getByText('Código de rescate').click()
+revisar('que el editor enseña, plegado', await pi.getByText(rescate ?? '∅').isVisible())
+revisar('y el manifiesto NO lo lleva', !JSON.stringify(await (await fetch(`${WORKER}/t/${llaveInmo}/tour.json`)).json()).includes(rescate))
+
+const usoTras = (await (await fetch(`${WORKER}/api/codigos`, { headers: maestra })).json()).find(
+  (c) => c.nombre === 'Inmobiliaria de prueba',
+)
+revisar(
+  'el uso del código sube con la casa',
+  usoTras?.uso.recorridosHoy === 1 && usoTras?.uso.bytes > 100000,
+  JSON.stringify(usoTras?.uso),
+)
+
+/* ── Lo que el código NO puede ────────────────────────────────────────────── */
+const conCodigo = { Authorization: `Bearer ${creado.codigo}` }
+const segunda = await fetch(`${WORKER}/api/nuevo`, { method: 'POST', headers: conCodigo })
+revisar('la segunda casa del día choca con la cuota', segunda.status === 429, `${segunda.status} ${JSON.stringify(await segunda.json())}`)
+const ajena = await fetch(`${WORKER}/api/publicar/${llave2}`, {
+  method: 'PUT',
+  headers: { ...conCodigo, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ title: 'x', startSceneId: 'a', scenes: [{ id: 'a', name: 'a', foto: '000.jpg', hotspots: [] }] }),
+})
+revisar('no puede tocar una casa que no es suya', ajena.status === 403, String(ajena.status))
+const sinToken = await fetch(`${WORKER}/api/subir/${llaveInmo}/000.jpg`, {
+  method: 'PUT',
+  headers: conCodigo,
+  body: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+})
+revisar('ni resubir la suya sin el código de rescate', sinToken.status === 403, String(sinToken.status))
+const tokenMalo = await fetch(`${WORKER}/api/subir/${llaveInmo}/000.jpg`, {
+  method: 'PUT',
+  headers: { ...conCodigo, 'X-Edit-Token': 'a'.repeat(26) },
+  body: Buffer.from([0xff, 0xd8, 0xff, 0xe0]),
+})
+revisar('ni con uno equivocado', tokenMalo.status === 403, String(tokenMalo.status))
+const desconocido = await fetch(`${WORKER}/api/nuevo`, { method: 'POST', headers: { Authorization: `Bearer ${'z'.repeat(26)}` } })
+revisar('un código que no existe no entra', desconocido.status === 401, String(desconocido.status))
+
+/* ── Pero el teléfono que publicó SÍ vuelve a subir, con su rescate ───────── */
+await pi.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const tour = await tours.getTour(id)
+  await tours.saveTour({ ...tour, title: 'Casa de la inmobiliaria' })
+}, idInmo)
+await pi.reload({ waitUntil: 'networkidle' })
+await pi.waitForTimeout(1200)
+await pi.getByRole('button', { name: 'Volver a subir con los cambios' }).click()
+await esperarPublicacion(pi, pi.getByText(/El link está al día/))
+const manifiestoInmo = await (await fetch(`${WORKER}/t/${llaveInmo}/tour.json`)).json()
+revisar('el teléfono que publicó vuelve a subir sobre su link', manifiestoInmo.title === 'Casa de la inmobiliaria', manifiestoInmo.title)
+revisar('sin errores de consola', erroresInmo.length === 0, erroresInmo.join(' | '))
+
+/* ── Y el código da de baja su casa sin rescate: teléfono perdido ────────── */
+const baja = await fetch(`${WORKER}/api/publicar/${llaveInmo}`, { method: 'DELETE', headers: conCodigo })
+revisar('el código da de baja su propia casa sin rescate (teléfono perdido)', baja.status === 200, String(baja.status))
+revisar('y la casa ya no está', (await fetch(`${WORKER}/t/${llaveInmo}/tour.json`)).status === 404)
+const usoBaja = (await (await fetch(`${WORKER}/api/codigos`, { headers: maestra })).json()).find(
+  (c) => c.nombre === 'Inmobiliaria de prueba',
+)
+revisar('y sus bytes se le devuelven', usoBaja?.uso.bytes === 0, JSON.stringify(usoBaja?.uso))
+
+/* ── Revocar ─────────────────────────────────────────────────────────────── */
+const revocado = await fetch(`${WORKER}/api/codigos/${usoBaja?.hash}`, { method: 'DELETE', headers: maestra })
+revisar('la clave maestra revoca el código', revocado.status === 200, String(revocado.status))
+revisar('y el código deja de entrar', (await fetch(`${WORKER}/api/nuevo`, { method: 'POST', headers: conCodigo })).status === 401)
+await inmobiliaria.close()
 } catch (e) {
   /* Un fallo a medio camino es tan rojo como una aserción: se nombra y se
      sigue al cierre, para que los logs de abajo salgan igual. */

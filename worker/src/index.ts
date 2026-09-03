@@ -19,28 +19,62 @@
  *
  * No hay cuentas, ni base de datos, ni sesiones. Un recorrido publicado son
  * unos cuantos objetos en R2 bajo una llave que nadie puede adivinar, y se
- * borra tirando esos objetos. Todo lo que hace falta para eso cabe aquí.
+ * borra tirando esos objetos. Los códigos de invitación y lo que se sabe de cada
+ * llave también son objetos en R2. Todo lo que hace falta cabe aquí.
  *
- * ── Las tres decisiones ─────────────────────────────────────────────────────
+ * ── Quién puede publicar: tres identificadores, ninguno es un login ────────
  *
- * QUIÉN PUEDE SUBIR · una clave compartida, que viaja en el encabezado
- * Authorization y vive como secreto del Worker. NO está en el paquete de la
- * app: el JavaScript de un sitio estático es público y cualquiera lo lee, así
- * que una clave ahí dentro no es una clave. La escribe la persona una vez en su
- * teléfono y se queda en el almacenamiento local del navegador.
+ *   CLAVE_PUBLICACION   la clave MAESTRA. Secreto del Worker. Crea códigos de
+ *                       invitación y puede tocar cualquier publicación. Es la
+ *                       de quien opera el servicio, no la de un agente.
  *
- * Sin esto, cualquiera que encuentre la dirección puede llenar el bucket de
- * archivos ajenos, y la cuenta la paga el dueño.
+ *   código              el código de invitación de UNA inmobiliaria. Es el
+ *                       inquilino: con él se publica, y todo lo publicado con él
+ *                       cuenta contra sus cuotas. Se guarda HASHEADO en R2
+ *                       (`c/<sha256>.json`): un volcado del bucket no reparte
+ *                       permisos de publicar.
  *
- * QUIÉN PUEDE VER · quien tenga el link. La llave son 128 bits de azar: no se
- * llega por probar. Y todas las respuestas llevan `X-Robots-Tag: noindex`, más
- * un robots.txt que cierra el sitio entero, porque una casa en venta puede
- * estar habitada y su interior no tiene por qué quedar en Google.
+ *   código de rescate   el secreto de UNA publicación, que se entrega una sola
+ *   (editToken)         vez al crearla y solo vive en el teléfono que publicó.
+ *                       Autoriza a volver a subir y a dar de baja ESA llave.
+ *                       Hasheado en `t/<llave>/meta.json`.
  *
- * QUÉ SE PUEDE SUBIR · solo imágenes, con tope de tamaño, de cantidad y de peso
- * total. El manifiesto se vuelve a sanear aquí aunque el teléfono ya lo haya
- * hecho: lo que viene por la red es de quien tenga la clave, y una clave
- * compartida entre varios teléfonos acaba en más manos de las previstas.
+ * Por qué no basta una clave compartida, y no es por seguridad sino por
+ * FACTURA: un endpoint de publicación con una sola clave para todos es
+ * almacenamiento gratis para cualquiera que la tenga, y una clave compartida
+ * entre los teléfonos de un equipo acaba en más manos de las previstas. El
+ * código por inmobiliaria resuelve el abuso —cada código tiene tope de bytes y
+ * de casas por día— y de paso da la multi-inquilinato: es donde viven las
+ * cuotas.
+ *
+ * Y por qué el código de rescate además del código: dos agentes de la misma
+ * inmobiliaria comparten código, y sin él cualquiera de los dos podría
+ * sobrescribir la casa del otro por accidente al "volver a subir". El token ata
+ * la llave al teléfono que la creó. Si ese teléfono se pierde, el código de la
+ * inmobiliaria sirve de llave maestra PARA DAR DE BAJA (no para republicar):
+ * bajar la casa es lo que hace falta en ese caso.
+ *
+ * Ninguna de las tres está en el paquete de la app: el JavaScript de un sitio
+ * estático es público y cualquiera lo lee. La persona escribe su código una vez
+ * en su teléfono y se queda en el almacenamiento local del navegador.
+ *
+ * Lo que se difiere sin dolor: correo, contraseña, magic link, roles. Una fase
+ * de cuentas solo le colgaría un correo verificado al mismo código; cero
+ * migración de datos.
+ *
+ * ── Quién puede ver ─────────────────────────────────────────────────────────
+ *
+ * Quien tenga el link. La llave son 128 bits de azar: no se llega por probar. Y
+ * todas las respuestas llevan `X-Robots-Tag: noindex`, más un robots.txt que
+ * cierra el sitio entero, porque una casa en venta puede estar habitada y su
+ * interior no tiene por qué quedar en Google.
+ *
+ * ── Qué se puede subir ──────────────────────────────────────────────────────
+ *
+ * Solo imágenes, con tope de tamaño, de cantidad y de peso total. El manifiesto
+ * se vuelve a sanear aquí aunque el teléfono ya lo haya hecho: lo que viene por
+ * la red es de quien tenga un código, y un código acaba en más manos de las
+ * previstas.
  *
  * ── El manifiesto es la versión 2 ───────────────────────────────────────────
  *
@@ -58,9 +92,9 @@
  */
 
 export type Env = {
-  /** Bucket de R2 donde viven las casas publicadas. */
+  /** Bucket de R2 donde viven las casas publicadas, los códigos y las metas. */
   TOURS: R2Bucket
-  /** Clave compartida. Se pone con `wrangler secret put CLAVE_PUBLICACION`. */
+  /** La clave maestra. Se pone con `wrangler secret put CLAVE_PUBLICACION`. */
   CLAVE_PUBLICACION: string
   /**
    * De dónde se sirve la app del visor, con la barra final.
@@ -84,6 +118,8 @@ const ALFABETO = 'abcdefghijkmnpqrstuvwxyz23456789'
 
 /**
  * Llave de una casa publicada: 128 bits de azar del generador criptográfico.
+ * Sirve igual para los códigos de invitación y de rescate, que son secretos con
+ * la misma exigencia.
  *
  * No es un identificador bonito a propósito. Es lo único que separa una casa
  * de cualquiera que pase por ahí, así que tiene que ser imposible de adivinar
@@ -110,6 +146,8 @@ function nuevaLlave(): string {
 
 /** Una llave que nosotros generamos tiene exactamente esta forma. */
 const LLAVE_VALIDA = new RegExp(`^[${ALFABETO}]{26}$`)
+/** Un hash SHA-256 en hexadecimal, que es como se nombra un código en R2. */
+const HASH_VALIDO = /^[0-9a-f]{64}$/
 
 /**
  * Nombres de archivo admitidos.
@@ -128,7 +166,7 @@ const archivoValido = (nombre: string) => FOTO_VALIDA.test(nombre) || LOGO_VALID
 /**
  * Qué tipo de imagen es, por su FIRMA y no por su extensión.
  *
- * No es una validación fuerte —nadie con la clave necesita engañarnos— pero
+ * No es una validación fuerte —nadie con un código necesita engañarnos— pero
  * atrapa el error de verdad frecuente, que es subir un blob equivocado y
  * descubrirlo cuando el cliente abre el link y ve una esfera negra. Y como el
  * `Content-Type` con el que se sirve sale de aquí, un `logo.png` con otra cosa
@@ -186,27 +224,145 @@ function error(status: number, mensaje: string): Response {
   return json({ error: mensaje }, status)
 }
 
+/* ── Quién es ────────────────────────────────────────────────────────────── */
+
+type Cuotas = {
+  /** Bytes totales publicados con este código, sumando todas sus casas. */
+  bytes: number
+  /** Cuántas casas nuevas puede crear por día. */
+  recorridosPorDia: number
+}
+
+type RegistroDeCodigo = {
+  nombre: string
+  creadoEn: number
+  cuotas: Cuotas
+  uso: { bytes: number; dia: string; recorridosHoy: number }
+}
+
+/** Lo que se sabe de una llave publicada, aparte del manifiesto. */
+type Meta = {
+  /** `'admin'` o el hash del código que la creó. */
+  tenant: string
+  /** sha256 del código de rescate. El código en claro no se guarda nunca. */
+  tokenHash: string
+  creadoEn: number
+  publicadoEn?: number
+  /** Bytes que ocupa la casa, contados al publicar. */
+  bytes: number
+}
+
+type Quien = { tipo: 'admin' } | { tipo: 'codigo'; hash: string; registro: RegistroDeCodigo }
+
 /**
- * ¿Trae la clave correcta?
- *
- * La comparación recorre los dos textos completos siempre, sin cortar en la
+ * Las cuotas por omisión, con la vara del plan: 2 GB son unas 150 casas de
+ * 12 MB, más de lo que una inmobiliaria mediana publica en un año; 20 casas al
+ * día es lo que un equipo entero publica en un día bueno, y un tope contra un
+ * bucle. Se pueden fijar por código al crearlo.
+ */
+const CUOTAS_POR_DEFECTO: Cuotas = { bytes: 2 * 1024 * 1024 * 1024, recorridosPorDia: 20 }
+
+async function sha256(texto: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto))
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Comparación que recorre los dos textos completos siempre, sin cortar en la
  * primera letra distinta. Comparar con `===` tarda un poquito más cuantas más
  * letras coincidan, y esa diferencia —medida muchas veces— alcanza para ir
- * adivinando la clave letra por letra.
+ * adivinando un secreto letra por letra.
  */
-function claveCorrecta(pedido: Request, env: Env): boolean {
-  const cabecera = pedido.headers.get('Authorization') ?? ''
-  const dada = cabecera.startsWith('Bearer ') ? cabecera.slice(7) : ''
-  const esperada = env.CLAVE_PUBLICACION ?? ''
-  if (!esperada) return false
-  const a = new TextEncoder().encode(dada)
-  const b = new TextEncoder().encode(esperada)
-  let diferencia = a.length ^ b.length
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    diferencia |= (a[i] ?? 0) ^ (b[i] ?? 0)
-  }
+function igualesSinPrisa(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a)
+  const y = new TextEncoder().encode(b)
+  let diferencia = x.length ^ y.length
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diferencia |= (x[i] ?? 0) ^ (y[i] ?? 0)
   return diferencia === 0
 }
+
+function credencialDe(pedido: Request): string {
+  const cabecera = pedido.headers.get('Authorization') ?? ''
+  return cabecera.startsWith('Bearer ') ? cabecera.slice(7) : ''
+}
+
+/** ¿Quién manda este pedido? `null` si nadie que conozcamos. */
+async function quien(pedido: Request, env: Env): Promise<Quien | null> {
+  const dada = credencialDe(pedido)
+  if (!dada) return null
+  if (env.CLAVE_PUBLICACION && igualesSinPrisa(dada, env.CLAVE_PUBLICACION)) return { tipo: 'admin' }
+  /* Un código tiene la forma de una llave. Lo que no la tenga no se busca: es
+     una clave maestra mal escrita, no un código. */
+  if (!LLAVE_VALIDA.test(dada)) return null
+  const hash = await sha256(dada)
+  const objeto = await env.TOURS.get(`c/${hash}.json`)
+  if (!objeto) return null
+  return { tipo: 'codigo', hash, registro: (await objeto.json()) as RegistroDeCodigo }
+}
+
+const hoy = () => new Date().toISOString().slice(0, 10)
+
+/** El uso de hoy, con el contador diario en cero si el día cambió. */
+function usoDeHoy(registro: RegistroDeCodigo): RegistroDeCodigo['uso'] {
+  return registro.uso.dia === hoy() ? registro.uso : { bytes: registro.uso.bytes, dia: hoy(), recorridosHoy: 0 }
+}
+
+async function guardarCodigo(env: Env, hash: string, registro: RegistroDeCodigo): Promise<void> {
+  await env.TOURS.put(`c/${hash}.json`, JSON.stringify(registro), {
+    httpMetadata: { contentType: 'application/json; charset=utf-8' },
+  })
+}
+
+/**
+ * Suma (o resta) bytes al uso de un código, releyéndolo: quien llama puede
+ * traer un registro viejo, o ser la clave maestra tocando la casa de otro.
+ * Dos publicaciones a la vez pueden pisarse la cuenta; a esta escala es un
+ * error de unos megabytes que se corrige en la siguiente, y no vale una base
+ * de datos.
+ */
+async function ajustarBytes(env: Env, tenant: string, delta: number): Promise<void> {
+  if (tenant === 'admin' || delta === 0) return
+  const objeto = await env.TOURS.get(`c/${tenant}.json`)
+  if (!objeto) return // código revocado: ya no hay a quién cobrarle
+  const registro = (await objeto.json()) as RegistroDeCodigo
+  const uso = usoDeHoy(registro)
+  uso.bytes = Math.max(0, uso.bytes + delta)
+  await guardarCodigo(env, tenant, { ...registro, uso })
+}
+
+const enMB = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`
+
+/**
+ * ¿Puede este pedido tocar esta llave (subir, publicar, bajar)?
+ *
+ *   · la clave maestra, siempre;
+ *   · el código de rescate correcto (cabecera `X-Edit-Token`), siempre;
+ *   · el código con el que se creó la llave, SOLO para dar de baja: es la
+ *     llave de rescate cuando se perdió el teléfono, y bajar una casa es lo
+ *     que se necesita en ese caso. Republicar sin el token no, para que un
+ *     compañero de la misma inmobiliaria no sobrescriba la casa de otro.
+ *
+ * Una llave sin `meta.json` la publicó la versión anterior del Worker, con la
+ * clave compartida: solo la clave maestra la puede tocar.
+ */
+async function autorizado(
+  pedido: Request,
+  env: Env,
+  q: Quien,
+  llave: string,
+  accion: 'escribir' | 'bajar',
+): Promise<{ ok: true; meta: Meta | null } | { ok: false }> {
+  const objeto = await env.TOURS.get(`t/${llave}/meta.json`)
+  if (!objeto) return q.tipo === 'admin' ? { ok: true, meta: null } : { ok: false }
+  const meta = (await objeto.json()) as Meta
+  if (q.tipo === 'admin') return { ok: true, meta }
+  const token = pedido.headers.get('X-Edit-Token') ?? ''
+  if (token && meta.tokenHash && igualesSinPrisa(await sha256(token), meta.tokenHash)) return { ok: true, meta }
+  if (accion === 'bajar' && meta.tenant === q.hash) return { ok: true, meta }
+  return { ok: false }
+}
+
+const AJENA = 'Este recorrido lo publicó otro teléfono.'
 
 /* ── Saneo del manifiesto ────────────────────────────────────────────────── */
 
@@ -284,8 +440,8 @@ export type ManifiestoPublico = {
  * Deja el manifiesto en algo que el visor pueda pintar sin reventar.
  *
  * Se hace aquí ADEMÁS de en el teléfono. No es desconfianza del código propio:
- * es que a este endpoint llega lo que mande quien tenga la clave, y una clave
- * compartida entre los teléfonos de un equipo termina, con el tiempo, en más
+ * es que a este endpoint llega lo que mande quien tenga un código, y un código
+ * compartido entre los teléfonos de un equipo termina, con el tiempo, en más
  * manos de las que uno cree. Lo que se guarda aquí se lo va a comer el visor de
  * un cliente.
  *
@@ -570,8 +726,8 @@ export default {
         status: 204,
         headers: {
           ...COMUNES,
-          'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          'Access-Control-Allow-Methods': 'GET, HEAD, PUT, POST, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Edit-Token',
           'Access-Control-Max-Age': '86400',
         },
       })
@@ -587,13 +743,94 @@ export default {
     /* ── Publicar ─────────────────────────────────────────────────────────── */
 
     if (partes[0] === 'api') {
-      if (!claveCorrecta(pedido, env)) {
-        return error(401, 'Clave de publicación incorrecta.')
+      const q = await quien(pedido, env)
+      if (!q) return error(401, 'El código de publicación no es válido.')
+
+      /* ── Códigos de invitación: solo la clave maestra ──────────────────── */
+      if (partes[1] === 'codigos') {
+        if (q.tipo !== 'admin') return error(403, 'Solo la clave maestra administra los códigos.')
+
+        // POST /api/codigos  { nombre, cuotas? }  →  { codigo, hash, nombre, cuotas }
+        if (pedido.method === 'POST' && partes.length === 2) {
+          let crudo: Record<string, unknown> = {}
+          try {
+            crudo = (await pedido.json()) as Record<string, unknown>
+          } catch {
+            /* sin cuerpo: nombre por omisión y cuotas por omisión */
+          }
+          const nombre = texto(crudo?.nombre, 60, 'Sin nombre')
+          const pedidas = (crudo?.cuotas ?? {}) as Record<string, unknown>
+          const cuotas: Cuotas = {
+            bytes: Math.max(1, Math.round(numero(pedidas.bytes, CUOTAS_POR_DEFECTO.bytes))),
+            recorridosPorDia: Math.max(
+              1,
+              Math.round(numero(pedidas.recorridosPorDia, CUOTAS_POR_DEFECTO.recorridosPorDia)),
+            ),
+          }
+          const codigo = nuevaLlave()
+          const hash = await sha256(codigo)
+          await guardarCodigo(env, hash, {
+            nombre,
+            creadoEn: Date.now(),
+            cuotas,
+            uso: { bytes: 0, dia: hoy(), recorridosHoy: 0 },
+          })
+          /* El código en claro sale UNA vez, aquí. No se guarda en ningún lado. */
+          return json({ codigo, hash, nombre, cuotas })
+        }
+
+        // GET /api/codigos  →  [{ hash, nombre, creadoEn, cuotas, uso }]
+        if (pedido.method === 'GET' && partes.length === 2) {
+          const listado = await env.TOURS.list({ prefix: 'c/' })
+          const codigos = []
+          for (const objeto of listado.objects) {
+            const registro = await env.TOURS.get(objeto.key)
+            if (!registro) continue
+            const hash = objeto.key.slice(2, -5)
+            const r = (await registro.json()) as RegistroDeCodigo
+            codigos.push({ hash, ...r, uso: usoDeHoy(r) })
+          }
+          return json(codigos)
+        }
+
+        // DELETE /api/codigos/<hash>  →  revocar. Sus casas siguen en línea.
+        if (pedido.method === 'DELETE' && partes.length === 3 && HASH_VALIDO.test(partes[2])) {
+          await env.TOURS.delete(`c/${partes[2]}.json`)
+          return json({ ok: true })
+        }
+
+        return error(404, 'Esa dirección no existe.')
       }
 
-      // POST /api/nuevo  →  { llave }
+      // POST /api/nuevo  →  { llave, editToken }
       if (pedido.method === 'POST' && partes[1] === 'nuevo' && partes.length === 2) {
-        return json({ llave: nuevaLlave() })
+        if (q.tipo === 'codigo') {
+          const { cuotas } = q.registro
+          const uso = usoDeHoy(q.registro)
+          if (uso.recorridosHoy >= cuotas.recorridosPorDia) {
+            return error(
+              429,
+              `Este código ya publicó ${uso.recorridosHoy} ${uso.recorridosHoy === 1 ? 'casa' : 'casas'} hoy; su límite es ${cuotas.recorridosPorDia} al día.`,
+            )
+          }
+          if (uso.bytes >= cuotas.bytes) {
+            return error(413, `Este código llegó a su tope de almacenamiento (${enMB(cuotas.bytes)}). Da de baja alguna casa o pide más espacio.`)
+          }
+          await guardarCodigo(env, q.hash, { ...q.registro, uso: { ...uso, recorridosHoy: uso.recorridosHoy + 1 } })
+        }
+        const llave = nuevaLlave()
+        const editToken = nuevaLlave()
+        const meta: Meta = {
+          tenant: q.tipo === 'admin' ? 'admin' : q.hash,
+          tokenHash: await sha256(editToken),
+          creadoEn: Date.now(),
+          bytes: 0,
+        }
+        await env.TOURS.put(`t/${llave}/meta.json`, JSON.stringify(meta), {
+          httpMetadata: { contentType: 'application/json; charset=utf-8' },
+        })
+        /* El código de rescate sale UNA vez, aquí. Se guarda hasheado. */
+        return json({ llave, editToken })
       }
 
       const llave = partes[2]
@@ -603,6 +840,9 @@ export default {
 
       // PUT /api/subir/<llave>/<archivo>
       if (pedido.method === 'PUT' && partes[1] === 'subir' && partes.length === 4) {
+        const auth = await autorizado(pedido, env, q, llave, 'escribir')
+        if (!auth.ok) return error(403, AJENA)
+
         const archivo = partes[3]
         if (!archivoValido(archivo)) return error(400, 'Nombre de archivo no admitido.')
         const esLogo = LOGO_VALIDO.test(archivo)
@@ -614,6 +854,19 @@ export default {
         const cuerpo = await pedido.arrayBuffer()
         if (cuerpo.byteLength > tope) return error(413, 'Ese archivo pesa demasiado.')
         if (cuerpo.byteLength === 0) return error(400, 'El archivo venía vacío.')
+
+        /* La cuota de bytes se mira antes de guardar. Lo que un código sube y
+           nunca publica no se cuenta —solo lo publicado— pero está acotado por
+           su cuota de casas al día y por MAX_TOTAL por casa. */
+        if (q.tipo === 'codigo') {
+          const uso = usoDeHoy(q.registro)
+          if (uso.bytes + cuerpo.byteLength > q.registro.cuotas.bytes) {
+            return error(
+              413,
+              `Este código llegó a su tope de almacenamiento (${enMB(q.registro.cuotas.bytes)}). Da de baja alguna casa o pide más espacio.`,
+            )
+          }
+        }
 
         const tipo = tipoDeImagen(cuerpo)
         if (!tipo) return error(400, 'Eso no es una imagen.')
@@ -637,6 +890,9 @@ export default {
 
       // PUT /api/publicar/<llave>   ← el manifiesto, al final: es el interruptor
       if (pedido.method === 'PUT' && partes[1] === 'publicar' && partes.length === 3) {
+        const auth = await autorizado(pedido, env, q, llave, 'escribir')
+        if (!auth.ok) return error(403, AJENA)
+
         const largo = Number(pedido.headers.get('Content-Length') ?? '0')
         if (largo > MAX_MANIFIESTO) return error(413, 'El manifiesto es demasiado grande.')
 
@@ -683,11 +939,26 @@ export default {
         await env.TOURS.put(`t/${llave}/tour.json`, JSON.stringify(manifiesto), {
           httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'public, max-age=60' },
         })
+
+        /* La meta: cuánto ocupa la casa y cuándo se publicó. Una llave de la
+           versión anterior del Worker (sin meta) la recibe aquí, a nombre de la
+           clave maestra y sin código de rescate: solo la maestra la sigue
+           tocando, que es lo que ya pasaba. */
+        const meta: Meta = auth.meta ?? { tenant: 'admin', tokenHash: '', creadoEn: Date.now(), bytes: 0 }
+        await ajustarBytes(env, meta.tenant, total - meta.bytes)
+        await env.TOURS.put(
+          `t/${llave}/meta.json`,
+          JSON.stringify({ ...meta, bytes: total, publicadoEn: Date.now() } satisfies Meta),
+          { httpMetadata: { contentType: 'application/json; charset=utf-8' } },
+        )
         return json({ ok: true, llave, url: `${origen}/t/${llave}` })
       }
 
       // DELETE /api/publicar/<llave>  →  bajar la casa
       if (pedido.method === 'DELETE' && partes[1] === 'publicar' && partes.length === 3) {
+        const auth = await autorizado(pedido, env, q, llave, 'bajar')
+        if (!auth.ok) return error(403, AJENA)
+
         /* Primero el manifiesto: en cuanto no está, el link deja de abrir. Si
            el borrado de las fotos fallara a medias, lo que queda son objetos
            huérfanos que nadie puede alcanzar, no una casa a medio enseñar. */
@@ -696,6 +967,7 @@ export default {
         if (listado.objects.length > 0) {
           await env.TOURS.delete(listado.objects.map((o) => o.key))
         }
+        if (auth.meta) await ajustarBytes(env, auth.meta.tenant, -auth.meta.bytes)
         return json({ ok: true })
       }
 

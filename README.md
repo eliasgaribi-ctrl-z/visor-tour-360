@@ -1423,13 +1423,17 @@ el visor (hoy, la URL de GitHub Pages). El Worker la necesita para rebotar a
 quien abra el link.
 
 Sin `VITE_PUBLICAR_BASE`, el botón de publicar **no aparece** y el visor se
-comporta como siempre.
+comporta como siempre. El sitio donde ponerla es `.env.production` (commiteado,
+con la línea comentada): `vite build` lo lee, y el CI construye `docs/` con ese
+mismo archivo, así que el gate de `docs/` ve lo mismo que tú.
 
 ### Cómo se usa
 
 En el editor de un recorrido, **Enseñar por link → Publicar**. La primera vez
-pide la clave; queda guardada en ese teléfono. Al terminar sale el link, listo
-para pegar en WhatsApp.
+pide el código de invitación de la inmobiliaria (o la clave maestra, si tú
+operas el servidor); queda guardado en ese teléfono. Al terminar sale el link,
+listo para pegar en WhatsApp, y debajo, plegado, el **código de rescate** de esa
+casa.
 
 Si después se edita la casa —otra foto, un punto, el precio— el editor avisa
 **"Hay cambios sin publicar"** con la fecha de lo que enseña el link. Publicar →
@@ -1474,15 +1478,52 @@ escondido y la inyección de CSS caen igual por los dos caminos.
 
 ### Las tres decisiones, y por qué
 
-**Quién puede subir · una clave compartida.** Viaja en el encabezado
-`Authorization` y vive como secreto del Worker. **No está en el paquete de la
-app**, y eso no es un descuido: el JavaScript de un sitio estático lo lee
-cualquiera, así que una clave metida ahí sería pública el día uno. La escribe la
-persona una vez en su teléfono. Si se pierde un aparato, se cambia el secreto
-del Worker con `wrangler secret put` y listo.
+**Quién puede subir · un código de invitación por inmobiliaria, y una clave
+maestra.** Tres identificadores, y ninguno es un login:
 
-Sin esto, cualquiera que encuentre la dirección puede llenarte el bucket, y la
-cuenta la pagas tú.
+| | Qué es | Dónde vive |
+| --- | --- | --- |
+| **Clave maestra** (`CLAVE_PUBLICACION`) | La de quien opera el servicio. Crea códigos y puede tocar cualquier casa | Secreto del Worker |
+| **Código de invitación** | El de UNA inmobiliaria: con él se publica, y todo lo publicado cuenta contra sus cuotas | Hasheado en R2 (`c/<sha256>.json`); en claro solo en el teléfono del agente |
+| **Código de rescate** (`editToken`) | El secreto de UNA casa publicada, entregado una sola vez. Autoriza a volver a subir y a dar de baja esa llave | Hasheado en `t/<llave>/meta.json`; en claro solo en el teléfono que publicó |
+
+Ninguno está en el paquete de la app, y eso no es un descuido: el JavaScript de
+un sitio estático lo lee cualquiera, así que una clave metida ahí sería pública
+el día uno. El agente escribe su código una vez en su teléfono.
+
+**Por qué no basta una clave compartida, y no es por seguridad sino por
+factura**: un endpoint de publicación con una sola clave para todos es
+almacenamiento gratis para cualquiera que la tenga, y una clave compartida entre
+los teléfonos de un equipo acaba en más manos de las previstas. El código por
+inmobiliaria resuelve el abuso —cada código tiene tope de bytes y de casas por
+día (2 GB y 20 al día por omisión)— y de paso da la multi-inquilinato: es donde
+viven las cuotas.
+
+**Por qué además el código de rescate**: dos agentes de la misma inmobiliaria
+comparten código, y sin él cualquiera de los dos podría sobrescribir la casa del
+otro al "volver a subir". El token ata la llave al teléfono que la creó. Si ese
+teléfono se pierde, el código de la inmobiliaria sirve de llave maestra **para
+dar de baja** (no para republicar): bajar la casa es lo que hace falta en ese
+caso, y republicarla desde otro teléfono pide el código de rescate, que el
+editor enseña plegado bajo el link para que se guarde aparte.
+
+Crear un código, con la clave maestra:
+
+```bash
+curl -X POST https://visor-tours.TU-CUENTA.workers.dev/api/codigos \
+  -H "Authorization: Bearer LA-CLAVE-MAESTRA" -H "Content-Type: application/json" \
+  -d '{"nombre":"Inmobiliaria del Valle","cuotas":{"bytes":2147483648,"recorridosPorDia":20}}'
+# → {"codigo":"…26 letras…","hash":"…","nombre":"Inmobiliaria del Valle","cuotas":{…}}
+```
+
+El código se muestra una sola vez: pásaselo a la inmobiliaria. `GET /api/codigos`
+lista los que hay con su uso (nunca el código en claro); `DELETE
+/api/codigos/<hash>` revoca uno: sus casas siguen en línea, pero el código ya no
+publica ni baja nada. La clave maestra sigue publicando sin cuotas, así que un
+despliegue de una sola inmobiliaria no tiene que crear ningún código.
+
+Las llaves publicadas por la versión anterior del Worker (sin `meta.json`) solo
+las toca la clave maestra, que es lo que ya pasaba.
 
 **Quién puede ver · quien tenga el link.** La llave son 128 bits de azar (26
 letras de un alfabeto sin caracteres que se confundan): no se llega probando.

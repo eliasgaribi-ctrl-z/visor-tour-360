@@ -357,11 +357,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
       /* Si ya hay una llave se publica SOBRE ella: el link que el agente ya
          mandó sigue sirviendo y enseña la casa nueva. Antes cada "volver a
          subir" creaba una llave nueva y dejaba la vieja viva en el servidor. */
-      const { llave, publicadoEn } = await publicarTour(
+      const { llave, editToken, publicadoEn } = await publicarTour(
         tour,
         clave,
         (avance) => setPublicando({ estado: 'subiendo', ...avance }),
-        tour.publicacion?.llave,
+        tour.publicacion,
       )
       /* Se guarda la llave ANTES de dar por buena la publicación: si esta
          escritura fallara y no se guardara, la casa quedaría en línea y sin
@@ -371,7 +371,10 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
          que hace que "hay cambios sin publicar" compare fechas de verdad —el
          contenido contra la subida— y no salte justo después de publicar. */
       await guardar(
-        { ...tour, publicacion: { ...tour.publicacion, llave, publicadoEn } },
+        {
+          ...tour,
+          publicacion: { llave, editToken: editToken ?? tour.publicacion?.editToken, publicadoEn },
+        },
         { conservarFecha: true },
       )
       setPublicando(null)
@@ -401,7 +404,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     if (!tour.publicacion) return
     setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
     try {
-      await despublicar(tour.publicacion.llave, claveGuardada())
+      await despublicar(tour.publicacion.llave, claveGuardada(), tour.publicacion.editToken)
       await guardar({ ...tour, publicacion: undefined }, { conservarFecha: true })
       setPublicando(null)
     } catch (e) {
@@ -621,6 +624,23 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   >
                     Quitar de internet
                   </Boton>
+                  {/* El código de rescate vive SOLO en este teléfono. Si se
+                      pierde el aparato, con él se puede volver a subir o dar de
+                      baja este link desde otro; sin él, solo dar de baja con el
+                      código de la inmobiliaria. Se enseña plegado: es un dato
+                      para guardar aparte, no para leer cada vez. */}
+                  {publicacion.editToken && (
+                    <details className="rounded-2xl border border-white/10 bg-black/20 px-4 py-2 text-sm">
+                      <summary className="cursor-pointer py-1 text-ink-200">Código de rescate</summary>
+                      <p className="mt-2 text-xs text-ink-200/70">
+                        Si cambias de teléfono, con este código puedes volver a subir o dar de baja
+                        este link desde otro. Guárdalo aparte.
+                      </p>
+                      <p className="mt-2 font-mono text-sm break-all text-ink-50 select-all">
+                        {publicacion.editToken}
+                      </p>
+                    </details>
+                  )}
                 </div>
               ) : (
                 <Boton
@@ -727,18 +747,18 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
       </div>
 
       {pidiendoClave && (
-        <Hoja titulo="Clave para publicar" onCerrar={() => setPidiendoClave(false)}>
+        <Hoja titulo="Código para publicar" onCerrar={() => setPidiendoClave(false)}>
           <div className="flex flex-col gap-4">
             <p className="text-sm text-ink-200">
-              Es la clave del servidor donde se guardan las casas publicadas. Se escribe una sola
-              vez: queda guardada en este teléfono. No viene dentro de la app porque cualquiera
-              podría leerla.
+              Es el código de invitación de tu inmobiliaria (o la clave del servidor, si tú lo
+              operas). Se escribe una sola vez: queda guardado en este teléfono. No viene dentro
+              de la app porque cualquiera podría leerlo.
             </p>
             <Campo
-              etiqueta="Clave"
+              etiqueta="Código"
               valor={claveEscrita}
               onChange={setClaveEscrita}
-              placeholder="La que configuraste en el servidor"
+              placeholder="El código que te dio tu inmobiliaria"
             />
             <Boton
               tipo="principal"

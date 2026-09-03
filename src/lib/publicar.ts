@@ -18,15 +18,20 @@
  * viviendo en el teléfono, el `.tour` se sigue exportando, y el botón de
  * publicar ni siquiera aparece. Nada de lo que ya funcionaba depende de esto.
  *
- * ── La clave ────────────────────────────────────────────────────────────────
+ * ── El código ───────────────────────────────────────────────────────────────
  *
- * Subir pide una clave compartida, y esa clave NO está en el paquete de la app.
- * No es descuido: este visor es un sitio estático y su JavaScript lo puede leer
- * cualquiera, así que una clave incrustada aquí sería pública el día uno. La
- * escribe la persona una vez en su teléfono y se queda en `localStorage`.
+ * Subir pide un código —el de invitación de la inmobiliaria, o la clave maestra
+ * del servidor— y ese código NO está en el paquete de la app. No es descuido:
+ * este visor es un sitio estático y su JavaScript lo puede leer cualquiera, así
+ * que una clave incrustada aquí sería pública el día uno. La escribe la persona
+ * una vez en su teléfono y se queda en `localStorage`.
  *
- * Eso también quiere decir que la clave es tan buena como el teléfono que la
- * guarda: si se pierde un aparato, se cambia el secreto del Worker y listo.
+ * Cada casa publicada recibe además un CÓDIGO DE RESCATE (`editToken`), que el
+ * Worker entrega una sola vez y que vive solo en el teléfono que publicó: es lo
+ * que autoriza a volver a subir y a dar de baja esa llave en concreto. Si se
+ * pierde el teléfono, el código de la inmobiliaria alcanza para dar de baja, y
+ * el de rescate —que el editor enseña para que se guarde aparte— para
+ * republicar desde otro. El porqué completo está en el encabezado del Worker.
  *
  * ── El manifiesto es la versión 2 ───────────────────────────────────────────
  *
@@ -285,12 +290,26 @@ export async function variante2048(foto: Blob): Promise<Blob | null> {
   }
 }
 
-async function pedir(ruta: string, clave: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * Un pedido al Worker con la credencial y, si la hay, el código de rescate de la
+ * llave que se está tocando. Los cuatro fallos que el Worker distingue se
+ * traducen aquí a algo que una persona pueda leer y actuar.
+ */
+async function pedir(
+  ruta: string,
+  credencial: string,
+  init: RequestInit = {},
+  editToken?: string,
+): Promise<Response> {
   let respuesta: Response
   try {
     respuesta = await fetch(`${BASE}${ruta}`, {
       ...init,
-      headers: { ...(init.headers ?? {}), Authorization: `Bearer ${clave}` },
+      headers: {
+        ...(init.headers ?? {}),
+        Authorization: `Bearer ${credencial}`,
+        ...(editToken ? { 'X-Edit-Token': editToken } : {}),
+      },
     })
   } catch {
     throw new PublicarError(
@@ -301,8 +320,16 @@ async function pedir(ruta: string, clave: string, init: RequestInit = {}): Promi
 
   if (respuesta.status === 401) {
     throw new PublicarError(
-      'La clave de publicación no es correcta.',
-      'Es la misma que se configuró en el servidor. Tócala para escribirla de nuevo.',
+      'El código de publicación no es válido.',
+      'Es el código de invitación de tu inmobiliaria, o la clave del servidor. Tócalo para escribirlo de nuevo.',
+    )
+  }
+  if (respuesta.status === 403) {
+    /* La llave existe pero no es de este teléfono: la publicó otro, o este
+       recorrido se importó de un `.tour` que traía la publicación de otro. */
+    throw new PublicarError(
+      'Este recorrido lo publicó otro teléfono.',
+      'Solo se puede volver a subir desde el teléfono que lo publicó, o con su código de rescate. Con el código de tu inmobiliaria sí puedes darlo de baja.',
     )
   }
   if (!respuesta.ok) {
@@ -320,7 +347,11 @@ async function pedir(ruta: string, clave: string, init: RequestInit = {}): Promi
 
 export type AvancePublicacion = { hechas: number; total: number }
 
-export type Publicado = { llave: string; url: string; publicadoEn: number }
+/** Lo que hay que guardar en el teléfono para volver a tocar esta publicación. */
+export type Publicado = { llave: string; editToken?: string; url: string; publicadoEn: number }
+
+/** Una publicación que ya existe: su llave y, si este teléfono lo tiene, su código de rescate. */
+export type PublicacionExistente = { llave: string; editToken?: string }
 
 /**
  * Sube la casa y devuelve el link.
@@ -334,12 +365,17 @@ export type Publicado = { llave: string; url: string; publicadoEn: number }
  * agente ya mandó por WhatsApp sigue sirviendo y enseña la casa nueva. Antes
  * cada "volver a subir" creaba una llave nueva y dejaba la anterior viva y
  * vieja en el servidor, sin forma de borrarla desde la interfaz.
+ *
+ * El `editToken` (código de rescate) lo entrega el Worker UNA vez, al crear la
+ * llave, y viaja en cada pedido que la toque. Es lo que impide que un
+ * compañero con el mismo código de inmobiliaria sobrescriba esta casa por
+ * accidente. Vive solo en este teléfono; ver `StoredTour.publicacion`.
  */
 export async function publicarTour(
   tour: StoredTour,
-  clave: string,
+  credencial: string,
   alAvanzar?: (avance: AvancePublicacion) => void,
-  existente?: string,
+  existente?: PublicacionExistente,
 ): Promise<Publicado> {
   if (!sePuedePublicar()) {
     throw new PublicarError('Esta versión del visor no tiene la publicación configurada.')
@@ -366,23 +402,27 @@ export async function publicarTour(
     alAvanzar?.({ hechas, total })
   }
 
-  let llave = existente ?? ''
+  let llave = existente?.llave ?? ''
+  let editToken = existente?.editToken
   if (!llave) {
-    const nuevo = (await pedir('/api/nuevo', clave, { method: 'POST' }).then((r) => r.json())) as {
+    const nuevo = (await pedir('/api/nuevo', credencial, { method: 'POST' }).then((r) => r.json())) as {
       llave: string
+      editToken?: string
     }
     llave = nuevo.llave
+    editToken = typeof nuevo.editToken === 'string' ? nuevo.editToken : undefined
   }
   if (!llaveValida(llave)) {
     throw new PublicarError('El servidor devolvió una llave que no se entiende.')
   }
 
   const subir = async (blob: Blob, archivo: string, tipo = 'image/jpeg') => {
-    await pedir(`/api/subir/${llave}/${archivo}`, clave, {
-      method: 'PUT',
-      body: blob,
-      headers: { 'Content-Type': tipo },
-    })
+    await pedir(
+      `/api/subir/${llave}/${archivo}`,
+      credencial,
+      { method: 'PUT', body: blob, headers: { 'Content-Type': tipo } },
+      editToken,
+    )
     avanzar()
   }
 
@@ -416,19 +456,26 @@ export async function publicarTour(
 
   if (logo && nombreLogo) await subir(logo, nombreLogo, logo.type)
 
-  const { url } = (await pedir(`/api/publicar/${llave}`, clave, {
-    method: 'PUT',
-    body: JSON.stringify(manifiesto),
-    headers: { 'Content-Type': 'application/json' },
-  }).then((r) => r.json())) as { url: string }
+  const { url } = (await pedir(
+    `/api/publicar/${llave}`,
+    credencial,
+    { method: 'PUT', body: JSON.stringify(manifiesto), headers: { 'Content-Type': 'application/json' } },
+    editToken,
+  ).then((r) => r.json())) as { url: string }
 
-  return { llave, url: url || enlacePublico(llave), publicadoEn: Date.now() }
+  return { llave, editToken, url: url || enlacePublico(llave), publicadoEn: Date.now() }
 }
 
-/** Baja la casa: el link deja de abrir y las fotos se borran del servidor. */
-export async function despublicar(llave: string, clave: string): Promise<void> {
+/**
+ * Baja la casa: el link deja de abrir y las fotos se borran del servidor.
+ *
+ * Sin `editToken` también puede funcionar: el código de la inmobiliaria que la
+ * publicó sirve de llave maestra para DAR DE BAJA (es la salida cuando se
+ * perdió el teléfono), y la clave del servidor baja cualquiera.
+ */
+export async function despublicar(llave: string, credencial: string, editToken?: string): Promise<void> {
   if (!llaveValida(llave)) throw new PublicarError('Esa llave no tiene forma de llave.')
-  await pedir(`/api/publicar/${llave}`, clave, { method: 'DELETE' })
+  await pedir(`/api/publicar/${llave}`, credencial, { method: 'DELETE' }, editToken)
 }
 
 export type OpcionesDeApertura = {
