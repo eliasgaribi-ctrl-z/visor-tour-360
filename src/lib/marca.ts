@@ -70,7 +70,15 @@ const PROPIEDAD: Record<string, string> = {
 let barraDelHtml: string | null = null
 
 /** Todo lo que esta función puede llegar a escribir, para poder limpiarlo. */
-const TODAS = [...Object.values(PROPIEDAD), '--hud-fondo', '--fondo-app', '--tipografia', '--tinta-marca']
+const TODAS = [
+  ...Object.values(PROPIEDAD),
+  '--hud-fondo',
+  '--color-hud',
+  '--color-hud-2',
+  '--fondo-app',
+  '--tipografia',
+  '--tinta-marca',
+]
 
 /**
  * Aplica una marca, o la quita si no hay ninguna.
@@ -101,6 +109,11 @@ export function aplicarMarca(marca: Marca | undefined): void {
   }
 
   if (marca.hudFondo) raiz.setProperty('--hud-fondo', marca.hudFondo)
+  /* La tinta del HUD tiene su propio token porque el vidrio y la página son
+     fondos distintos: un vidrio claro necesita tinta oscura sin que la app
+     entera se oscurezca. Sin estas dos, el CSS la deja seguir a `ink-50`. */
+  if (marca.hudTinta) raiz.setProperty('--color-hud', marca.hudTinta)
+  if (marca.hudTintaSuave) raiz.setProperty('--color-hud-2', marca.hudTintaSuave)
   if (marca.fondoApp) raiz.setProperty('--fondo-app', marca.fondoApp)
   if (marca.tipografia) raiz.setProperty('--tipografia', TIPOGRAFIAS[marca.tipografia])
 

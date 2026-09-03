@@ -19,6 +19,8 @@
         "ink900": "rgb(11, 15, 25)"
       },
       "hudFondo": "#101827",
+      "hudTinta": "#f8fafc",
+      "hudTintaSuave": "#cbd5e1",
       "fondoApp": "#0a0a12",
       "tipografia": "https://tipos.mal.mx/fuente.css",
       "logoId": "img-del-otro-telefono",

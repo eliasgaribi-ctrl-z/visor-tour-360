@@ -58,6 +58,24 @@ export function normalizarTour(tour: StoredTour): StoredTour {
     return tour
   }
 
+  /* ── `publicadoComo` → `publicacion` ──────────────────────────────────────
+   *
+   * La primera versión de publicar guardaba solo la llave del link. Ahora se
+   * guarda también CUÁNDO, para poder decir "hay cambios sin publicar", y el
+   * registro viejo se sube aquí una vez. Como fecha de publicación se toma el
+   * `updatedAt` del registro: es lo mejor que se sabe (no había nada más), y
+   * significa "el link está al día hasta que edites algo", que es lo honesto.
+   * Sin `editToken`: esa publicación se hizo con la clave compartida y así se
+   * sigue manejando. */
+  if (tour.publicadoComo && !tour.publicacion) {
+    const migrado: StoredTour = {
+      ...tour,
+      publicacion: { llave: tour.publicadoComo, publicadoEn: tour.updatedAt },
+    }
+    delete migrado.publicadoComo
+    return normalizarTour(migrado)
+  }
+
   const escenas = tour.scenes
   const escenasOk =
     Array.isArray(escenas) &&

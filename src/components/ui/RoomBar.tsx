@@ -37,7 +37,7 @@ export function RoomBar({ scenes, activeId, onSelect }: RoomBarProps) {
                                marino de marca, `text-black` fijo se pierde encima. El
                                default de la variable deja el ámbar de THIQA como hoy. */
                             ? 'bg-brand-500 text-[var(--tinta-marca,#000)]'
-                            : 'bg-white/10 text-ink-50 active:bg-white/20'
+                            : 'bg-white/10 text-hud active:bg-white/20'
                         }`}
           >
             {scene.thumbnail && (

@@ -124,6 +124,26 @@ await page.waitForTimeout(800)
 await page.getByRole('button', { name: 'Regresar' }).click()
 await page.waitForTimeout(900)
 await auditar('editor con 1 cuarto')
+
+/* El editor del plano: la lista de habitaciones sin colocar, el alfiler (44×44,
+   con su etiqueta encima) y el control de hacia dónde mira, que es un range y
+   sin altura mide 20 px. */
+const hashEditor = await page.evaluate(() => location.hash)
+await page.getByRole('button', { name: 'Agregar el plano' }).click()
+await page.waitForTimeout(600)
+await auditar('editor de plano')
+await page.locator('input[type=file]').setInputFiles('public/panoramas/recamara.jpg')
+await page.waitForTimeout(2500)
+await auditar('editor de plano (con plano)')
+await page.getByRole('group', { name: 'Habitaciones sin colocar' }).getByRole('button').first().click()
+await page.waitForTimeout(600)
+await auditar('editor de plano (colocada)')
+await page.getByRole('button', { name: 'Indicar hacia dónde mira' }).click()
+await page.waitForTimeout(500)
+await auditar('editor de plano (con cono)')
+await page.getByRole('button', { name: 'Regresar' }).click()
+await page.waitForTimeout(900)
+
 await page.getByRole('button', { name: 'Ajustes' }).click()
 await page.waitForTimeout(400)
 await auditar('hoja: ajustes')
@@ -144,6 +164,18 @@ await page.waitForTimeout(300)
 await page.goto(`${BASE}#/inicio`, { waitUntil: 'networkidle' })
 await page.waitForTimeout(900)
 await auditar('mis recorridos con uno dentro')
+
+/* Y el visor con el plano abierto: el botón que lo abre y el alfiler del
+   minimapa también se tocan con el pulgar. */
+const idTactil = /^#\/editar\/(.+)$/.exec(hashEditor)?.[1]
+if (idTactil) {
+  await page.goto(`${BASE}#/ver/${idTactil}`, { waitUntil: 'domcontentloaded' })
+  await page.waitForSelector('canvas', { timeout: 40000 })
+  await page.waitForTimeout(3000)
+  await page.getByRole('button', { name: 'Ver el plano' }).click()
+  await page.waitForTimeout(800)
+  await auditar('visor: plano abierto')
+}
 
 console.log(`\n${bien ? 'TODO SE PUEDE TOCAR' : 'HAY CONTROLES DEMASIADO CHICOS'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')

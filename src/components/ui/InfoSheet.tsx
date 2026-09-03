@@ -22,8 +22,8 @@ export function InfoSheet({ title, body, onClose }: InfoSheetProps) {
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-white/25" />
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-ink-50">{title}</h2>
-            {body && <p className="mt-1 text-sm leading-relaxed text-ink-200">{body}</p>}
+            <h2 className="text-base font-semibold text-hud">{title}</h2>
+            {body && <p className="mt-1 text-sm leading-relaxed text-hud-2">{body}</p>}
           </div>
           {/* 44×44 y no 32×32: es la única salida de la hoja y está pegada al
               borde derecho, donde el pulgar llega con menos puntería. */}
@@ -32,7 +32,7 @@ export function InfoSheet({ title, body, onClose }: InfoSheetProps) {
             onClick={onClose}
             aria-label="Cerrar"
             className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-white/10 text-xl
-                       leading-none text-ink-50 active:bg-white/20"
+                       leading-none text-hud active:bg-white/20"
           >
             ×
           </button>

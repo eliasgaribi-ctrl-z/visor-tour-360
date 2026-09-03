@@ -9,6 +9,7 @@ import { useGyroLook } from '../lib/useGyroLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
 import { detectWebGL } from '../lib/webgl'
+import type { Metricas } from '../lib/metricas/cliente'
 
 import { BASE_FOV, Escena360 } from './tour/Escena360'
 
@@ -18,6 +19,7 @@ import { HotspotLayer } from './ui/HotspotLayer'
 import { InfoSheet } from './ui/InfoSheet'
 import { Joystick } from './ui/Joystick'
 import { LoadingVeil } from './ui/LoadingVeil'
+import { Minimapa } from './ui/Minimapa'
 import { RoomBar } from './ui/RoomBar'
 import { ZoomControls } from './ui/ZoomControls'
 
@@ -29,6 +31,12 @@ export type TourViewerProps = {
   accion?: ReactNode
   /** Pista que aparece los primeros segundos, debajo de los controles. */
   pista?: string
+  /**
+   * A quién reportar qué habitación se vio, qué punto se tocó y qué falló.
+   * Solo lo trae la casa PUBLICADA (`VisorPublicado`); el visor local y la
+   * demo no lo pasan y no reportan nada. Ver `src/lib/metricas/cliente.ts`.
+   */
+  metricas?: Metricas | null
 }
 
 /**
@@ -51,6 +59,7 @@ export function TourViewer({
   debug = import.meta.env.DEV,
   accion,
   pista = 'Arrastra la foto o usa el joystick para mirar alrededor',
+  metricas = null,
 }: TourViewerProps) {
   const engine = useCreateTourEngine()
   /* La rueda también sobre el HUD: ver useWheelZoom en src/lib/useDragLook.ts */
@@ -61,6 +70,9 @@ export function TourViewer({
   const [failed, setFailed] = useState(false)
   const [info, setInfo] = useState<{ title: string; body?: string } | null>(null)
   const [hintVisible, setHintVisible] = useState(true)
+  /* El minimapa del plano, si el recorrido trae uno. Cerrado al entrar: en un
+     teléfono tapa un cuarto de la foto, y la foto es a lo que se vino. */
+  const [planoAbierto, setPlanoAbierto] = useState(false)
   const hintDismissed = useRef(false)
   const cartelError = useRef<HTMLDivElement>(null)
 
@@ -115,6 +127,29 @@ export function TourViewer({
     setHintVisible(false)
   }, [])
 
+  /* ── Las métricas, en los tres embudos que ya existían ─────────────────────
+     La primera habitación al montar; las demás pasan TODAS por `goToScene`; los
+     puntos por `handleHotspot`; las fallas por `alFallar`. Cada una es una
+     línea, porque el visor ya tenía un solo camino para cada cosa. Sin
+     `metricas` (visor local, demo) no se reporta nada. */
+  useEffect(() => {
+    metricas?.escena(tour.startSceneId)
+  }, [metricas, tour.startSceneId])
+
+  /* El nombre de la habitación actual, para nombrar la falla sin volver
+     inestable a `alFallar` (ver abajo). */
+  const nombreEscena = useRef(scene.name)
+  useEffect(() => {
+    nombreEscena.current = scene.name
+  }, [scene.name])
+
+  /* Estable a propósito: `Escena360` está en `memo`, y una flecha nueva aquí lo
+     re-renderizaría —y con él al canvas— en cada estado del HUD. */
+  const alFallar = useCallback(() => {
+    setFailed(true)
+    metricas?.falla(nombreEscena.current)
+  }, [metricas])
+
   /** Un dedo sobre la foto: se va la pista y, si la foto giraba sola, se detiene. */
   const alTocar = useCallback(() => {
     dismissHint()
@@ -140,6 +175,7 @@ export function TourViewer({
       setInfo(null)
       setFailed(false)
       setSceneId(next.id)
+      metricas?.escena(next.id)
       // La cámara viaja al frente de la nueva habitación por el camino corto.
       engine.input.goto = { yaw: arriveYaw ?? next.initialYaw ?? 0, pitch: 0 }
       /* Y si se vino por una PUERTA, la atraviesa: el rig empuja la cámara hacia
@@ -148,19 +184,20 @@ export function TourViewer({
       if (puerta) engine.input.empuje = puerta
       engine.invalidar()
     },
-    [engine, sceneId, tour.scenes],
+    [engine, metricas, sceneId, tour.scenes],
   )
 
   const handleHotspot = useCallback(
     (hotspot: Hotspot) => {
       dismissHint()
+      metricas?.punto(hotspot.id, hotspot.kind)
       if (hotspot.kind === 'link') {
         goToScene(hotspot.to, hotspot.arriveYaw, { yaw: hotspot.yaw, pitch: hotspot.pitch })
       } else {
         setInfo({ title: hotspot.label, body: hotspot.body })
       }
     },
-    [dismissHint, goToScene],
+    [dismissHint, goToScene, metricas],
   )
 
   const resetView = useCallback(() => {
@@ -234,7 +271,7 @@ export function TourViewer({
           nivel={scene.nivel}
           webgl={webgl}
           onLoadingChange={setLoading}
-          onError={() => setFailed(true)}
+          onError={alFallar}
           onPointerDownCapture={alTocar}
         />
 
@@ -262,8 +299,8 @@ export function TourViewer({
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3
                           pt-[calc(env(safe-area-inset-top)+0.75rem)]">
             <div className="hud-glass pointer-events-auto min-w-0 rounded-hud px-4 py-2.5">
-              <p className="truncate text-sm font-semibold text-ink-50">{tour.title}</p>
-              <p className="truncate text-xs text-ink-200">
+              <p className="truncate text-sm font-semibold text-hud">{tour.title}</p>
+              <p className="truncate text-xs text-hud-2">
                 {scene.name}
                 {tour.subtitle ? ` · ${tour.subtitle}` : ''}
               </p>
@@ -280,6 +317,17 @@ export function TourViewer({
             <RoomBar scenes={tour.scenes} activeId={scene.id} onSelect={(id) => goToScene(id)} />
           </div>
 
+          {/* El plano de la casa, cuando el recorrido trae uno y la persona lo
+              abrió: dónde está parada y hacia dónde mira. Debajo de la barra de
+              habitaciones, pegado a la derecha. Tocar un alfiler cambia de
+              cuarto por el mismo camino que la barra: sin puerta, sin empuje.
+              Ver src/components/ui/Minimapa.tsx y src/lib/planta.ts. */}
+          {tour.plano && planoAbierto && (
+            <div className="absolute right-3 top-[calc(env(safe-area-inset-top)+9.5rem)] max-w-[calc(100%-1.5rem)]">
+              <Minimapa plano={tour.plano} scenes={tour.scenes} activeId={scene.id} onSelect={(id) => goToScene(id)} />
+            </div>
+          )}
+
           {/* Joystick · esquina inferior IZQUIERDA, zona del pulgar izquierdo.
               Con el giroscopio encendido se retira: la mano ya es el joystick, y
               dos formas de girar a la vista confunden. El arrastre sigue. */}
@@ -292,6 +340,22 @@ export function TourViewer({
           {/* Zoom y reencuadre · pulgar derecho */}
           <div className="absolute bottom-0 right-0 flex flex-col items-end gap-2 p-3
                           pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+            {/* El plano de la casa: solo si el recorrido trae uno. Abre y cierra
+                el minimapa de arriba; `aria-pressed` dice en cuál está. */}
+            {tour.plano && (
+              <button
+                type="button"
+                onClick={() => setPlanoAbierto((v) => !v)}
+                aria-pressed={planoAbierto}
+                aria-label={planoAbierto ? 'Cerrar el plano' : 'Ver el plano'}
+                className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
+                           transition-colors active:bg-white/15 ${planoAbierto ? 'text-brand-300' : 'text-hud'}`}
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 5h16v14H4zM4 12h7M11 5v7M15 12v7" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
             {/* Mirar con el teléfono. No se pinta sin https ni sin el evento en
                 el navegador (escritorio): un botón que no puede hacer nada es
                 peor que ninguno. Y desaparece si al intentarlo resulta que no
@@ -304,7 +368,7 @@ export function TourViewer({
                 aria-label={sensorActivo ? 'Dejar de mirar con el teléfono' : 'Mirar con el teléfono'}
                 className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
                            transition-colors active:bg-white/15 ${
-                             sensorActivo ? 'text-brand-300' : 'text-ink-50'
+                             sensorActivo ? 'text-brand-300' : 'text-hud'
                            }`}
               >
                 <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
@@ -318,7 +382,7 @@ export function TourViewer({
               onClick={resetView}
               aria-label="Reencuadrar"
               className="hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
-                         text-ink-50 transition-colors active:bg-white/15"
+                         text-hud transition-colors active:bg-white/15"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M12 4v3M12 17v3M4 12h3M17 12h3" strokeLinecap="round" />
@@ -348,7 +412,7 @@ export function TourViewer({
           >
             <p
               role="status"
-              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-ink-200 ${
+              className={`hud-glass px-4 py-2 text-center text-xs leading-relaxed text-hud-2 ${
                 avisoGiro ? 'rounded-2xl' : 'rounded-full'
               }`}
             >
