@@ -194,7 +194,8 @@ src/
 │   ├── metricas/               ── las visitas de la casa publicada (sección 14) ──
 │   │   ├── cliente.ts          * sendBeacon en pagehide, sin cookies ni IP: sesiones, no personas
 │   │   ├── resumen.ts          de paquetes a números; lo usan el Worker y la hoja "Visitas"
-│   │   └── resumen.test.ts
+│   │   ├── resumen.test.ts
+│   │   └── formato.ts          "1 min 20 s" y el mapa id → nombre para leer las visitas
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -236,6 +237,8 @@ src/
         ├── PuntosEditables.tsx Marcadores arrastrables
         ├── VisorGuardado.tsx   Abre un recorrido guardado
         ├── VisorPublicado.tsx  Abre una casa publicada por link (sección 14)
+        ├── Panel.tsx           Las casas publicadas con el código de la inmobiliaria (sección 14)
+        ├── Visitas.tsx         El resumen de visitas que comparten el editor y el panel
         └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
@@ -1581,6 +1584,27 @@ ni entre días. Con `navigator.doNotTrack` o `globalPrivacyControl` encendidos n
 se manda nada. Eso es lo que quita la necesidad de un banner de consentimiento:
 no hay identificador persistente ni retención de IP. Está escrito en el código
 del cliente y del Worker, no solo aquí.
+
+### El panel de la inmobiliaria: `#/panel`
+
+"Mis recorridos" es lo que vive en **este** teléfono. El panel (**Mis
+recorridos → Casas publicadas por link**, o `#/panel`) es lo que vive en el
+servidor a nombre del código: las casas que publicó cualquier teléfono de la
+inmobiliaria, con su link, su fecha, su peso, sus visitas y su baja. Pide el
+mismo código que publicar y lo guarda donde publicar lo guarda; con la clave
+maestra enseña todas las casas del servicio. Es el panel del inquilino que el
+plan colgaba del `tenantId`, y el `tenantId` es el código.
+
+No edita, a propósito: editar una casa es editar el recorrido que vive en el
+teléfono que la publicó. Desde aquí se comparte, se miran las visitas y se da de
+baja, que es lo que hace falta desde otro teléfono (o cuando ese teléfono se
+perdió: el código de la inmobiliaria da de baja sin el código de rescate).
+
+**Sobre las cuentas con correo.** El plan las deja para después y el panel no
+las necesita: una fase de cuentas solo le colgaría un correo verificado al mismo
+código, sin migrar datos. Hacerlo requiere un proveedor de correo (o de
+identidad) fuera de Cloudflare Workers, que es una decisión de proveedor y de
+costo, no de código, y por eso no está aquí.
 
 ### Cómo se prueba sin desplegar nada
 

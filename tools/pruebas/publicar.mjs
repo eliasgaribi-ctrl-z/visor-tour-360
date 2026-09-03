@@ -609,6 +609,28 @@ revisar(
   JSON.stringify(usoTras?.uso),
 )
 
+/* ── El panel de la inmobiliaria: lo que hay en el servidor a nombre del código ── */
+await pi.goto(`${VISOR}#/panel`, { waitUntil: 'networkidle' })
+await pi.getByText('Casa de prueba v2', { exact: true }).waitFor({ timeout: 30000 })
+revisar('el panel de la inmobiliaria enseña su casa publicada', await pi.getByText('Casa de prueba v2', { exact: true }).isVisible())
+revisar('con el nombre del código y su uso', await pi.getByText(/Inmobiliaria de prueba · .* MB de 40 MB/).isVisible())
+revisar('y el link para compartirlo', await pi.getByText(linkInmo, { exact: true }).isVisible())
+await pi.getByRole('button', { name: 'Visitas', exact: true }).click()
+await pi.getByText(/0 visitas/).waitFor({ timeout: 30000 })
+revisar('las visitas se leen desde el panel (todavía ninguna)', await pi.getByText(/0 visitas/).isVisible())
+await pi.getByRole('button', { name: 'Cerrar' }).click()
+await pi.waitForTimeout(300)
+/* Desde "Mis recorridos" se llega al panel. */
+await pi.goto(`${VISOR}#/inicio`, { waitUntil: 'networkidle' })
+await pi.waitForTimeout(800)
+await pi.getByRole('button', { name: 'Casas publicadas por link' }).click()
+await pi.waitForTimeout(1500)
+revisar('y desde "Mis recorridos" se llega a él', /#\/panel$/.test(await pi.evaluate(() => location.hash)))
+/* La clave maestra ve todas las casas del servicio. */
+await pg.goto(`${VISOR}#/panel`, { waitUntil: 'networkidle' })
+await pg.getByText('Casa de prueba v2', { exact: true }).waitFor({ timeout: 30000 })
+revisar('la clave maestra ve la casa de la inmobiliaria en su panel', await pg.getByText(/Todas las casas del servicio/).isVisible())
+
 /* ── Lo que el código NO puede ────────────────────────────────────────────── */
 const conCodigo = { Authorization: `Bearer ${creado.codigo}` }
 const segunda = await fetch(`${WORKER}/api/nuevo`, { method: 'POST', headers: conCodigo })
@@ -635,6 +657,8 @@ const desconocido = await fetch(`${WORKER}/api/nuevo`, { method: 'POST', headers
 revisar('un código que no existe no entra', desconocido.status === 401, String(desconocido.status))
 
 /* ── Pero el teléfono que publicó SÍ vuelve a subir, con su rescate ───────── */
+await pi.goto(`${VISOR}#/editar/${idInmo}`, { waitUntil: 'networkidle' })
+await pi.waitForTimeout(800)
 await pi.evaluate(async (id) => {
   const tours = await import('/src/lib/store/tours.ts')
   const tour = await tours.getTour(id)
@@ -648,10 +672,21 @@ const manifiestoInmo = await (await fetch(`${WORKER}/t/${llaveInmo}/tour.json`))
 revisar('el teléfono que publicó vuelve a subir sobre su link', manifiestoInmo.title === 'Casa de la inmobiliaria', manifiestoInmo.title)
 revisar('sin errores de consola', erroresInmo.length === 0, erroresInmo.join(' | '))
 
-/* ── Y el código da de baja su casa sin rescate: teléfono perdido ────────── */
-const baja = await fetch(`${WORKER}/api/publicar/${llaveInmo}`, { method: 'DELETE', headers: conCodigo })
-revisar('el código da de baja su propia casa sin rescate (teléfono perdido)', baja.status === 200, String(baja.status))
+/* ── Y el código da de baja su casa sin rescate: teléfono perdido ──────────
+   Desde el panel, en OTRO teléfono de la inmobiliaria que solo tiene el código
+   (un contexto nuevo, sin el rescate en su IndexedDB). */
+const otroTelefono = await browser.newContext(movil)
+const po = await otroTelefono.newPage()
+await po.goto(`${VISOR}#/panel`, { waitUntil: 'networkidle' })
+await po.getByLabel('Código', { exact: true }).fill(creado.codigo)
+await po.getByRole('button', { name: 'Entrar' }).click()
+await po.getByText('Casa de la inmobiliaria', { exact: true }).waitFor({ timeout: 30000 })
+await po.getByRole('button', { name: 'Dar de baja' }).first().click()
+await po.getByRole('button', { name: 'Sí, dar de baja' }).click()
+await po.getByText('Todavía no hay casas publicadas').waitFor({ timeout: 30000 })
+revisar('otro teléfono con el código da de baja la casa sin rescate (teléfono perdido)', true)
 revisar('y la casa ya no está', (await fetch(`${WORKER}/t/${llaveInmo}/tour.json`)).status === 404)
+await otroTelefono.close()
 const usoBaja = (await (await fetch(`${WORKER}/api/codigos`, { headers: maestra })).json()).find(
   (c) => c.nombre === 'Inmobiliaria de prueba',
 )

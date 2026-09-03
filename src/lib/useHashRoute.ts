@@ -20,6 +20,7 @@ import { useCallback, useEffect, useState } from 'react'
  *   #/puntos/<id>/<esc>   colocar los puntos de una habitación
  *   #/ver/<id>            ver un recorrido guardado
  *   #/p/<llave>           ver una casa PUBLICADA (vive en el servidor, no aquí)
+ *   #/panel               las casas publicadas con el código de la inmobiliaria
  *   #/demo                el recorrido de ejemplo
  */
 
@@ -27,6 +28,9 @@ export type Ruta =
   | { nombre: 'visor' }
   | { nombre: 'inicio' }
   | { nombre: 'demo' }
+  /* Tampoco habla con IndexedDB: lista lo que hay en el servidor a nombre del
+     código, publicado desde cualquier teléfono de la inmobiliaria. */
+  | { nombre: 'panel' }
   | { nombre: 'ver'; tourId: string }
   /* La única ruta que no habla con IndexedDB: el recorrido se descarga. Es la
      que recibe quien no tiene la app ni nada guardado — un cliente al que le
@@ -49,6 +53,8 @@ export function leerRuta(hash: string): Ruta {
       return { nombre: 'inicio' }
     case 'demo':
       return { nombre: 'demo' }
+    case 'panel':
+      return { nombre: 'panel' }
     case 'ver':
       return partes[1] ? { nombre: 'ver', tourId: partes[1] } : { nombre: 'inicio' }
     case 'p':
@@ -83,6 +89,8 @@ export function rutaAHash(ruta: Ruta): string {
       return '#/inicio'
     case 'demo':
       return '#/demo'
+    case 'panel':
+      return '#/panel'
     case 'ver':
       return `#/ver/${encodeURIComponent(ruta.tourId)}`
     case 'publicado':

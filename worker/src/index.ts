@@ -245,6 +245,12 @@ type RegistroDeCodigo = {
   creadoEn: number
   cuotas: Cuotas
   uso: { bytes: number; dia: string; recorridosHoy: number }
+  /**
+   * Las llaves publicadas con este código, para el panel. Se anota al publicar
+   * por primera vez y se quita al dar de baja: un `list` de todo `t/` por cada
+   * apertura del panel sería leer el bucket entero para encontrar cinco casas.
+   */
+  casas?: string[]
 }
 
 /** Lo que se sabe de una llave publicada, aparte del manifiesto. */
@@ -338,6 +344,72 @@ async function ajustarBytes(env: Env, tenant: string, delta: number): Promise<vo
 }
 
 const enMB = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`
+
+/** Anota (o quita) una llave en la lista de casas de un código. */
+async function anotarCasa(env: Env, tenant: string, llave: string, agregar: boolean): Promise<void> {
+  if (tenant === 'admin') return
+  const objeto = await env.TOURS.get(`c/${tenant}.json`)
+  if (!objeto) return // código revocado
+  const registro = (await objeto.json()) as RegistroDeCodigo
+  const casas = new Set(registro.casas ?? [])
+  if (agregar) casas.add(llave)
+  else casas.delete(llave)
+  await guardarCodigo(env, tenant, { ...registro, casas: [...casas] })
+}
+
+/* ── El panel ─────────────────────────────────────────────────────────────────
+ *
+ * Lo que vive en el servidor a nombre de un código: sus casas, con link,
+ * fecha, peso y los nombres de sus habitaciones y puntos (para leer las
+ * visitas). Con la clave maestra, todas las casas del servicio. Es el panel del
+ * inquilino que el plan colgaba del `tenantId`; el `tenantId` es el código.
+ */
+
+type CasaDelPanel = {
+  llave: string
+  titulo: string
+  subtitulo?: string
+  precio?: string
+  portada?: string
+  publicadoEn?: number
+  creadoEn: number
+  bytes: number
+  habitaciones: number
+  url: string
+  nombres: Record<string, string>
+}
+
+async function casaDelPanel(env: Env, llave: string, origen: string): Promise<CasaDelPanel | null> {
+  const [metaObj, tourObj] = await Promise.all([
+    env.TOURS.get(`t/${llave}/meta.json`),
+    env.TOURS.get(`t/${llave}/tour.json`),
+  ])
+  // Sin manifiesto no hay casa: quedó a medio subir, o se dio de baja.
+  if (!tourObj) return null
+  const meta = metaObj ? ((await metaObj.json()) as Meta) : null
+  const tour = (await tourObj.json()) as ManifiestoPublico
+  const primera = tour.scenes[0]
+  const nombres: Record<string, string> = {}
+  for (const s of tour.scenes) {
+    nombres[s.id] = s.name
+    for (const h of s.hotspots as { id?: string; label?: string }[]) {
+      if (typeof h.id === 'string') nombres[h.id] = h.label ?? h.id
+    }
+  }
+  return {
+    llave,
+    titulo: tour.title,
+    subtitulo: tour.subtitle,
+    precio: tour.ficha?.precio,
+    portada: primera ? `${origen}/t/${llave}/fotos/${primera.miniatura ?? primera.foto}` : undefined,
+    publicadoEn: meta?.publicadoEn,
+    creadoEn: meta?.creadoEn ?? 0,
+    bytes: meta?.bytes ?? 0,
+    habitaciones: tour.scenes.length,
+    url: `${origen}/t/${llave}`,
+    nombres,
+  }
+}
 
 /**
  * ¿Puede este pedido tocar esta llave (subir, publicar, bajar)?
@@ -924,6 +996,36 @@ export default {
         return error(404, 'Esa dirección no existe.')
       }
 
+      // GET /api/panel  →  { quien, casas }
+      if (pedido.method === 'GET' && partes[1] === 'panel' && partes.length === 2) {
+        let llaves: string[]
+        if (q.tipo === 'codigo') {
+          llaves = q.registro.casas ?? []
+        } else {
+          /* La maestra ve todo: las "carpetas" bajo t/, sin bajar sus archivos. */
+          llaves = []
+          let cursor: string | undefined
+          do {
+            const pagina = await env.TOURS.list({ prefix: 't/', delimiter: '/', cursor })
+            for (const p of pagina.delimitedPrefixes) llaves.push(p.slice(2, -1))
+            cursor = pagina.truncated ? pagina.cursor : undefined
+          } while (cursor && llaves.length < 1000)
+        }
+        const casas: CasaDelPanel[] = []
+        for (let i = 0; i < llaves.length; i += 10) {
+          const lote = await Promise.all(llaves.slice(i, i + 10).map((l) => casaDelPanel(env, l, origen)))
+          for (const c of lote) if (c) casas.push(c)
+        }
+        casas.sort((a, b) => (b.publicadoEn ?? b.creadoEn) - (a.publicadoEn ?? a.creadoEn))
+        return json({
+          quien:
+            q.tipo === 'admin'
+              ? 'admin'
+              : { nombre: q.registro.nombre, cuotas: q.registro.cuotas, uso: usoDeHoy(q.registro) },
+          casas,
+        })
+      }
+
       // POST /api/nuevo  →  { llave, editToken }
       if (pedido.method === 'POST' && partes[1] === 'nuevo' && partes.length === 2) {
         if (q.tipo === 'codigo') {
@@ -1073,6 +1175,8 @@ export default {
           JSON.stringify({ ...meta, bytes: total, publicadoEn: Date.now() } satisfies Meta),
           { httpMetadata: { contentType: 'application/json; charset=utf-8' } },
         )
+        // La primera publicación de la llave la anota en el panel de su código.
+        if (!meta.publicadoEn) await anotarCasa(env, meta.tenant, llave, true)
         return json({ ok: true, llave, url: `${origen}/t/${llave}` })
       }
 
@@ -1095,7 +1199,10 @@ export default {
             cursor = pagina.truncated ? pagina.cursor : undefined
           } while (cursor)
         }
-        if (auth.meta) await ajustarBytes(env, auth.meta.tenant, -auth.meta.bytes)
+        if (auth.meta) {
+          await ajustarBytes(env, auth.meta.tenant, -auth.meta.bytes)
+          await anotarCasa(env, auth.meta.tenant, llave, false)
+        }
         return json({ ok: true })
       }
 

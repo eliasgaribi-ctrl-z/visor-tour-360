@@ -504,6 +504,44 @@ export async function resumenDeVisitas(
   return (await respuesta.json()) as ResumenDeVisitas
 }
 
+/** Una casa tal como la enseña el panel de la inmobiliaria. */
+export type CasaPublicada = {
+  llave: string
+  titulo: string
+  subtitulo?: string
+  precio?: string
+  /** La miniatura de la primera habitación, ya como URL. */
+  portada?: string
+  publicadoEn?: number
+  creadoEn: number
+  bytes: number
+  habitaciones: number
+  /** El link que se comparte. */
+  url: string
+  /** id → nombre, de habitaciones y puntos, para leer las visitas. */
+  nombres: Record<string, string>
+}
+
+export type Panel = {
+  quien:
+    | 'admin'
+    | {
+        nombre: string
+        cuotas: { bytes: number; recorridosPorDia: number }
+        uso: { bytes: number; dia: string; recorridosHoy: number }
+      }
+  casas: CasaPublicada[]
+}
+
+/**
+ * Las casas publicadas con este código —desde cualquier teléfono de la
+ * inmobiliaria—, o todas las del servicio con la clave maestra.
+ */
+export async function panelDeCasas(credencial: string): Promise<Panel> {
+  const respuesta = await pedir('/api/panel', credencial, { method: 'GET' })
+  return (await respuesta.json()) as Panel
+}
+
 export type OpcionesDeApertura = {
   /**
    * El ancho al que este aparato sube las texturas (`aparato().anchoTextura`).

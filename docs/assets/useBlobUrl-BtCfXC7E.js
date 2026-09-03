@@ -1,1 +1,0 @@
-import{F as e,R as t,d as n}from"./index-DLvEkedV.js";var r=t(e(),1);function i(e){let[t,i]=(0,r.useState)({url:null,falta:!1});return(0,r.useEffect)(()=>{if(i({url:null,falta:!1}),!e)return;let t=!0;return n(e).then(e=>{t&&i({url:e,falta:e===null})}),()=>{t=!1}},[e]),t}function a(e){return i(e).url}export{i as n,a as t};

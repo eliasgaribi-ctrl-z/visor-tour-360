@@ -9,6 +9,7 @@ import { deleteImage, getTour, saveTour, type OpcionesDeGuardado } from '../../l
 import { entregarArchivo, mensajeDePaquete } from '../../lib/store/entregar'
 import { limpiarFicha } from '../../lib/store/migrar'
 import { visitasRecientes } from '../../lib/metricas/resumen'
+import { nombresDe } from '../../lib/metricas/formato'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { contextoSeguro } from '../../lib/capture/camera'
 import {
@@ -23,6 +24,7 @@ import {
   type ResumenDeVisitas,
 } from '../../lib/publicar'
 import { Aviso, Boton, Campo, Cargando, Hoja, Interruptor, Pantalla, Tarjeta } from './ui'
+import { ResumenVisitas } from './Visitas'
 
 export type EditorRecorridoProps = {
   tourId: string
@@ -39,99 +41,6 @@ function Miniatura({ scene }: { scene: StoredScene }) {
   )
 }
 
-/** "45 s", "1 min", "1 min 20 s". Para el tiempo en cada habitación. */
-function duracion(segundos: number): string {
-  const s = Math.round(segundos)
-  if (s < 60) return `${s} s`
-  const m = Math.floor(s / 60)
-  const r = s % 60
-  return r ? `${m} min ${r} s` : `${m} min`
-}
-
-/**
- * Las visitas de la casa publicada, como las lee un agente: cuántas, qué cuartos
- * les importaron y cuánto se quedaron, qué puntos tocaron. La gráfica que vende,
- * en texto: con dos a doce habitaciones una lista ordenada dice más que una
- * barra, y no cuesta ni un byte de librería.
- */
-function ResumenVisitas({
-  resumen,
-  ultimos7,
-  tour,
-}: {
-  resumen: ResumenDeVisitas
-  /** Calculado al pedir las visitas, no al pintar: leer el reloj en el render es impuro. */
-  ultimos7: number
-  tour: StoredTour
-}) {
-  const nombre = (id: string) => tour.scenes.find((s) => s.id === id)?.name ?? id
-  const etiqueta = (id: string) => {
-    for (const s of tour.scenes) {
-      const h = s.hotspots.find((p) => p.id === id)
-      if (h) return h.label || id
-    }
-    return id
-  }
-  const escenas = Object.entries(resumen.escenas).sort(
-    (a, b) => b[1].visitas - a[1].visitas || b[1].segundos - a[1].segundos,
-  )
-  const puntos = Object.entries(resumen.puntos)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5)
-
-  return (
-    <div className="flex flex-col gap-4 text-sm">
-      <div>
-        <p className="text-3xl font-bold text-ink-50">
-          {resumen.visitas} {resumen.visitas === 1 ? 'visita' : 'visitas'}
-        </p>
-        <p className="text-ink-200">
-          {ultimos7} en los últimos 7 días · {resumen.aparatos.modestos} en teléfonos modestos
-          {resumen.fallas
-            ? ` · ${resumen.fallas} ${resumen.fallas === 1 ? 'vez' : 'veces'} no cargó una foto`
-            : ''}
-        </p>
-      </div>
-      {escenas.length > 0 && (
-        <div>
-          <p className="mb-2 font-semibold">Qué cuartos les importaron</p>
-          <ul className="flex flex-col gap-1">
-            {escenas.map(([id, e]) => (
-              <li key={id} className="flex justify-between gap-3">
-                <span className="truncate">{nombre(id)}</span>
-                <span className="shrink-0 text-ink-200">
-                  {e.visitas} · {duracion(e.segundos / Math.max(1, e.visitas))} cada uno
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {puntos.length > 0 && (
-        <div>
-          <p className="mb-2 font-semibold">Puntos que tocaron</p>
-          <ul className="flex flex-col gap-1">
-            {puntos.map(([id, n]) => (
-              <li key={id} className="flex justify-between gap-3">
-                <span className="truncate">{etiqueta(id)}</span>
-                <span className="shrink-0 text-ink-200">{n}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <p className="text-xs text-ink-200/70">
-        Se cuentan sesiones, no personas: sin cookies ni huella del navegador, y el servidor no
-        guarda la dirección IP. Quien tenga activado "no rastrear" no aparece.
-      </p>
-      {!resumen.completos && (
-        <p className="text-xs text-amber-300">
-          Hay más visitas de las que se pudieron sumar: el número real es mayor.
-        </p>
-      )}
-    </div>
-  )
-}
 
 export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const [tour, setTour] = useState<StoredTour | null | 'no-existe'>(null)
@@ -884,7 +793,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
             </Aviso>
           )}
           {visitas.estado === 'listo' && (
-            <ResumenVisitas resumen={visitas.resumen} ultimos7={visitas.ultimos7} tour={tour} />
+            <ResumenVisitas resumen={visitas.resumen} ultimos7={visitas.ultimos7} nombres={nombresDe(tour)} />
           )}
         </Hoja>
       )}

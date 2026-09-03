@@ -53,6 +53,7 @@ const Capturar = lazy(() =>
 const SubirFoto = lazy(() =>
   import('./components/crear/SubirFoto').then((m) => ({ default: m.SubirFoto })),
 )
+const Panel = lazy(() => import('./components/crear/Panel').then((m) => ({ default: m.Panel })))
 
 const PISTA_DEMO = 'Es un ejemplo — toca "Crear el mío" arriba para usar tu cámara'
 
@@ -173,6 +174,11 @@ export default function App() {
 
       case 'demo':
         return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
+
+      /* Las casas publicadas con el código de la inmobiliaria, desde cualquier
+         teléfono. Como 'publicado', no toca IndexedDB. */
+      case 'panel':
+        return <Panel ir={ir} />
 
       case 'visor':
       default:

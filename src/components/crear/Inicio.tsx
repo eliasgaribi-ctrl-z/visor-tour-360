@@ -14,6 +14,7 @@ import { almacenamientoUtilizable } from '../../lib/store/tours'
 import { formatBytes, requestPersistence, storageInfo } from '../../lib/store/quota'
 import { mensajeDePaquete } from '../../lib/store/entregar'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
+import { sePuedePublicar } from '../../lib/publicar'
 import { Aviso, Boton, Campo, Cargando, Hoja, Pantalla, Tarjeta } from './ui'
 
 export type InicioProps = {
@@ -232,6 +233,14 @@ export function Inicio({ ir }: InicioProps) {
             {importando ? 'Abriendo…' : 'Abrir archivo'}
           </Boton>
         </div>
+
+        {/* Lo que vive en el servidor a nombre de la inmobiliaria, publicado
+            desde cualquier teléfono. Solo si este build sabe publicar. */}
+        {sePuedePublicar() && (
+          <Boton tipo="fantasma" ancho onClick={() => ir({ nombre: 'panel' })}>
+            Casas publicadas por link
+          </Boton>
+        )}
 
         <input
           ref={archivo}
