@@ -15,6 +15,12 @@ interface ImportMetaEnv {
    * siguen viviendo en el teléfono y el botón ni aparece.
    */
   readonly VITE_PUBLICAR_BASE?: string
+  /**
+   * `1` en el build que arma `tools/sitio.mjs`: la casa como sitio estático
+   * autocontenido. El visor lee `recorrido/tour.json` de su propia carpeta y no
+   * enseña ninguna pantalla de crear. No se pone a mano: la pone la herramienta.
+   */
+  readonly VITE_SITIO?: string
 }
 
 interface ImportMeta {

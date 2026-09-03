@@ -284,4 +284,15 @@ describe('manifiestoATour', () => {
     const tour = manifiestoATour(llave, { ...v2, marca: { ...v2.marca, logo: 'logo.svg' } })
     expect(tour.marca?.logo).toBeUndefined()
   })
+
+  it('con `base`, las direcciones salen de esa carpeta y no del Worker', () => {
+    /* Es lo que hace autocontenido al sitio de `tools/sitio.mjs`: una base
+       RELATIVA deja las fotos junto al index.html, se sirva desde donde se sirva.
+       El logo va a la misma carpeta, y la variante de 2048 se sigue eligiendo. */
+    const tour = manifiestoATour('sitio', v2, { base: './recorrido/fotos', anchoTextura: 2048 })
+    expect(tour.scenes[0].image).toBe('./recorrido/fotos/000.2k.jpg')
+    expect(tour.scenes[1].image).toBe('./recorrido/fotos/001.jpg')
+    expect(tour.marca?.logo).toBe('./recorrido/fotos/logo.png')
+    expect(tour.scenes[0].image).not.toContain('/t/')
+  })
 })

@@ -38,8 +38,8 @@
  * Regla de la casa, como en los demás: se importa lo REAL (el fixture v2 con su
  * basura adentro, el Worker de verdad), no una copia.
  */
-import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -331,6 +331,33 @@ revisar(
   'y pesa bastante menos que la completa',
   variante.bytes > 0 && variante.bytes < pesoCompleta * 0.75,
   `${variante.bytes} B contra ${pesoCompleta} B`,
+)
+
+/* ── 2b · La misma casa como sitio propio, bajada del link ──────────────────
+   `tools/sitio.mjs` también sabe partir de una casa PUBLICADA. Se prueba aquí
+   porque es el único arnés con un Worker vivo; lo demás de la herramienta —el
+   `.tour` como fuente, y que la carpeta abra en un navegador limpio sin pedir
+   nada fuera de ella— lo mide `sitio.mjs`. */
+console.log('\n=== tools/sitio.mjs baja la casa publicada como sitio propio ===')
+const carpetaSitio = join(estado, 'sitio')
+const sitio = spawnSync(process.execPath, ['tools/sitio.mjs', `${WORKER}/t/${llave}`, carpetaSitio], { encoding: 'utf8' })
+revisar('la herramienta termina bien desde el link', sitio.status === 0, (sitio.stderr || '').trim().split('\n').pop() ?? '')
+const tourSitio = existsSync(join(carpetaSitio, 'recorrido/tour.json'))
+  ? JSON.parse(readFileSync(join(carpetaSitio, 'recorrido/tour.json'), 'utf8'))
+  : null
+revisar('con el manifiesto tal como lo sirve el Worker', tourSitio?.version === 2 && tourSitio?.title === 'Casa de prueba v2', String(tourSitio?.title))
+revisar(
+  'y todas las copias de cada foto, la de 2048 y el logo incluidos',
+  ['000.jpg', '000.2k.jpg', '001.jpg', '001.2k.jpg', 'logo.png'].every((n) => existsSync(join(carpetaSitio, 'recorrido/fotos', n))),
+)
+revisar(
+  'la foto bajada son los bytes del servidor',
+  existsSync(join(carpetaSitio, 'recorrido/fotos/000.2k.jpg')) && readFileSync(join(carpetaSitio, 'recorrido/fotos/000.2k.jpg')).equals(chica),
+)
+revisar(
+  'y el index.html trae la tarjeta con el precio',
+  existsSync(join(carpetaSitio, 'index.html')) &&
+    readFileSync(join(carpetaSitio, 'index.html'), 'utf8').includes('property="og:title" content="Desde $1.9M · Casa de prueba v2"'),
 )
 
 /* ══════════════════════════════════════════════════════════════════════════

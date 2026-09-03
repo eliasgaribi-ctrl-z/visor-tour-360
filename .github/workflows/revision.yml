@@ -241,6 +241,14 @@ jobs:
       - name: Publicar por link, de punta a punta
         run: node tools/pruebas/publicar.mjs
 
+      # La casa como sitio propio, sin Worker y sin nada nuestro: el arnés
+      # fabrica el .tour con el escritor independiente, corre `tools/sitio.mjs`,
+      # sirve la carpeta desde un SUBDIRECTORIO con un servidor de Node y la abre
+      # en un navegador limpio. Portada, marca, la foto dibujada, y que ni una
+      # petición salga de la carpeta: eso es lo que "autocontenido" promete.
+      - name: El sitio autocontenido abre desde cualquier carpeta
+        run: node tools/pruebas/sitio.mjs
+
       - name: El log del servidor, si algo falló
         if: failure()
         run: cat /tmp/dev.log

@@ -1,0 +1,1 @@
+import{I as e,d as t,z as n}from"./index-B-eWJNnG.js";var r=n(e(),1);function i(e){let[n,i]=(0,r.useState)({url:null,falta:!1});return(0,r.useEffect)(()=>{if(i({url:null,falta:!1}),!e)return;let n=!0;return t(e).then(e=>{n&&i({url:e,falta:e===null})}),()=>{n=!1}},[e]),n}function a(e){return i(e).url}export{i as n,a as t};

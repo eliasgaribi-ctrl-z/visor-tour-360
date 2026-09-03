@@ -237,11 +237,13 @@ src/
         ├── PuntosEditables.tsx Marcadores arrastrables
         ├── VisorGuardado.tsx   Abre un recorrido guardado
         ├── VisorPublicado.tsx  Abre una casa publicada por link (sección 14)
+        ├── VisorSitio.tsx      La casa leída de su PROPIA carpeta: el sitio autocontenido (sección 14)
         ├── Panel.tsx           Las casas publicadas con el código de la inmobiliaria (sección 14)
         ├── Visitas.tsx         El resumen de visitas que comparten el editor y el panel
         └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
+tools/sitio.mjs                 La casa como sitio estático autocontenido, desde el .tour o desde el link (sección 14)
 tools/pruebas/costura.html      Banco de pruebas de la costura (sección 12)
 public/prueba.html              Diagnóstico de compatibilidad del teléfono
 
@@ -262,6 +264,7 @@ tools/pruebas/giroscopio.mjs    El giroscopio sigue a la mano, y quieto no dibuj
 tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (100 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
 tools/pruebas/publicar.mjs      Publicar por link de punta a punta, con el Worker de verdad en local
+tools/pruebas/sitio.mjs         El sitio autocontenido abre desde cualquier carpeta, y nada sale de ella
 
 .github/workflows/revision.yml  Los corre todos en cada push
 ```
@@ -1143,7 +1146,7 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Lo que corre solo: `npm test`, los trece arneses y el CI
+### Lo que corre solo: `npm test`, los catorce arneses y el CI
 
 ```bash
 npm test        # vitest run
@@ -1192,7 +1195,7 @@ dos trabajos: primero `npm ci`, `npm run lint` (con cero avisos permitidos),
 `npm run typecheck`, `npm run build`, `npm test`, los cinco arneses que no
 necesitan navegador, el peso del arranque (falla arriba de 400 kB), el
 `typecheck` del `worker/` y el gate de `docs/`; después, con un servidor de
-desarrollo levantado, los siete arneses de Playwright.
+desarrollo levantado, los ocho arneses de Playwright.
 
 El gate de `docs/` es el paso que menos se ve venir:
 
@@ -1209,7 +1212,7 @@ nuevo, que para git es un archivo sin seguir. `git diff` a secas no mira los
 archivos sin seguir, así que el paso pasaba en verde con `docs/` desactualizado,
 que es exactamente lo que se quería atrapar.
 
-### Los trece arneses, y por qué además de Vitest hay arneses
+### Los catorce arneses, y por qué además de Vitest hay arneses
 
 Vitest cubre la aritmética. Lo que este proyecto también necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
@@ -1232,7 +1235,8 @@ código 1 si algo no cuadra. El mismo `revision.yml` los corre todos.
 | `giroscopio.mjs` | con sensores sintéticos a 60 Hz: quieto **0 dibujos/s**, girar 90° gira 90°, encender y apagar no saltan, el dedo corrige, la pestaña oculta apaga | sí |
 | `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 100 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
-| `publicar.mjs` | publicar por link de punta a punta con el Worker real en local: la casa abre en un navegador con IndexedDB **vacío**, con portada y marca; la variante de 2048 según el aparato; resubir conserva el link; dar de baja | sí |
+| `publicar.mjs` | publicar por link de punta a punta con el Worker real en local: la casa abre en un navegador con IndexedDB **vacío**, con portada y marca; la variante de 2048 según el aparato; resubir conserva el link; dar de baja; y `tools/sitio.mjs` baja la casa publicada como carpeta | sí |
+| `sitio.mjs` | el sitio autocontenido: `tools/sitio.mjs` arma la carpeta desde el `.tour`, un servidor de Node la sirve desde un **subdirectorio** y abre en un navegador limpio con portada, marca y la foto dibujada; **ninguna petición sale de la carpeta** y nada da 404; también con un `.tour` v1 | sí |
 
 **Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
 encabezado de los arneses que las incumplieron:
@@ -1606,6 +1610,45 @@ código, sin migrar datos. Hacerlo requiere un proveedor de correo (o de
 identidad) fuera de Cloudflare Workers, que es una decisión de proveedor y de
 costo, no de código, y por eso no está aquí.
 
+### La casa como sitio propio: `tools/sitio.mjs`
+
+La objeción de venta que toda inmobiliaria hace tarde o temprano: **"¿y si
+ustedes cierran?"**. La respuesta es una carpeta.
+
+```bash
+node tools/sitio.mjs casa-en-tlajomulco.tour ./sitio-casa --url https://inmobiliaria.mx/casas/tlajomulco/
+node tools/sitio.mjs https://visor-tours.TU-CUENTA.workers.dev/t/<llave> ./sitio-casa
+```
+
+Deja en `./sitio-casa` el visor compilado **y** el recorrido, juntos: el
+`index.html`, sus `assets/`, y `recorrido/tour.json` con `recorrido/fotos/`.
+Esa carpeta se sube a cualquier hosting estático —el de la inmobiliaria,
+Netlify, S3, una carpeta de un servidor viejo— y abre la casa sin Worker, sin
+nuestro dominio y sin nada que haya que mantener. Funciona bajo cualquier
+subcarpeta (`--base=./`, la misma razón por la que el sitio de Pages funciona
+bajo `/repositorio/`) y no manda **ni una petición** fuera de su carpeta: sin
+métricas, porque no hay a quién reportarlas, y esa es la idea.
+
+Por dentro es el mismo visor, compilado con `VITE_SITIO=1`. Con esa variable
+`App.tsx` enseña la casa para **cualquier** ruta —no hay "mis recorridos" que
+listar, y el link de un comprador no debe abrir la administración de nadie
+aunque le agreguen `#/inicio`— y `VisorSitio` lee `recorrido/tour.json` de su
+propia carpeta con el mismo `manifiestoATour` que lee lo que baja del Worker,
+con la base en relativo. La herramienta acepta las dos fuentes: el `.tour` que
+el agente exportó (lo abre con un lector de ZIP propio de Node y renumera las
+fotos exactamente como hace el publicador, así que el manifiesto que escribe es
+el mismo v2) o el link de una casa publicada (baja el manifiesto y cada archivo
+que nombra, la variante de 2048 incluida). Retoca el `index.html` —el título, la
+tarjeta de WhatsApp con precio, dirección e inmobiliaria, el `preload` a la
+primera foto de **esta** casa y no a la de la demo, el color de la barra del
+teléfono— y quita las panorámicas de ejemplo.
+
+Dos cosas que hay que saber. La tarjeta lleva imagen solo con `--url`: Open
+Graph exige direcciones absolutas y la herramienta no puede adivinar dónde va a
+vivir la carpeta. Y la carpeta se abre por http, no con doble clic —el navegador
+no carga módulos desde `file://`—; para verla en la computadora,
+`python3 -m http.server -d ./sitio-casa 8000`.
+
 ### Cómo se prueba sin desplegar nada
 
 `tools/pruebas/publicar.mjs` levanta el Worker de verdad en local (`wrangler
@@ -1616,7 +1659,17 @@ dejó de vivir en un solo teléfono. Mide la tarjeta de WhatsApp, la portada con
 marca en píxeles, que la foto se dibuje (un CORS mal puesto es un cuarto negro
 sin ningún error), la variante de 2048 según el aparato, volver a subir sobre el
 mismo link, "hay cambios sin publicar", dar de baja, y lo que el Worker rechaza.
-Corre en el CI con los demás arneses.
+Corre en el CI con los demás arneses. Y corre `tools/sitio.mjs` contra ese
+Worker vivo, para la fuente que solo ahí se puede probar: el link.
+
+`tools/pruebas/sitio.mjs` hace lo mismo con el sitio autocontenido, sin Worker:
+fabrica el `.tour` con el escritor de ZIP independiente, corre `tools/sitio.mjs`,
+sirve la carpeta desde un **subdirectorio** con un servidor estático de Node
+escrito ahí mismo —un sitio que solo abriera con el servidor del proyecto no
+sería autocontenido— y la abre en un navegador limpio: portada, marca, logo, la
+foto dibujada, y que ninguna petición salga de la carpeta ni nada dé 404.
+También con un `.tour` de la versión 1, que es el que tiene un agente que
+exportó hace tiempo.
 
 ### Qué cuesta
 

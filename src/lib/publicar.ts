@@ -549,6 +549,14 @@ export type OpcionesDeApertura = {
    * opción se toma la completa: es el valor seguro, y el que usan las pruebas.
    */
   anchoTextura?: number
+  /**
+   * De dónde bajan las fotos, sin barra final. Por omisión, la carpeta de la
+   * casa en el Worker. El sitio autocontenido (`tools/sitio.mjs`) la pone
+   * RELATIVA —`./recorrido/fotos`— porque ahí no hay Worker: las fotos viven
+   * junto al `index.html`, en cualquier hosting estático y bajo cualquier
+   * subcarpeta.
+   */
+  base?: string
 }
 
 /**
@@ -556,7 +564,8 @@ export type OpcionesDeApertura = {
  *
  * Es el gemelo de `resolveTour` (./store/tours.ts): aquel resuelve llaves de
  * IndexedDB a URLs `blob:`, y este resuelve nombres de archivo a URLs del
- * Worker. De ahí para abajo el visor no sabe ni le importa de dónde salieron.
+ * Worker —o de la carpeta que se le indique en `base`—. De ahí para abajo el
+ * visor no sabe ni le importa de dónde salieron.
  *
  * Lee la v1 y la v2: un manifiesto viejo simplemente no trae ficha ni marca. Y
  * todo lo que trae pasa por los mismos filtros que un `.tour` ajeno, porque es
@@ -568,7 +577,7 @@ export function manifiestoATour(llave: string, crudo: unknown, opciones: Opcione
     throw new PublicarError('El recorrido publicado llegó en un formato que no se entiende.')
   }
   const m = crudo as Partial<Manifiesto>
-  const base = `${BASE}/t/${llave}/fotos`
+  const base = opciones.base ?? `${BASE}/t/${llave}/fotos`
   const chica = (opciones.anchoTextura ?? 4096) <= 2048
 
   const scenes: TourScene[] = []
