@@ -37,10 +37,24 @@
  * un robots.txt que cierra el sitio entero, porque una casa en venta puede
  * estar habitada y su interior no tiene por qué quedar en Google.
  *
- * QUÉ SE PUEDE SUBIR · solo JPEG, con tope de tamaño, de cantidad y de peso
+ * QUÉ SE PUEDE SUBIR · solo imágenes, con tope de tamaño, de cantidad y de peso
  * total. El manifiesto se vuelve a sanear aquí aunque el teléfono ya lo haya
  * hecho: lo que viene por la red es de quien tenga la clave, y una clave
  * compartida entre varios teléfonos acaba en más manos de las previstas.
+ *
+ * ── El manifiesto es la versión 2 ───────────────────────────────────────────
+ *
+ * La v1 llevaba las habitaciones y sus puntos. La v2 lleva además lo que hace
+ * que el link sea un PRODUCTO y no una foto: la ficha de la casa (precio,
+ * metros, contacto) que el visor enseña como portada y que aquí se usa para la
+ * tarjeta de WhatsApp; la marca de la inmobiliaria, con su logo; el modo kiosco;
+ * y por habitación el rumbo, el nivel y la cobertura. Y una variante de 2048 px
+ * de cada foto, para que un teléfono modesto no baje 1.5 MB que va a encoger.
+ *
+ * Todo es ADITIVO y opcional: un visor cacheado de la semana pasada que lea un
+ * manifiesto v2 verá menos, no verá mal. Y lo que se guarda aquí lo vuelve a
+ * filtrar el visor al bajarlo (`limpiarMarca`, `limpiarFicha`, `limpiarEscena`):
+ * el Worker acota tamaños y formas; el visor decide qué se puede pintar.
  */
 
 export type Env = {
@@ -61,8 +75,9 @@ export type Env = {
    salga de eso es un error o alguien probando. */
 const MAX_FOTO = 12 * 1024 * 1024
 const MAX_FOTOS = 48
+const MAX_LOGO = 1024 * 1024
 const MAX_MANIFIESTO = 256 * 1024
-const MAX_TOTAL = 120 * 1024 * 1024
+const MAX_TOTAL = 160 * 1024 * 1024
 
 /** Alfabeto sin caracteres que se confunden al leerlos en voz alta o a mano. */
 const ALFABETO = 'abcdefghijkmnpqrstuvwxyz23456789'
@@ -97,15 +112,49 @@ function nuevaLlave(): string {
 const LLAVE_VALIDA = new RegExp(`^[${ALFABETO}]{26}$`)
 
 /**
- * Nombre de foto admitido.
+ * Nombres de archivo admitidos.
  *
- * Cerrado a la forma que el teléfono manda —`000.jpg`, `000.min.jpg`— y no a
- * "algo que no tenga barras". Las llaves de R2 no son rutas de disco y no hay
- * un `..` que escape a ningún lado, pero un nombre libre sí deja escribir
- * dentro del prefijo de otra casa, y de ahí sale servir un archivo cualquiera
- * desde nuestro dominio.
+ * Cerrados a la forma que el teléfono manda —`000.jpg`, `000.min.jpg`,
+ * `000.2k.jpg`, `logo.png`— y no a "algo que no tenga barras". Las llaves de R2
+ * no son rutas de disco y no hay un `..` que escape a ningún lado, pero un
+ * nombre libre sí deja escribir dentro del prefijo de otra casa, y de ahí sale
+ * servir un archivo cualquiera desde nuestro dominio.
  */
-const FOTO_VALIDA = /^[0-9]{3}(\.min)?\.jpg$/
+const FOTO_VALIDA = /^[0-9]{3}(\.min|\.2k)?\.jpg$/
+const VARIANTE_2K = /^[0-9]{3}\.2k\.jpg$/
+const LOGO_VALIDO = /^logo\.(png|jpg|webp)$/
+const archivoValido = (nombre: string) => FOTO_VALIDA.test(nombre) || LOGO_VALIDO.test(nombre)
+
+/**
+ * Qué tipo de imagen es, por su FIRMA y no por su extensión.
+ *
+ * No es una validación fuerte —nadie con la clave necesita engañarnos— pero
+ * atrapa el error de verdad frecuente, que es subir un blob equivocado y
+ * descubrirlo cuando el cliente abre el link y ve una esfera negra. Y como el
+ * `Content-Type` con el que se sirve sale de aquí, un `logo.png` con otra cosa
+ * dentro no se sirve como PNG.
+ */
+function tipoDeImagen(cuerpo: ArrayBuffer): 'image/jpeg' | 'image/png' | 'image/webp' | null {
+  const b = new Uint8Array(cuerpo.slice(0, 12))
+  if (b.length < 4) return null
+  if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg'
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+  if (
+    b.length >= 12 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  return null
+}
+
+/** La extensión que corresponde a cada tipo: un `logo.png` tiene que SER un PNG. */
+const EXTENSION: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
 
 /* ── Respuestas ──────────────────────────────────────────────────────────── */
 
@@ -170,13 +219,65 @@ const textoOpcional = (v: unknown, max: number): string | undefined =>
 const numero = (v: unknown, porDefecto = 0): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : porDefecto
 
+const numeroOpcional = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) ? v : undefined
+
+const enteroOpcional = (v: unknown, max: number): number | undefined => {
+  const n = numeroOpcional(v)
+  if (n === undefined) return undefined
+  const r = Math.round(n)
+  return r >= 0 && r <= max ? r : undefined
+}
+
+/** Un color solo se acepta si es un hex que cualquier navegador entiende. */
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
+const colorOpcional = (v: unknown): string | undefined =>
+  typeof v === 'string' && HEX.test(v.trim()) ? v.trim() : undefined
+
 type EscenaPublica = {
   id: string
   name: string
   foto: string
   miniatura?: string
+  /** La misma foto a 2048 px, para los teléfonos que igual la iban a encoger. */
+  foto2048?: string
   initialYaw: number
   hotspots: unknown[]
+  rumbo?: number
+  nivel?: { tiltX: number; tiltZ: number }
+  coverageDeg?: number
+}
+
+type FichaPublica = {
+  precio?: string
+  superficie?: string
+  recamaras?: number
+  banos?: number
+  direccion?: string
+  descripcion?: string
+  agente?: { nombre?: string; telefono?: string; whatsapp?: string; correo?: string }
+}
+
+type MarcaPublica = {
+  nombre?: string
+  colores?: Record<string, string>
+  hudFondo?: string
+  hudTinta?: string
+  hudTintaSuave?: string
+  fondoApp?: string
+  tipografia?: string
+  logo?: string
+}
+
+export type ManifiestoPublico = {
+  version: 2
+  title: string
+  subtitle?: string
+  startSceneId: string
+  scenes: EscenaPublica[]
+  ficha?: FichaPublica
+  marca?: MarcaPublica
+  autogiro?: boolean
 }
 
 /**
@@ -187,8 +288,14 @@ type EscenaPublica = {
  * compartida entre los teléfonos de un equipo termina, con el tiempo, en más
  * manos de las que uno cree. Lo que se guarda aquí se lo va a comer el visor de
  * un cliente.
+ *
+ * Lo que se acota aquí son FORMAS y TAMAÑOS. Lo que significa cada cosa —si un
+ * color deja legible el HUD, si un correo puede llevar un BCC escondido— lo
+ * decide el visor al bajar el manifiesto, con las mismas funciones con las que
+ * filtra un `.tour` ajeno. Dos filtros y no uno, porque los dos lados reciben
+ * datos de una red que no controlan.
  */
-function saneaManifiesto(crudo: unknown): { ok: true; valor: unknown } | { ok: false; por: string } {
+function saneaManifiesto(crudo: unknown): { ok: true; valor: ManifiestoPublico } | { ok: false; por: string } {
   if (!crudo || typeof crudo !== 'object') return { ok: false, por: 'El manifiesto no es un objeto.' }
   const m = crudo as Record<string, unknown>
 
@@ -216,15 +323,38 @@ function saneaManifiesto(crudo: unknown): { ok: true; valor: unknown } | { ok: f
 
     const miniatura =
       typeof e.miniatura === 'string' && FOTO_VALIDA.test(e.miniatura) ? e.miniatura : undefined
+    const foto2048 =
+      typeof e.foto2048 === 'string' && VARIANTE_2K.test(e.foto2048) ? e.foto2048 : undefined
 
-    scenes.push({
+    const escena: EscenaPublica = {
       id,
       name: texto(e.name, 60, 'Habitación'),
       foto: e.foto,
       miniatura,
+      foto2048,
       initialYaw: numero(e.initialYaw),
-      hotspots: saneaHotspots(e.hotspots, vistos),
-    })
+      hotspots: saneaHotspots(e.hotspots),
+    }
+
+    /* Los tres campos de la v2 por habitación. Se acotan igual que en el
+       visor: el rumbo al círculo, el nivel a ±15, la cobertura a (0, 360]. */
+    const rumbo = numeroOpcional(e.rumbo)
+    if (rumbo !== undefined) escena.rumbo = ((rumbo % 360) + 360) % 360
+    if (e.nivel && typeof e.nivel === 'object') {
+      const n = e.nivel as Record<string, unknown>
+      const tiltX = numeroOpcional(n.tiltX)
+      const tiltZ = numeroOpcional(n.tiltZ)
+      if (tiltX !== undefined && tiltZ !== undefined) {
+        escena.nivel = {
+          tiltX: Math.max(-15, Math.min(15, tiltX)),
+          tiltZ: Math.max(-15, Math.min(15, tiltZ)),
+        }
+      }
+    }
+    const cobertura = numeroOpcional(e.coverageDeg)
+    if (cobertura !== undefined && cobertura > 0 && cobertura <= 360) escena.coverageDeg = cobertura
+
+    scenes.push(escena)
   }
 
   if (scenes.length === 0) return { ok: false, por: 'Ninguna habitación traía una foto válida.' }
@@ -242,19 +372,24 @@ function saneaManifiesto(crudo: unknown): { ok: true; valor: unknown } | { ok: f
   const startSceneId =
     typeof m.startSceneId === 'string' && ids.has(m.startSceneId) ? m.startSceneId : scenes[0].id
 
-  return {
-    ok: true,
-    valor: {
-      version: 1,
-      title: texto(m.title, 80, 'Recorrido'),
-      subtitle: textoOpcional(m.subtitle, 120),
-      startSceneId,
-      scenes,
-    },
+  const valor: ManifiestoPublico = {
+    version: 2,
+    title: texto(m.title, 80, 'Recorrido'),
+    subtitle: textoOpcional(m.subtitle, 120),
+    startSceneId,
+    scenes,
   }
+
+  const ficha = saneaFicha(m.ficha)
+  if (ficha) valor.ficha = ficha
+  const marca = saneaMarca(m.marca)
+  if (marca) valor.marca = marca
+  if (m.autogiro === true) valor.autogiro = true
+
+  return { ok: true, valor }
 }
 
-function saneaHotspots(crudo: unknown, _ids: Set<string>): unknown[] {
+function saneaHotspots(crudo: unknown): unknown[] {
   if (!Array.isArray(crudo)) return []
   const salida: unknown[] = []
   for (const h of crudo.slice(0, 100)) {
@@ -282,6 +417,69 @@ function saneaHotspots(crudo: unknown, _ids: Set<string>): unknown[] {
   return salida
 }
 
+/** La ficha de la casa, acotada campo por campo. Mismos topes que `limpiarFicha` del visor. */
+function saneaFicha(crudo: unknown): FichaPublica | undefined {
+  if (!crudo || typeof crudo !== 'object') return undefined
+  const f = crudo as Record<string, unknown>
+  const ficha: FichaPublica = {}
+  const precio = textoOpcional(f.precio, 40)
+  if (precio) ficha.precio = precio
+  const superficie = textoOpcional(f.superficie, 40)
+  if (superficie) ficha.superficie = superficie
+  const recamaras = enteroOpcional(f.recamaras, 20)
+  if (recamaras !== undefined) ficha.recamaras = recamaras
+  const banos = enteroOpcional(f.banos, 20)
+  if (banos !== undefined) ficha.banos = banos
+  const direccion = textoOpcional(f.direccion, 160)
+  if (direccion) ficha.direccion = direccion
+  const descripcion = textoOpcional(f.descripcion, 600)
+  if (descripcion) ficha.descripcion = descripcion
+
+  if (f.agente && typeof f.agente === 'object') {
+    const a = f.agente as Record<string, unknown>
+    const agente: NonNullable<FichaPublica['agente']> = {}
+    const nombre = textoOpcional(a.nombre, 80)
+    if (nombre) agente.nombre = nombre
+    const telefono = textoOpcional(a.telefono, 30)
+    if (telefono) agente.telefono = telefono
+    const whatsapp = textoOpcional(a.whatsapp, 20)
+    if (whatsapp) agente.whatsapp = whatsapp
+    const correo = textoOpcional(a.correo, 120)
+    if (correo) agente.correo = correo
+    if (Object.keys(agente).length > 0) ficha.agente = agente
+  }
+  return Object.keys(ficha).length > 0 ? ficha : undefined
+}
+
+const TOKENS_DE_COLOR = ['brand300', 'brand400', 'brand500', 'brand600', 'ink50', 'ink200', 'ink700', 'ink900']
+const TIPOGRAFIAS = ['sistema', 'serif', 'geometrica']
+
+/** La marca, acotada. Los colores tienen que ser hex; el logo, un nombre de la lista. */
+function saneaMarca(crudo: unknown): MarcaPublica | undefined {
+  if (!crudo || typeof crudo !== 'object') return undefined
+  const m = crudo as Record<string, unknown>
+  const marca: MarcaPublica = {}
+  const nombre = textoOpcional(m.nombre, 60)
+  if (nombre) marca.nombre = nombre
+
+  if (m.colores && typeof m.colores === 'object') {
+    const colores: Record<string, string> = {}
+    for (const clave of TOKENS_DE_COLOR) {
+      const c = colorOpcional((m.colores as Record<string, unknown>)[clave])
+      if (c) colores[clave] = c
+    }
+    if (Object.keys(colores).length > 0) marca.colores = colores
+  }
+  for (const clave of ['hudFondo', 'hudTinta', 'hudTintaSuave', 'fondoApp'] as const) {
+    const c = colorOpcional(m[clave])
+    if (c) marca[clave] = c
+  }
+  if (typeof m.tipografia === 'string' && TIPOGRAFIAS.includes(m.tipografia)) marca.tipografia = m.tipografia
+  if (typeof m.logo === 'string' && LOGO_VALIDO.test(m.logo)) marca.logo = m.logo
+
+  return Object.keys(marca).length > 0 ? marca : undefined
+}
+
 /* ── La página que ve WhatsApp ───────────────────────────────────────────── */
 
 function escapar(s: string): string {
@@ -297,18 +495,27 @@ function escapar(s: string): string {
  * apunta aquí: esta página trae el título, la descripción y la miniatura ya
  * escritos en el HTML, y a una persona la rebota al visor.
  *
+ * La tarjeta es un ANUNCIO, no un nombre de archivo: con ficha, el título
+ * empieza por el precio y la descripción es la dirección, que es lo que un
+ * comprador quiere leer antes de tocar. Y `og:site_name` lleva la inmobiliaria,
+ * que es a quien le importa que se vea su nombre.
+ *
  * El rebote va en JavaScript y no en un 302 porque el 302 se lo llevaría también
  * el robot, que acabaría leyendo el index.html vacío de la app. Y hay un enlace
  * visible detrás, para quien tenga el JavaScript apagado.
  */
-function paginaDeEnlace(env: Env, llave: string, manifiesto: { title: string; subtitle?: string; scenes: { miniatura?: string; foto: string }[] }, origen: string): Response {
-  const titulo = escapar(manifiesto.title)
+function paginaDeEnlace(env: Env, llave: string, manifiesto: ManifiestoPublico, origen: string): Response {
+  const ficha = manifiesto.ficha
+  const titulo = escapar(ficha?.precio ? `${ficha.precio} · ${manifiesto.title}` : manifiesto.title)
   const descripcion = escapar(
-    manifiesto.subtitle ?? `Recorrido virtual de ${manifiesto.scenes.length} espacios.`,
+    ficha?.direccion ??
+      manifiesto.subtitle ??
+      `Recorrido virtual de ${manifiesto.scenes.length} ${manifiesto.scenes.length === 1 ? 'espacio' : 'espacios'}.`,
   )
   const portada = manifiesto.scenes[0]
   const imagen = `${origen}/t/${llave}/fotos/${portada.miniatura ?? portada.foto}`
   const destino = `${env.APP_BASE.replace(/\/+$/, '/')}#/p/${llave}`
+  const sitio = manifiesto.marca?.nombre ? `<meta property="og:site_name" content="${escapar(manifiesto.marca.nombre)}">\n` : ''
 
   const html = `<!doctype html>
 <html lang="es">
@@ -318,7 +525,7 @@ function paginaDeEnlace(env: Env, llave: string, manifiesto: { title: string; su
 <meta name="robots" content="noindex, nofollow">
 <title>${titulo}</title>
 <meta property="og:type" content="website">
-<meta property="og:title" content="${titulo}">
+${sitio}<meta property="og:title" content="${titulo}">
 <meta property="og:description" content="${descripcion}">
 <meta property="og:image" content="${escapar(imagen)}">
 <meta name="twitter:card" content="summary_large_image">
@@ -397,31 +604,32 @@ export default {
       // PUT /api/subir/<llave>/<archivo>
       if (pedido.method === 'PUT' && partes[1] === 'subir' && partes.length === 4) {
         const archivo = partes[3]
-        if (!FOTO_VALIDA.test(archivo)) return error(400, 'Nombre de foto no admitido.')
+        if (!archivoValido(archivo)) return error(400, 'Nombre de archivo no admitido.')
+        const esLogo = LOGO_VALIDO.test(archivo)
+        const tope = esLogo ? MAX_LOGO : MAX_FOTO
 
         const largo = Number(pedido.headers.get('Content-Length') ?? '0')
-        if (largo > MAX_FOTO) return error(413, 'Esa foto pesa demasiado.')
+        if (largo > tope) return error(413, 'Ese archivo pesa demasiado.')
 
         const cuerpo = await pedido.arrayBuffer()
-        if (cuerpo.byteLength > MAX_FOTO) return error(413, 'Esa foto pesa demasiado.')
-        if (cuerpo.byteLength === 0) return error(400, 'La foto venía vacía.')
+        if (cuerpo.byteLength > tope) return error(413, 'Ese archivo pesa demasiado.')
+        if (cuerpo.byteLength === 0) return error(400, 'El archivo venía vacío.')
 
-        /* Que empiece con SOI. No es una validación fuerte —nadie con la clave
-           necesita engañarnos— pero atrapa el error de verdad frecuente, que es
-           subir un blob equivocado y descubrirlo cuando el cliente abre el
-           link y ve una esfera negra. */
-        const cabecera = new Uint8Array(cuerpo.slice(0, 2))
-        if (cabecera[0] !== 0xff || cabecera[1] !== 0xd8) {
-          return error(400, 'Eso no es un JPEG.')
+        const tipo = tipoDeImagen(cuerpo)
+        if (!tipo) return error(400, 'Eso no es una imagen.')
+        if (!esLogo && tipo !== 'image/jpeg') return error(400, 'Las fotos tienen que ser JPEG.')
+        if (esLogo && !archivo.endsWith(`.${EXTENSION[tipo]}`)) {
+          return error(400, 'El logo no es del tipo que dice su nombre.')
         }
 
         await env.TOURS.put(`t/${llave}/fotos/${archivo}`, cuerpo, {
           httpMetadata: {
-            contentType: 'image/jpeg',
-            /* La llave es única e irrepetible, así que el contenido de esta
-               dirección no va a cambiar nunca: se puede guardar para siempre.
-               Es lo que hace que volver a abrir la casa sea instantáneo. */
-            cacheControl: 'public, max-age=31536000, immutable',
+            contentType: tipo,
+            /* Las fotos de una llave solo cambian al volver a publicar, y el
+               visor las pide con la ruta exacta, así que una copia vieja se
+               retira sola en un día. Un año, como antes, dejaba al que republica
+               con las fotos viejas en el teléfono del comprador. */
+            cacheControl: 'public, max-age=86400',
           },
         })
         return json({ ok: true })
@@ -441,21 +649,38 @@ export default {
 
         const saneado = saneaManifiesto(crudo)
         if (!saneado.ok) return error(400, saneado.por)
+        const manifiesto = saneado.valor
 
         /* Se comprueba que las fotos estén ARRIBA antes de encender el
            interruptor. Si una subida falló y nadie se dio cuenta, el cliente
            abriría la casa con un cuarto en negro; es mejor que falle aquí,
-           mientras quien publica sigue mirando la pantalla. */
-        const manifiesto = saneado.valor as { scenes: { foto: string; miniatura?: string }[] }
+           mientras quien publica sigue mirando la pantalla. La variante de 2048
+           y el logo se comprueban igual: si faltan, se quitan del manifiesto en
+           vez de dejar una referencia rota, porque son opcionales. */
         let total = 0
         for (const escena of manifiesto.scenes) {
           const objeto = await env.TOURS.head(`t/${llave}/fotos/${escena.foto}`)
           if (!objeto) return error(409, `Falta subir la foto ${escena.foto}.`)
           total += objeto.size
+          if (escena.miniatura) {
+            const mini = await env.TOURS.head(`t/${llave}/fotos/${escena.miniatura}`)
+            if (mini) total += mini.size
+            else delete escena.miniatura
+          }
+          if (escena.foto2048) {
+            const chica = await env.TOURS.head(`t/${llave}/fotos/${escena.foto2048}`)
+            if (chica) total += chica.size
+            else delete escena.foto2048
+          }
+        }
+        if (manifiesto.marca?.logo) {
+          const logo = await env.TOURS.head(`t/${llave}/fotos/${manifiesto.marca.logo}`)
+          if (logo) total += logo.size
+          else delete manifiesto.marca.logo
         }
         if (total > MAX_TOTAL) return error(413, 'El recorrido completo pesa demasiado.')
 
-        await env.TOURS.put(`t/${llave}/tour.json`, JSON.stringify(saneado.valor), {
+        await env.TOURS.put(`t/${llave}/tour.json`, JSON.stringify(manifiesto), {
           httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'public, max-age=60' },
         })
         return json({ ok: true, llave, url: `${origen}/t/${llave}` })
@@ -479,7 +704,10 @@ export default {
 
     /* ── Ver ──────────────────────────────────────────────────────────────── */
 
-    if (partes[0] === 't' && pedido.method === 'GET') {
+    /* GET y también HEAD: el robot de una vista previa, un verificador de links
+       o el propio visor pueden preguntar por el tamaño antes de bajar. Sin esto
+       un HEAD daba 404 y parecía que la foto no existía. */
+    if (partes[0] === 't' && (pedido.method === 'GET' || pedido.method === 'HEAD')) {
       const llave = partes[1]
       if (!llave || !LLAVE_VALIDA.test(llave)) return error(404, 'No existe.')
 
@@ -488,7 +716,7 @@ export default {
 
       // GET /t/<llave>            →  la página con la vista previa
       if (partes.length === 2) {
-        const datos = (await manifiesto.json()) as Parameters<typeof paginaDeEnlace>[2]
+        const datos = (await manifiesto.json()) as ManifiestoPublico
         return paginaDeEnlace(env, llave, datos, origen)
       }
 
@@ -504,13 +732,15 @@ export default {
       }
 
       // GET /t/<llave>/fotos/<archivo>
-      if (partes.length === 4 && partes[2] === 'fotos' && FOTO_VALIDA.test(partes[3])) {
+      if (partes.length === 4 && partes[2] === 'fotos' && archivoValido(partes[3])) {
         const foto = await env.TOURS.get(`t/${llave}/fotos/${partes[3]}`)
         if (!foto) return error(404, 'Esa foto no está.')
-        return new Response(foto.body, {
+        return new Response(pedido.method === 'HEAD' ? null : foto.body, {
           headers: {
-            'Content-Type': 'image/jpeg',
-            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Content-Type': foto.httpMetadata?.contentType ?? 'image/jpeg',
+            // El tamaño se sabe: con él el navegador puede enseñar avance.
+            'Content-Length': String(foto.size),
+            'Cache-Control': 'public, max-age=86400',
             ...COMUNES,
           },
         })

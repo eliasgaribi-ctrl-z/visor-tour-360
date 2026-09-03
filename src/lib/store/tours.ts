@@ -120,12 +120,26 @@ export async function getTour(id: string): Promise<StoredTour | null> {
  * si aparece un escritor nuevo del almacén de recorridos. Ver el comentario de
  * `formato` en ./types.ts.
  */
-function paraGuardar(tour: StoredTour): StoredTour {
-  return { ...tour, formato: FORMAT_VERSION, updatedAt: Date.now() }
+function paraGuardar(tour: StoredTour, conservarFecha = false): StoredTour {
+  return {
+    ...tour,
+    formato: FORMAT_VERSION,
+    updatedAt: conservarFecha ? tour.updatedAt : Date.now(),
+  }
 }
 
-export async function saveTour(tour: StoredTour): Promise<StoredTour> {
-  const next = paraGuardar(tour)
+export type OpcionesDeGuardado = {
+  /**
+   * No mover `updatedAt`. Para los cambios que NO son del contenido de la casa:
+   * anotar que se publicó, o que se dio de baja. `updatedAt` se compara contra
+   * `publicacion.publicadoEn` para decir "hay cambios sin publicar", y si
+   * publicar moviera la fecha, el aviso saldría justo después de publicar.
+   */
+  conservarFecha?: boolean
+}
+
+export async function saveTour(tour: StoredTour, opciones: OpcionesDeGuardado = {}): Promise<StoredTour> {
+  const next = paraGuardar(tour, opciones.conservarFecha)
   await tx(STORE_TOURS, 'readwrite', (t) => idbPut(t, STORE_TOURS, next))
   return next
 }

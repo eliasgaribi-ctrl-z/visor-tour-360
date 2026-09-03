@@ -27,11 +27,26 @@
  *
  * Eso también quiere decir que la clave es tan buena como el teléfono que la
  * guarda: si se pierde un aparato, se cambia el secreto del Worker y listo.
+ *
+ * ── El manifiesto es la versión 2 ───────────────────────────────────────────
+ *
+ * La v1 llevaba las habitaciones y sus puntos, y el link abría directo en la
+ * foto. La v2 lleva lo que hace que el link sea el PRODUCTO: la ficha (precio,
+ * metros, contacto), que el visor enseña como portada y el Worker usa para la
+ * tarjeta de WhatsApp; la marca con su logo; el modo kiosco; y por habitación
+ * el rumbo, el nivel y la cobertura. Y una variante de 2048 px de cada foto,
+ * porque un teléfono modesto se bajaba 1.5 MB por cuarto para encogerlos.
+ *
+ * Los dos lados filtran. El Worker acota formas y tamaños; aquí, al bajar, se
+ * pasa lo que llega por `limpiarMarca`, `limpiarFicha` y `limpiarEscena` —las
+ * mismas funciones con las que se filtra un `.tour` ajeno— porque un manifiesto
+ * publicado también es de una red que no se controla.
  */
 
-import type { Tour, TourScene } from './types'
-import type { StoredTour } from './store/types'
+import type { Ficha, Tour, TourScene } from './types'
+import type { MarcaGuardada, StoredTour } from './store/types'
 import { getImage } from './store/tours'
+import { limpiarEscena, limpiarFicha, limpiarMarca } from './store/migrar'
 
 /**
  * Dirección del Worker, sin barra final. Se fija al compilar:
@@ -76,6 +91,9 @@ export class PublicarError extends Error {
   }
 }
 
+/** Qué copia de la foto: la completa, la miniatura o la de 2048 px. */
+export type Variante = 'foto' | 'min' | '2k'
+
 /**
  * Nombre de la foto de la habitación número `indice` dentro de la casa.
  *
@@ -84,9 +102,24 @@ export class PublicarError extends Error {
  * archivo que eligió otro. Con el índice, el nombre lo elegimos siempre
  * nosotros. El Worker rechaza cualquier otra forma.
  */
-export function nombreDeFoto(indice: number, miniatura = false): string {
-  return `${String(indice).padStart(3, '0')}${miniatura ? '.min' : ''}.jpg`
+export function nombreDeFoto(indice: number, variante: Variante = 'foto'): string {
+  const sufijo = variante === 'foto' ? '' : `.${variante}`
+  return `${String(indice).padStart(3, '0')}${sufijo}.jpg`
 }
+
+/** El logo se sube con la extensión de su tipo real; el Worker exige que coincidan. */
+const EXTENSION_DE_LOGO: Record<string, string> = {
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+}
+
+export function nombreDeLogo(tipo: string): string | undefined {
+  const extension = EXTENSION_DE_LOGO[tipo]
+  return extension ? `logo.${extension}` : undefined
+}
+
+const LOGO_VALIDO = /^logo\.(png|jpg|webp)$/
 
 /** La llave que genera el Worker: 26 letras de un alfabeto sin ambigüedades. */
 const LLAVE_VALIDA = /^[abcdefghijkmnpqrstuvwxyz23456789]{26}$/
@@ -105,9 +138,20 @@ type EscenaManifiesto = {
   name: string
   foto: string
   miniatura?: string
+  foto2048?: string
   initialYaw: number
   hotspots: unknown[]
+  rumbo?: number
+  nivel?: { tiltX: number; tiltZ: number }
+  coverageDeg?: number
 }
+
+/**
+ * La marca dentro del manifiesto publicado: igual que la guardada, pero el
+ * logo es el NOMBRE del archivo subido y no una llave de IndexedDB. Mismo
+ * patrón que `logoArchivo` en el `.tour`, y por la misma razón.
+ */
+export type MarcaPublicada = Omit<MarcaGuardada, 'logoId'> & { logo?: string }
 
 export type Manifiesto = {
   version: number
@@ -115,6 +159,9 @@ export type Manifiesto = {
   subtitle?: string
   startSceneId: string
   scenes: EscenaManifiesto[]
+  ficha?: Ficha
+  marca?: MarcaPublicada
+  autogiro?: boolean
 }
 
 /**
@@ -125,21 +172,33 @@ export type Manifiesto = {
  *
  * Solo entran las habitaciones que TIENEN foto. Una sin foto se vería como una
  * esfera negra sin explicación en casa del cliente, y es mejor no enseñarla.
+ *
+ * `foto2048` se declara para TODAS las habitaciones: quien sube decide después,
+ * foto por foto, si pudo producir la variante, y borra la declaración de las que
+ * no. Así el manifiesto nunca promete un archivo que no está.
+ *
+ * `logo` llega de fuera porque su nombre depende del TIPO del blob, y esta
+ * función no toca IndexedDB.
  */
-export function armarManifiesto(tour: StoredTour): Manifiesto {
+export function armarManifiesto(tour: StoredTour, extras: { logo?: string } = {}): Manifiesto {
   const scenes: EscenaManifiesto[] = []
 
   for (const escena of tour.scenes) {
     if (!escena.imageId) continue
     const indice = scenes.length
-    scenes.push({
+    const entrada: EscenaManifiesto = {
       id: escena.id,
       name: escena.name,
       foto: nombreDeFoto(indice),
-      miniatura: escena.thumbId ? nombreDeFoto(indice, true) : undefined,
+      miniatura: escena.thumbId ? nombreDeFoto(indice, 'min') : undefined,
+      foto2048: nombreDeFoto(indice, '2k'),
       initialYaw: escena.initialYaw ?? 0,
       hotspots: escena.hotspots,
-    })
+    }
+    if (escena.rumbo !== undefined) entrada.rumbo = escena.rumbo
+    if (escena.nivel) entrada.nivel = escena.nivel
+    if (escena.coverageDeg !== undefined) entrada.coverageDeg = escena.coverageDeg
+    scenes.push(entrada)
   }
 
   const ids = new Set(scenes.map((s) => s.id))
@@ -154,12 +213,75 @@ export function armarManifiesto(tour: StoredTour): Manifiesto {
     })
   }
 
-  return {
-    version: 1,
+  const manifiesto: Manifiesto = {
+    version: 2,
     title: tour.title,
     subtitle: tour.subtitle,
     startSceneId: ids.has(tour.startSceneId) ? tour.startSceneId : (scenes[0]?.id ?? ''),
     scenes,
+  }
+
+  if (tour.ficha) manifiesto.ficha = tour.ficha
+  if (tour.marca) {
+    /* Se copian los campos a mano y no con `const { logoId, ...resto }`: el
+       object rest se compila con un helper para Safari 13 que ya costó 10 kB en
+       el arranque una vez (ver `resolveTour`). */
+    const m = tour.marca
+    const marca: MarcaPublicada = {
+      nombre: m.nombre,
+      colores: m.colores,
+      hudFondo: m.hudFondo,
+      hudTinta: m.hudTinta,
+      hudTintaSuave: m.hudTintaSuave,
+      fondoApp: m.fondoApp,
+      tipografia: m.tipografia,
+    }
+    if (extras.logo) marca.logo = extras.logo
+    manifiesto.marca = marca
+  }
+  if (tour.autogiro === true) manifiesto.autogiro = true
+
+  return manifiesto
+}
+
+/**
+ * La misma foto a 2048 px de ancho, o `null` si este navegador no puede.
+ *
+ * `dispositivo.ts` ya decide que un teléfono modesto sube las texturas a 2048,
+ * pero hasta aquí se bajaba la foto completa —1.5 MB— para encogerla en el
+ * cliente: 1.1 MB de datos móviles tirados por cuarto, en el teléfono que menos
+ * los tiene. Publicar es el momento de hacer la copia chica, una vez, y que
+ * `manifiestoATour` la elija según el aparato que abre.
+ *
+ * `createImageBitmap` sin `resizeWidth`: con la opción, un WebKit viejo lanza
+ * antes de mirar la imagen (es el mismo problema que `imageOrientation` en
+ * `importar.ts`), y decodificar entera cuesta unas decenas de milisegundos, que
+ * al lado de subir 1.5 MB no se notan. Si no hay `createImageBitmap` —Safari lo
+ * trajo hasta iOS 15— no hay variante, y el comprador baja la completa como
+ * siempre: se pierde el ahorro, no la casa.
+ */
+export async function variante2048(foto: Blob): Promise<Blob | null> {
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return null
+  let bitmap: ImageBitmap
+  try {
+    bitmap = await createImageBitmap(foto)
+  } catch {
+    return null
+  }
+  try {
+    if (bitmap.width <= 2048) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = 2048
+    canvas.height = Math.round((bitmap.height * 2048) / bitmap.width)
+    const ctx = canvas.getContext('2d', { alpha: false })
+    if (!ctx) return null
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+    return await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.84))
+  } catch {
+    return null
+  } finally {
+    bitmap.close()
   }
 }
 
@@ -198,6 +320,8 @@ async function pedir(ruta: string, clave: string, init: RequestInit = {}): Promi
 
 export type AvancePublicacion = { hechas: number; total: number }
 
+export type Publicado = { llave: string; url: string; publicadoEn: number }
+
 /**
  * Sube la casa y devuelve el link.
  *
@@ -205,17 +329,27 @@ export type AvancePublicacion = { hechas: number; total: number }
  * manifiesto es el interruptor —mientras no está, el link no abre— así que si
  * la subida se corta a la mitad, lo que queda son unas fotos sueltas que nadie
  * puede alcanzar, y no una casa a medio enseñar con cuartos en negro.
+ *
+ * Con `existente` se vuelve a publicar SOBRE la misma llave: el link que el
+ * agente ya mandó por WhatsApp sigue sirviendo y enseña la casa nueva. Antes
+ * cada "volver a subir" creaba una llave nueva y dejaba la anterior viva y
+ * vieja en el servidor, sin forma de borrarla desde la interfaz.
  */
 export async function publicarTour(
   tour: StoredTour,
   clave: string,
   alAvanzar?: (avance: AvancePublicacion) => void,
-): Promise<{ llave: string; url: string }> {
+  existente?: string,
+): Promise<Publicado> {
   if (!sePuedePublicar()) {
     throw new PublicarError('Esta versión del visor no tiene la publicación configurada.')
   }
 
-  const manifiesto = armarManifiesto(tour)
+  /* El logo primero: su nombre va dentro del manifiesto. */
+  const logo = tour.marca?.logoId ? await getImage(tour.marca.logoId) : null
+  const nombreLogo = logo ? nombreDeLogo(logo.type) : undefined
+
+  const manifiesto = armarManifiesto(tour, { logo: nombreLogo })
   if (manifiesto.scenes.length === 0) {
     throw new PublicarError(
       'Este recorrido no tiene ninguna habitación con foto.',
@@ -224,39 +358,63 @@ export async function publicarTour(
   }
 
   const conFoto = tour.scenes.filter((e) => e.imageId)
-  const total = manifiesto.scenes.reduce((n, e) => n + (e.miniatura ? 2 : 1), 0)
+  // Cada habitación son hasta tres archivos; el logo, uno más.
+  const total = manifiesto.scenes.reduce((n, e) => n + 2 + (e.miniatura ? 1 : 0), 0) + (nombreLogo ? 1 : 0)
   let hechas = 0
+  const avanzar = () => {
+    hechas++
+    alAvanzar?.({ hechas, total })
+  }
 
-  const { llave } = (await pedir('/api/nuevo', clave, { method: 'POST' }).then((r) => r.json())) as {
-    llave: string
+  let llave = existente ?? ''
+  if (!llave) {
+    const nuevo = (await pedir('/api/nuevo', clave, { method: 'POST' }).then((r) => r.json())) as {
+      llave: string
+    }
+    llave = nuevo.llave
   }
   if (!llaveValida(llave)) {
     throw new PublicarError('El servidor devolvió una llave que no se entiende.')
   }
 
-  const subir = async (id: string, archivo: string) => {
-    const blob = await getImage(id)
-    if (!blob) {
-      throw new PublicarError(
-        'Falta una de las fotos en el teléfono.',
-        'Abre el recorrido para ver qué habitación quedó sin foto.',
-      )
-    }
+  const subir = async (blob: Blob, archivo: string, tipo = 'image/jpeg') => {
     await pedir(`/api/subir/${llave}/${archivo}`, clave, {
       method: 'PUT',
       body: blob,
-      headers: { 'Content-Type': 'image/jpeg' },
+      headers: { 'Content-Type': tipo },
     })
-    hechas++
-    alAvanzar?.({ hechas, total })
+    avanzar()
   }
 
   for (let i = 0; i < manifiesto.scenes.length; i++) {
     const escena = manifiesto.scenes[i]
     const guardada = conFoto[i]
-    await subir(guardada.imageId, escena.foto)
-    if (escena.miniatura && guardada.thumbId) await subir(guardada.thumbId, escena.miniatura)
+    const foto = await getImage(guardada.imageId)
+    if (!foto) {
+      throw new PublicarError(
+        'Falta una de las fotos en el teléfono.',
+        'Abre el recorrido para ver qué habitación quedó sin foto.',
+      )
+    }
+    await subir(foto, escena.foto)
+
+    if (escena.miniatura && guardada.thumbId) {
+      const mini = await getImage(guardada.thumbId)
+      if (mini) await subir(mini, escena.miniatura)
+      else delete escena.miniatura
+    }
+
+    /* La variante chica es opcional: si este navegador no la puede hacer, la
+       habitación se publica solo con la completa y el manifiesto no la promete. */
+    const chica = await variante2048(foto)
+    if (chica && escena.foto2048) await subir(chica, escena.foto2048)
+    else {
+      delete escena.foto2048
+      avanzar()
+    }
   }
+
+  if (logo && nombreLogo) await subir(logo, nombreLogo, logo.type)
 
   const { url } = (await pedir(`/api/publicar/${llave}`, clave, {
     method: 'PUT',
@@ -264,7 +422,7 @@ export async function publicarTour(
     headers: { 'Content-Type': 'application/json' },
   }).then((r) => r.json())) as { url: string }
 
-  return { llave, url: url || enlacePublico(llave) }
+  return { llave, url: url || enlacePublico(llave), publicadoEn: Date.now() }
 }
 
 /** Baja la casa: el link deja de abrir y las fotos se borran del servidor. */
@@ -273,46 +431,91 @@ export async function despublicar(llave: string, clave: string): Promise<void> {
   await pedir(`/api/publicar/${llave}`, clave, { method: 'DELETE' })
 }
 
+export type OpcionesDeApertura = {
+  /**
+   * El ancho al que este aparato sube las texturas (`aparato().anchoTextura`).
+   * A 2048 o menos se elige la variante chica cuando el manifiesto la trae. Sin
+   * opción se toma la completa: es el valor seguro, y el que usan las pruebas.
+   */
+  anchoTextura?: number
+}
+
 /**
  * Convierte el manifiesto que bajó del servidor en el `Tour` que come el visor.
  *
  * Es el gemelo de `resolveTour` (./store/tours.ts): aquel resuelve llaves de
  * IndexedDB a URLs `blob:`, y este resuelve nombres de archivo a URLs del
  * Worker. De ahí para abajo el visor no sabe ni le importa de dónde salieron.
+ *
+ * Lee la v1 y la v2: un manifiesto viejo simplemente no trae ficha ni marca. Y
+ * todo lo que trae pasa por los mismos filtros que un `.tour` ajeno, porque es
+ * lo mismo: datos de una red que no se controla, que se van a pintar en el
+ * teléfono de alguien que no eligió confiar en nadie.
  */
-export function manifiestoATour(llave: string, crudo: unknown): Tour {
+export function manifiestoATour(llave: string, crudo: unknown, opciones: OpcionesDeApertura = {}): Tour {
   if (!crudo || typeof crudo !== 'object') {
     throw new PublicarError('El recorrido publicado llegó en un formato que no se entiende.')
   }
   const m = crudo as Partial<Manifiesto>
   const base = `${BASE}/t/${llave}/fotos`
+  const chica = (opciones.anchoTextura ?? 4096) <= 2048
 
-  const scenes: TourScene[] = (Array.isArray(m.scenes) ? m.scenes : [])
-    .filter((e): e is EscenaManifiesto => Boolean(e && typeof e === 'object' && e.foto))
-    .map((e) => ({
-      id: e.id,
-      name: e.name,
-      image: `${base}/${e.foto}`,
-      thumbnail: e.miniatura ? `${base}/${e.miniatura}` : undefined,
-      initialYaw: e.initialYaw ?? 0,
-      hotspots: (e.hotspots ?? []) as TourScene['hotspots'],
-    }))
+  const scenes: TourScene[] = []
+  for (const cruda of Array.isArray(m.scenes) ? m.scenes : []) {
+    if (!cruda || typeof cruda !== 'object') continue
+    const e = cruda as Record<string, unknown>
+    if (typeof e.foto !== 'string' || !/^[0-9]{3}\.jpg$/.test(e.foto)) continue
+    /* `limpiarEscena` es el filtro del `.tour`, y espera `archivo`: se le da la
+       foto con ese nombre y devuelve la habitación ya saneada —yaw, puntos,
+       rumbo, nivel, cobertura— con las mismas reglas. */
+    const limpia = limpiarEscena({ ...e, archivo: e.foto })
+    if (!limpia) continue
+    const miniatura = typeof e.miniatura === 'string' && /^[0-9]{3}\.min\.jpg$/.test(e.miniatura) ? e.miniatura : undefined
+    const foto2048 = typeof e.foto2048 === 'string' && /^[0-9]{3}\.2k\.jpg$/.test(e.foto2048) ? e.foto2048 : undefined
+    const escena: TourScene = {
+      id: limpia.id || `h${scenes.length}`,
+      name: limpia.name,
+      image: `${base}/${chica && foto2048 ? foto2048 : e.foto}`,
+      thumbnail: miniatura ? `${base}/${miniatura}` : undefined,
+      initialYaw: limpia.initialYaw,
+      hotspots: limpia.hotspots,
+    }
+    if (limpia.rumbo !== undefined) escena.rumbo = limpia.rumbo
+    if (limpia.nivel) escena.nivel = limpia.nivel
+    scenes.push(escena)
+  }
 
   if (scenes.length === 0) {
     throw new PublicarError('Este recorrido publicado no trae ninguna habitación.')
   }
 
   const ids = new Set(scenes.map((s) => s.id))
-  return {
+  const tour: Tour = {
     title: typeof m.title === 'string' ? m.title : 'Recorrido',
     subtitle: typeof m.subtitle === 'string' ? m.subtitle : undefined,
     startSceneId: m.startSceneId && ids.has(m.startSceneId) ? m.startSceneId : scenes[0].id,
     scenes,
   }
+
+  const ficha = limpiarFicha(m.ficha)
+  if (ficha) tour.ficha = ficha
+
+  /* `limpiarMarca` ignora `logoId` a propósito (es una llave de otro teléfono) y
+     no conoce `logo`; el logo publicado es un archivo del servidor y se resuelve
+     aquí, con el nombre acotado a la lista que el Worker admite. */
+  const marca = limpiarMarca(m.marca)
+  if (marca) {
+    const crudaMarca = m.marca as Record<string, unknown> | undefined
+    const logo = typeof crudaMarca?.logo === 'string' && LOGO_VALIDO.test(crudaMarca.logo) ? crudaMarca.logo : undefined
+    tour.marca = { ...marca, logo: logo ? `${base}/${logo}` : undefined }
+  }
+  if (m.autogiro === true) tour.autogiro = true
+
+  return tour
 }
 
 /** Descarga un recorrido publicado. No pide clave: verlo es público por link. */
-export async function abrirPublicado(llave: string): Promise<Tour> {
+export async function abrirPublicado(llave: string, opciones: OpcionesDeApertura = {}): Promise<Tour> {
   if (!sePuedePublicar()) {
     throw new PublicarError('Esta versión del visor no sabe abrir recorridos publicados.')
   }
@@ -320,7 +523,13 @@ export async function abrirPublicado(llave: string): Promise<Tour> {
 
   let respuesta: Response
   try {
-    respuesta = await fetch(`${BASE}/t/${llave}/tour.json`)
+    /* `no-cache`: el manifiesto es el INTERRUPTOR de la casa —si no está, el
+       link no abre; si cambió, enseña la casa nueva— y el Worker lo sirve con
+       `max-age=60`. Sin esto, el comprador que recarga justo después de que el
+       agente dio de baja (o volvió a subir) seguía viendo la versión de su
+       caché durante un minuto. Es un JSON de unos KB; las fotos, que son lo que
+       pesa, se siguen cacheando. */
+    respuesta = await fetch(`${BASE}/t/${llave}/tour.json`, { cache: 'no-cache' })
   } catch {
     throw new PublicarError(
       'No se pudo descargar el recorrido.',
@@ -336,5 +545,5 @@ export async function abrirPublicado(llave: string): Promise<Tour> {
   }
   if (!respuesta.ok) throw new PublicarError(`El servidor respondió ${respuesta.status}.`)
 
-  return manifiestoATour(llave, await respuesta.json())
+  return manifiestoATour(llave, await respuesta.json(), opciones)
 }

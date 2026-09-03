@@ -168,7 +168,8 @@ export default function App() {
          se descarga. Es la ruta por la que entra un cliente que nunca ha usado
          esta app y que llegó por un link de WhatsApp. */
       case 'publicado':
-        return <VisorPublicado llave={ruta.llave} ir={ir} />
+        // El mismo `key` que en 'ver', por lo mismo: otra llave es otra casa.
+        return <VisorPublicado key={ruta.llave} llave={ruta.llave} ir={ir} />
 
       case 'demo':
         return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />

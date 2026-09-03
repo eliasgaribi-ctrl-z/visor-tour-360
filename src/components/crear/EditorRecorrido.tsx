@@ -5,7 +5,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
-import { deleteImage, getTour, saveTour } from '../../lib/store/tours'
+import { deleteImage, getTour, saveTour, type OpcionesDeGuardado } from '../../lib/store/tours'
 import { entregarArchivo, mensajeDePaquete } from '../../lib/store/entregar'
 import { limpiarFicha } from '../../lib/store/migrar'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
@@ -118,11 +118,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }, [cargar])
 
   /** Devuelve si la escritura llegó al disco. Quien llama cierra su hoja solo si sí. */
-  const guardar = async (siguiente: StoredTour): Promise<boolean> => {
+  const guardar = async (siguiente: StoredTour, opciones?: OpcionesDeGuardado): Promise<boolean> => {
     setEscribiendo(true)
     setErrorGuardado(null)
     try {
-      const guardado = await saveTour(siguiente)
+      const guardado = await saveTour(siguiente, opciones)
       setTour(guardado)
       return true
     } catch (e) {
@@ -354,13 +354,26 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const subir = async (clave: string) => {
     setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
     try {
-      const { llave } = await publicarTour(tour, clave, (avance) =>
-        setPublicando({ estado: 'subiendo', ...avance }),
+      /* Si ya hay una llave se publica SOBRE ella: el link que el agente ya
+         mandó sigue sirviendo y enseña la casa nueva. Antes cada "volver a
+         subir" creaba una llave nueva y dejaba la vieja viva en el servidor. */
+      const { llave, publicadoEn } = await publicarTour(
+        tour,
+        clave,
+        (avance) => setPublicando({ estado: 'subiendo', ...avance }),
+        tour.publicacion?.llave,
       )
       /* Se guarda la llave ANTES de dar por buena la publicación: si esta
          escritura fallara y no se guardara, la casa quedaría en línea y sin
-         forma de bajarla desde aquí. */
-      await guardar({ ...tour, publicadoComo: llave })
+         forma de bajarla desde aquí.
+
+         Y se guarda SIN mover `updatedAt`: publicar no es editar la casa. Es lo
+         que hace que "hay cambios sin publicar" compare fechas de verdad —el
+         contenido contra la subida— y no salte justo después de publicar. */
+      await guardar(
+        { ...tour, publicacion: { ...tour.publicacion, llave, publicadoEn } },
+        { conservarFecha: true },
+      )
       setPublicando(null)
       setCopiado(false)
     } catch (e) {
@@ -385,11 +398,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }
 
   const bajar = async () => {
-    if (!tour.publicadoComo) return
+    if (!tour.publicacion) return
     setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
     try {
-      await despublicar(tour.publicadoComo, claveGuardada())
-      await guardar({ ...tour, publicadoComo: undefined })
+      await despublicar(tour.publicacion.llave, claveGuardada())
+      await guardar({ ...tour, publicacion: undefined }, { conservarFecha: true })
       setPublicando(null)
     } catch (e) {
       setPublicando({
@@ -400,9 +413,9 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }
 
   const copiarEnlace = async () => {
-    if (!tour.publicadoComo) return
+    if (!tour.publicacion) return
     try {
-      await navigator.clipboard.writeText(enlacePublico(tour.publicadoComo))
+      await navigator.clipboard.writeText(enlacePublico(tour.publicacion.llave))
       setCopiado(true)
       window.setTimeout(() => setCopiado(false), 2000)
     } catch {
@@ -417,6 +430,22 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }
 
   const listo = tour.scenes.length > 0
+
+  /* ── "Hay cambios sin publicar" ─────────────────────────────────────────────
+     Publicar → editar en local → el link sigue enseñando lo viejo, EN SILENCIO.
+     Es la queja de soporte número uno si falta. `updatedAt` solo se mueve al
+     editar la casa (anotar la publicación lo conserva), así que comparar las
+     dos fechas dice la verdad. */
+  const publicacion = tour.publicacion
+  /* `>=` y no `>`: cuando se publica bien, `updatedAt` es la fecha de la última
+     edición del contenido, siempre ANTERIOR a que la subida termine (subir tarda
+     segundos). Con `>`, un guardado que moviera la fecha en el mismo milisegundo
+     que `publicadoEn` pasaría por "al día": el sabotaje de quitar
+     `conservarFecha` solo se veía a veces. Con `>=` se ve siempre. */
+  const hayCambios = publicacion !== undefined && tour.updatedAt >= publicacion.publicadoEn
+  const fechaPublicada = publicacion
+    ? new Date(publicacion.publicadoEn).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+    : ''
 
   /* El mismo mensaje se enseña en dos sitios porque el fallo puede venir de dos
      lados: de una hoja abierta (renombrar, ajustes, borrar) o de las flechas de
@@ -555,23 +584,34 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                 instalar nada y sin cuenta. El link no aparece en Google: solo entra quien lo tenga.
               </p>
 
-              {tour.publicadoComo ? (
+              {publicacion ? (
                 <div className="flex flex-col gap-2">
                   <p
                     className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm
                                break-all text-ink-50 select-all"
                   >
-                    {enlacePublico(tour.publicadoComo)}
+                    {enlacePublico(publicacion.llave)}
                   </p>
-                  <Boton tipo="principal" ancho onClick={() => void copiarEnlace()}>
-                    {copiado ? 'Copiado' : 'Copiar el link'}
-                  </Boton>
+                  {hayCambios ? (
+                    <Aviso tono="alerta" titulo="Hay cambios sin publicar">
+                      El link enseña la versión que subiste el {fechaPublicada}. Vuelve a subir
+                      para que quien lo abra vea los cambios.
+                    </Aviso>
+                  ) : (
+                    <p className="text-xs text-ink-200/70">
+                      El link está al día: enseña lo que subiste el {fechaPublicada}.
+                    </p>
+                  )}
                   <Boton
+                    tipo={hayCambios ? 'principal' : 'normal'}
                     ancho
                     onClick={() => void subir(claveGuardada())}
                     disabled={publicando?.estado === 'subiendo'}
                   >
                     Volver a subir con los cambios
+                  </Boton>
+                  <Boton tipo={hayCambios ? 'normal' : 'principal'} ancho onClick={() => void copiarEnlace()}>
+                    {copiado ? 'Copiado' : 'Copiar el link'}
                   </Boton>
                   <Boton
                     tipo="fantasma"
@@ -581,9 +621,6 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   >
                     Quitar de internet
                   </Boton>
-                  <p className="text-xs text-ink-200/70">
-                    Los cambios que hagas aquí no se ven en el link hasta que vuelvas a subir.
-                  </p>
                 </div>
               ) : (
                 <Boton
@@ -598,7 +635,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
 
               {publicando?.estado === 'subiendo' && (
                 <p className="mt-2 text-sm text-ink-200" role="status" aria-live="polite">
-                  Subiendo {publicando.hechas} de {publicando.total} fotos…
+                  Subiendo {publicando.hechas} de {publicando.total} archivos…
                 </p>
               )}
               {publicando?.estado === 'error' && (

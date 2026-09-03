@@ -103,15 +103,31 @@ export type StoredTour = {
   createdAt: number
   updatedAt: number
   /**
-   * Llave con la que esta casa está publicada en el servidor, si lo está.
+   * Cómo está publicada esta casa en el servidor, si lo está.
    *
-   * Se guarda para poder volver a compartir el mismo link y, sobre todo, para
-   * poder BAJARLA: sin esto, publicar sería una puerta de un solo sentido y una
-   * casa vendida se quedaría en línea para siempre.
+   * `llave` es la del link. Se guarda para poder volver a compartir el mismo
+   * link, para volver a publicar SOBRE él (y no crear otro cada vez) y, sobre
+   * todo, para poder BAJARLA: sin esto, publicar sería una puerta de un solo
+   * sentido y una casa vendida se quedaría en línea para siempre.
+   *
+   * `publicadoEn` es cuándo se subió lo que hoy enseña el link. Se compara con
+   * `updatedAt`: si el recorrido cambió después, el link enseña la versión
+   * vieja y hay que decirlo —es la queja de soporte número uno si falta—. Por
+   * eso anotar la publicación se guarda SIN mover `updatedAt` (ver
+   * `saveTour`): publicar no es editar la casa.
+   *
+   * `editToken` es el secreto que autoriza a volver a publicar y a bajar esta
+   * llave en concreto. Solo existe en este teléfono.
    *
    * A propósito NO viaja dentro del `.tour`: si dos personas importaran el
    * mismo archivo, las dos creerían mandar sobre la misma publicación y la
-   * segunda podría tirar la del primero sin enterarse.
+   * segunda podría tirar la del primero sin enterarse. Y el token menos aún: un
+   * `.tour` se manda por WhatsApp.
+   */
+  publicacion?: { llave: string; editToken?: string; publicadoEn: number }
+  /**
+   * La forma vieja de `publicacion`: solo la llave. `normalizarTour` la sube al
+   * campo nuevo al leer; ningún código nuevo la escribe.
    */
   publicadoComo?: string
 }

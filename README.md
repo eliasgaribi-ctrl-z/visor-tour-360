@@ -96,7 +96,7 @@ node --experimental-strip-types tools/pruebas/nivel.mjs       # la corrección d
 node tools/pruebas/patrones.mjs                               # patrones que no deben volver
 ```
 
-Los otros siete levantan un navegador (`npm i -D playwright` primero, y
+Los otros ocho levantan un navegador (`npm i -D playwright` primero, y
 `npm run dev` en otra terminal):
 
 ```bash
@@ -107,9 +107,10 @@ node tools/pruebas/reordenar.mjs http://localhost:5173/     # el orden se guarda
 node tools/pruebas/giroscopio.mjs http://localhost:5173/    # el giroscopio sigue a la mano y quieto no dibuja
 node tools/pruebas/formato.mjs http://localhost:5173/       # el .tour abre lo viejo y vuelve entero
 node tools/pruebas/marca.mjs http://localhost:5173/         # la marca reviste el visor
+node tools/pruebas/publicar.mjs                             # publicar por link de punta a punta (levanta lo suyo; sección 14)
 ```
 
-**Los doce corren solos en cada push** (`.github/workflows/revision.yml`), junto
+**Los trece corren solos en cada push** (`.github/workflows/revision.yml`), junto
 con `lint`, `typecheck`, `build` y la medición del peso del arranque, que falla
 arriba de 400 kB. Playwright se instala ahí con `--no-save`: no está en las
 `devDependencies` a propósito, para no obligar a nadie a bajarlo, y por eso los
@@ -189,6 +190,7 @@ src/
 │   ├── contraste.ts            * Que una marca ajena no lo deje ilegible (WCAG)
 │   ├── rumbo.ts                * El norte de verdad: de dónde sale y con qué signo
 │   ├── nivel.ts                * Enderezar el horizonte al ver, rotando la esfera
+│   ├── publicar.ts             * Subir la casa al Worker y leer el manifiesto v2 que baja (sección 14)
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -217,6 +219,7 @@ src/
     │   ├── CameraRig.tsx       * Traduce el input a rotación de cámara
     │   ├── PanoSphere.tsx      La esfera 360 y el fundido entre habitaciones
     │   ├── Portada.tsx         * La ficha de la casa, ANTES del 3D y sin WebGL
+    │   ├── ConPortada.tsx      Portada + marca + visor perezoso: la costura que comparten dueño y comprador
     │   └── ViewerGuard.tsx     Red de seguridad de WebGL
     ├── ui/                     Joystick, hotspots, brújula, zoom, hojas…
     └── crear/                  ── las pantallas de creación ──
@@ -228,6 +231,7 @@ src/
         ├── EditorPuntos.tsx    Colocar hotspots sobre la escena
         ├── PuntosEditables.tsx Marcadores arrastrables
         ├── VisorGuardado.tsx   Abre un recorrido guardado
+        ├── VisorPublicado.tsx  Abre una casa publicada por link (sección 14)
         └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
@@ -250,6 +254,7 @@ tools/pruebas/reordenar.mjs     Reordenar arrastrando guarda de verdad y reviert
 tools/pruebas/giroscopio.mjs    El giroscopio sigue a la mano, y quieto no dibuja
 tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (100 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
+tools/pruebas/publicar.mjs      Publicar por link de punta a punta, con el Worker de verdad en local
 
 .github/workflows/revision.yml  Los corre todos en cada push
 ```
@@ -1131,7 +1136,7 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Lo que corre solo: `npm test`, los doce arneses y el CI
+### Lo que corre solo: `npm test`, los trece arneses y el CI
 
 ```bash
 npm test        # vitest run
@@ -1197,7 +1202,7 @@ nuevo, que para git es un archivo sin seguir. `git diff` a secas no mira los
 archivos sin seguir, así que el paso pasaba en verde con `docs/` desactualizado,
 que es exactamente lo que se quería atrapar.
 
-### Los doce arneses, y por qué además de Vitest hay arneses
+### Los trece arneses, y por qué además de Vitest hay arneses
 
 Vitest cubre la aritmética. Lo que este proyecto también necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
@@ -1220,6 +1225,7 @@ código 1 si algo no cuadra. El mismo `revision.yml` los corre todos.
 | `giroscopio.mjs` | con sensores sintéticos a 60 Hz: quieto **0 dibujos/s**, girar 90° gira 90°, encender y apagar no saltan, el dedo corrige, la pestaña oculta apaga | sí |
 | `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 100 aserciones | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
+| `publicar.mjs` | publicar por link de punta a punta con el Worker real en local: la casa abre en un navegador con IndexedDB **vacío**, con portada y marca; la variante de 2048 según el aparato; resubir conserva el link; dar de baja | sí |
 
 **Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
 encabezado de los arneses que las incumplieron:
@@ -1425,8 +1431,46 @@ En el editor de un recorrido, **Enseñar por link → Publicar**. La primera vez
 pide la clave; queda guardada en ese teléfono. Al terminar sale el link, listo
 para pegar en WhatsApp.
 
+Si después se edita la casa —otra foto, un punto, el precio— el editor avisa
+**"Hay cambios sin publicar"** con la fecha de lo que enseña el link. Publicar →
+editar → el link sigue mostrando lo viejo *en silencio* es la queja de soporte
+número uno de cualquier producto así, y por eso el aviso existe. **Volver a
+subir** publica SOBRE la misma llave: el link que ya se mandó sigue sirviendo y
+enseña la casa nueva (antes cada resubida creaba una llave y dejaba la anterior
+viva en el servidor, sin forma de borrarla). La comparación de fechas es
+honesta porque anotar la publicación se guarda **sin mover `updatedAt`**
+(`saveTour(…, { conservarFecha: true })`): publicar no es editar la casa.
+
 Cuando la casa se vende: **Quitar de internet**. El link deja de abrir y las
 fotos se borran del bucket.
+
+### Lo que viaja: el manifiesto, versión 2
+
+La v1 llevaba las habitaciones y sus puntos, y el link abría directo en la foto,
+sin marca. La v2 lleva lo que vuelve el link un **producto** y no una foto:
+
+- **La ficha** (precio, metros, recámaras, contacto). El comprador la ve como
+  **portada** antes del 3D —la misma `Portada` del recorrido local, por
+  `ConPortada`, que es la costura portada + marca + visor perezoso que comparten
+  el dueño y el comprador— y el Worker la usa para la tarjeta de WhatsApp.
+- **La marca**, con su logo como archivo (`logo.png|jpg|webp`, nunca SVG), igual
+  que en el `.tour`. El visor del comprador se viste con ella.
+- El modo kiosco, y por habitación el rumbo, el nivel y la cobertura.
+- **Una variante de 2048 px de cada foto** (`000.2k.jpg`), hecha al publicar
+  con `createImageBitmap`. `dispositivo.ts` ya decidía que un teléfono modesto
+  sube las texturas a 2048, pero se bajaba la foto completa —1.5 MB— para
+  encogerla: 1.1 MB de datos móviles tirados por cuarto, en el teléfono que
+  menos tiene. `manifiestoATour` elige la chica según `aparato().anchoTextura`.
+  Medido en el arnés: un aparato normal baja `000.jpg`; uno modesto, `000.2k.jpg`;
+  ninguno las dos.
+
+Todo es aditivo y opcional: un visor cacheado de la semana pasada que lea un
+manifiesto v2 ve menos, no ve mal. Y **los dos lados filtran**: el Worker acota
+formas y tamaños (hex, listas blancas, topes, la firma real de cada imagen), y
+el visor pasa lo que baja por `limpiarMarca`, `limpiarFicha` y `limpiarEscena`
+—las mismas funciones que filtran un `.tour` ajeno— porque un manifiesto
+publicado también es de una red que no se controla. El correo con un `?bcc=`
+escondido y la inyección de CSS caen igual por los dos caminos.
 
 ### Las tres decisiones, y por qué
 
@@ -1462,6 +1506,23 @@ escritos en el HTML, y a una persona la rebota al visor.
 
 El rebote va en JavaScript y no con un 302 justamente porque un 302 se lo
 llevaría también el robot.
+
+Y la tarjeta es un **anuncio**, no un nombre de archivo: con ficha, el título es
+`Desde $1.9M · Casa de prueba`, la descripción es la dirección y `og:site_name`
+es la inmobiliaria. Sin ficha, el título del recorrido y "Recorrido virtual de N
+espacios", como antes.
+
+### Cómo se prueba sin desplegar nada
+
+`tools/pruebas/publicar.mjs` levanta el Worker de verdad en local (`wrangler
+dev`, con R2 en disco) y un segundo servidor del visor compilado con
+`VITE_PUBLICAR_BASE` apuntando a ese Worker, publica una casa por la interfaz y
+la abre en un navegador con IndexedDB **vacío** — la única prueba de que la casa
+dejó de vivir en un solo teléfono. Mide la tarjeta de WhatsApp, la portada con la
+marca en píxeles, que la foto se dibuje (un CORS mal puesto es un cuarto negro
+sin ningún error), la variante de 2048 según el aparato, volver a subir sobre el
+mismo link, "hay cambios sin publicar", dar de baja, y lo que el Worker rechaza.
+Corre en el CI con los demás arneses.
 
 ### Qué cuesta
 
