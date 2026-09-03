@@ -191,6 +191,10 @@ src/
 │   ├── rumbo.ts                * El norte de verdad: de dónde sale y con qué signo
 │   ├── nivel.ts                * Enderezar el horizonte al ver, rotando la esfera
 │   ├── publicar.ts             * Subir la casa al Worker y leer el manifiesto v2 que baja (sección 14)
+│   ├── metricas/               ── las visitas de la casa publicada (sección 14) ──
+│   │   ├── cliente.ts          * sendBeacon en pagehide, sin cookies ni IP: sesiones, no personas
+│   │   ├── resumen.ts          de paquetes a números; lo usan el Worker y la hoja "Visitas"
+│   │   └── resumen.test.ts
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -1552,6 +1556,31 @@ Y la tarjeta es un **anuncio**, no un nombre de archivo: con ficha, el título e
 `Desde $1.9M · Casa de prueba`, la descripción es la dirección y `og:site_name`
 es la inmobiliaria. Sin ficha, el título del recorrido y "Recorrido virtual de N
 espacios", como antes.
+
+### Las visitas: sesiones, no personas
+
+En el editor, **Enseñar por link → Ver visitas** enseña cuántos abrieron el
+link, qué cuartos les importaron y cuánto se quedaron en cada uno, qué puntos
+tocaron, cuántos venían en un teléfono modesto y si a alguien no le cargó una
+foto. Es la gráfica que vende, y no necesita cuentas.
+
+Lo manda el visor del comprador (`src/lib/metricas/cliente.ts`) con
+`sendBeacon` en `visibilitychange → hidden` **y** en `pagehide` —`unload` no
+dispara en Safari de iOS, y usarlo perdería el 100 % de los datos de iPhone—,
+más un vaciado cada 30 s. El Worker lo guarda tal cual, saneado, como un objeto
+más en R2 (`m/<llave>/<día>/…json`, append-only, sin base de datos) y lo suma al
+leer con `src/lib/metricas/resumen.ts`, que también usa la hoja del editor y se
+prueba con Vitest. Solo la casa **publicada** reporta: el agente revisando su
+propia casa en `#/ver/<id>` no es una visita.
+
+**Privacidad por diseño, no por aviso.** Sin cookies, sin nada en
+`localStorage`, sin huella del navegador, y el Worker no guarda la IP ni ningún
+encabezado. El id de sesión es aleatorio y vive en `sessionStorage`: muere con la
+pestaña. Se miden **sesiones, no personas**, y nadie es seguible entre recorridos
+ni entre días. Con `navigator.doNotTrack` o `globalPrivacyControl` encendidos no
+se manda nada. Eso es lo que quita la necesidad de un banner de consentimiento:
+no hay identificador persistente ni retención de IP. Está escrito en el código
+del cliente y del Worker, no solo aquí.
 
 ### Cómo se prueba sin desplegar nada
 

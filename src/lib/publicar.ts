@@ -50,6 +50,7 @@
 
 import type { Ficha, Tour, TourScene } from './types'
 import type { MarcaGuardada, StoredTour } from './store/types'
+import type { Resumen } from './metricas/resumen'
 import { getImage } from './store/tours'
 import { limpiarEscena, limpiarFicha, limpiarMarca } from './store/migrar'
 
@@ -65,6 +66,11 @@ const BASE = (import.meta.env.VITE_PUBLICAR_BASE ?? '').replace(/\/+$/, '')
 /** ¿Está configurada la publicación en este build? */
 export function sePuedePublicar(): boolean {
   return BASE.length > 0
+}
+
+/** La dirección del Worker, para quien tenga que hablarle aparte (las métricas). */
+export function basePublicar(): string {
+  return BASE
 }
 
 const CLAVE_GUARDADA = 'visor-tour-360:clave-publicacion'
@@ -476,6 +482,26 @@ export async function publicarTour(
 export async function despublicar(llave: string, credencial: string, editToken?: string): Promise<void> {
   if (!llaveValida(llave)) throw new PublicarError('Esa llave no tiene forma de llave.')
   await pedir(`/api/publicar/${llave}`, credencial, { method: 'DELETE' }, editToken)
+}
+
+/** Lo que devuelve `GET /api/m/<llave>`: el resumen más cuántos paquetes lo forman. */
+export type ResumenDeVisitas = Resumen & { paquetes: number; completos: boolean }
+
+/**
+ * Las visitas de una casa publicada, resumidas por el Worker.
+ *
+ * Pide lo mismo que dar de baja —el código de rescate, o el código de la
+ * inmobiliaria que la publicó, o la clave maestra—: las visitas de una casa son
+ * de quien la publicó.
+ */
+export async function resumenDeVisitas(
+  llave: string,
+  credencial: string,
+  editToken?: string,
+): Promise<ResumenDeVisitas> {
+  if (!llaveValida(llave)) throw new PublicarError('Esa llave no tiene forma de llave.')
+  const respuesta = await pedir(`/api/m/${llave}`, credencial, { method: 'GET' }, editToken)
+  return (await respuesta.json()) as ResumenDeVisitas
 }
 
 export type OpcionesDeApertura = {

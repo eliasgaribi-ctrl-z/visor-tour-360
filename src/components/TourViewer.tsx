@@ -9,6 +9,7 @@ import { useGyroLook } from '../lib/useGyroLook'
 import { preloadEquirect } from '../lib/useEquirectTexture'
 import { aparato } from '../lib/dispositivo'
 import { detectWebGL } from '../lib/webgl'
+import type { Metricas } from '../lib/metricas/cliente'
 
 import { BASE_FOV, Escena360 } from './tour/Escena360'
 
@@ -29,6 +30,12 @@ export type TourViewerProps = {
   accion?: ReactNode
   /** Pista que aparece los primeros segundos, debajo de los controles. */
   pista?: string
+  /**
+   * A quién reportar qué habitación se vio, qué punto se tocó y qué falló.
+   * Solo lo trae la casa PUBLICADA (`VisorPublicado`); el visor local y la
+   * demo no lo pasan y no reportan nada. Ver `src/lib/metricas/cliente.ts`.
+   */
+  metricas?: Metricas | null
 }
 
 /**
@@ -51,6 +58,7 @@ export function TourViewer({
   debug = import.meta.env.DEV,
   accion,
   pista = 'Arrastra la foto o usa el joystick para mirar alrededor',
+  metricas = null,
 }: TourViewerProps) {
   const engine = useCreateTourEngine()
   /* La rueda también sobre el HUD: ver useWheelZoom en src/lib/useDragLook.ts */
@@ -115,9 +123,28 @@ export function TourViewer({
     setHintVisible(false)
   }, [])
 
+  /* ── Las métricas, en los tres embudos que ya existían ─────────────────────
+     La primera habitación al montar; las demás pasan TODAS por `goToScene`; los
+     puntos por `handleHotspot`; las fallas por `alFallar`. Cada una es una
+     línea, porque el visor ya tenía un solo camino para cada cosa. Sin
+     `metricas` (visor local, demo) no se reporta nada. */
+  useEffect(() => {
+    metricas?.escena(tour.startSceneId)
+  }, [metricas, tour.startSceneId])
+
+  /* El nombre de la habitación actual, para nombrar la falla sin volver
+     inestable a `alFallar` (ver abajo). */
+  const nombreEscena = useRef(scene.name)
+  useEffect(() => {
+    nombreEscena.current = scene.name
+  }, [scene.name])
+
   /* Estable a propósito: `Escena360` está en `memo`, y una flecha nueva aquí lo
      re-renderizaría —y con él al canvas— en cada estado del HUD. */
-  const alFallar = useCallback(() => setFailed(true), [])
+  const alFallar = useCallback(() => {
+    setFailed(true)
+    metricas?.falla(nombreEscena.current)
+  }, [metricas])
 
   /** Un dedo sobre la foto: se va la pista y, si la foto giraba sola, se detiene. */
   const alTocar = useCallback(() => {
@@ -144,6 +171,7 @@ export function TourViewer({
       setInfo(null)
       setFailed(false)
       setSceneId(next.id)
+      metricas?.escena(next.id)
       // La cámara viaja al frente de la nueva habitación por el camino corto.
       engine.input.goto = { yaw: arriveYaw ?? next.initialYaw ?? 0, pitch: 0 }
       /* Y si se vino por una PUERTA, la atraviesa: el rig empuja la cámara hacia
@@ -152,19 +180,20 @@ export function TourViewer({
       if (puerta) engine.input.empuje = puerta
       engine.invalidar()
     },
-    [engine, sceneId, tour.scenes],
+    [engine, metricas, sceneId, tour.scenes],
   )
 
   const handleHotspot = useCallback(
     (hotspot: Hotspot) => {
       dismissHint()
+      metricas?.punto(hotspot.id, hotspot.kind)
       if (hotspot.kind === 'link') {
         goToScene(hotspot.to, hotspot.arriveYaw, { yaw: hotspot.yaw, pitch: hotspot.pitch })
       } else {
         setInfo({ title: hotspot.label, body: hotspot.body })
       }
     },
-    [dismissHint, goToScene],
+    [dismissHint, goToScene, metricas],
   )
 
   const resetView = useCallback(() => {

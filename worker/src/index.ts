@@ -91,8 +91,10 @@
  * el Worker acota tamaños y formas; el visor decide qué se puede pintar.
  */
 
+import { resumir, type PaqueteCrudo } from '../../src/lib/metricas/resumen'
+
 export type Env = {
-  /** Bucket de R2 donde viven las casas publicadas, los códigos y las metas. */
+  /** Bucket de R2 donde viven las casas publicadas, los códigos, las metas y las visitas. */
   TOURS: R2Bucket
   /** La clave maestra. Se pone con `wrangler secret put CLAVE_PUBLICACION`. */
   CLAVE_PUBLICACION: string
@@ -112,6 +114,11 @@ const MAX_FOTOS = 48
 const MAX_LOGO = 1024 * 1024
 const MAX_MANIFIESTO = 256 * 1024
 const MAX_TOTAL = 160 * 1024 * 1024
+/** Un paquete de métricas: `sendBeacon` topa en 64 KB, y 200 eventos son ~12. */
+const MAX_PAQUETE = 64 * 1024
+const MAX_EVENTOS = 200
+/** Cuántos paquetes se leen para el resumen antes de decir "hay más". */
+const MAX_PAQUETES_RESUMEN = 5000
 
 /** Alfabeto sin caracteres que se confunden al leerlos en voz alta o a mano. */
 const ALFABETO = 'abcdefghijkmnpqrstuvwxyz23456789'
@@ -363,6 +370,74 @@ async function autorizado(
 }
 
 const AJENA = 'Este recorrido lo publicó otro teléfono.'
+
+/* ── Métricas ────────────────────────────────────────────────────────────────
+ *
+ * Lo que manda `src/lib/metricas/cliente.ts` desde el navegador del comprador:
+ * un paquete por sesión y vaciado, con eventos de habitación, punto y falla.
+ * Se guarda TAL CUAL (saneado) como un objeto más en R2, append-only:
+ * `m/<llave>/<día>/<sesión>-<azar>.json`. Sin base de datos: el resumen los
+ * suma al leer, y cuando duela, un cron los enrolla por día.
+ *
+ * PRIVACIDAD POR DISEÑO, escrita aquí y no solo en un documento: este Worker
+ * no guarda la IP ni ningún encabezado del pedido, el id de sesión lo inventa
+ * el navegador y muere con la pestaña, y no hay cookies. Se miden sesiones, no
+ * personas. Es lo que quita la necesidad de un banner de consentimiento.
+ */
+
+const SESION_VALIDA = /^[a-z2-9]{12}$/
+const EVENTOS_CONOCIDOS = new Set(['abrir', 'escena', 'punto', 'falla', 'fin'])
+
+/** Deja un paquete en su forma, o `null` si no es uno. Lo escribió un endpoint público. */
+function saneaPaquete(crudo: unknown): PaqueteCrudo | null {
+  if (!crudo || typeof crudo !== 'object') return null
+  const p = crudo as Record<string, unknown>
+  if (typeof p.s !== 'string' || !SESION_VALIDA.test(p.s)) return null
+  if (typeof p.inicio !== 'number' || !Number.isFinite(p.inicio)) return null
+  if (!Array.isArray(p.eventos) || p.eventos.length > MAX_EVENTOS) return null
+  const eventos: PaqueteCrudo['eventos'] = []
+  for (const cruda of p.eventos) {
+    if (!cruda || typeof cruda !== 'object') continue
+    const ev = cruda as Record<string, unknown>
+    if (typeof ev.e !== 'string' || !EVENTOS_CONOCIDOS.has(ev.e)) continue
+    if (typeof ev.t !== 'number' || !Number.isFinite(ev.t) || ev.t < 0) continue
+    const limpio: PaqueteCrudo['eventos'][number] = { e: ev.e, t: Math.round(ev.t) }
+    if (typeof ev.id === 'string') limpio.id = ev.id.slice(0, 64)
+    if (ev.kind === 'link' || ev.kind === 'info') limpio.kind = ev.kind
+    if (typeof ev.que === 'string') limpio.que = ev.que.slice(0, 120)
+    if (ev.aparato === 'modesto' || ev.aparato === 'normal') limpio.aparato = ev.aparato
+    if (typeof ev.tactil === 'boolean') limpio.tactil = ev.tactil
+    if (typeof ev.ancho === 'number' && Number.isFinite(ev.ancho)) limpio.ancho = Math.round(ev.ancho)
+    eventos.push(limpio)
+  }
+  return { v: 1, s: p.s, inicio: Math.round(p.inicio), eventos }
+}
+
+/** Todos los paquetes de una casa, hasta el tope. */
+async function leerPaquetes(env: Env, llave: string): Promise<{ paquetes: PaqueteCrudo[]; completos: boolean }> {
+  const llaves: string[] = []
+  let cursor: string | undefined
+  do {
+    const pagina = await env.TOURS.list({ prefix: `m/${llave}/`, cursor })
+    for (const o of pagina.objects) llaves.push(o.key)
+    cursor = pagina.truncated ? pagina.cursor : undefined
+  } while (cursor && llaves.length < MAX_PAQUETES_RESUMEN)
+
+  const paquetes: PaqueteCrudo[] = []
+  // De veinte en veinte: ni uno por uno (lento) ni todos a la vez (memoria).
+  for (let i = 0; i < Math.min(llaves.length, MAX_PAQUETES_RESUMEN); i += 20) {
+    const lote = await Promise.all(llaves.slice(i, i + 20).map((k) => env.TOURS.get(k)))
+    for (const objeto of lote) {
+      if (!objeto) continue
+      try {
+        paquetes.push((await objeto.json()) as PaqueteCrudo)
+      } catch {
+        /* un objeto roto no tumba el resumen */
+      }
+    }
+  }
+  return { paquetes, completos: llaves.length <= MAX_PAQUETES_RESUMEN }
+}
 
 /* ── Saneo del manifiesto ────────────────────────────────────────────────── */
 
@@ -740,6 +815,53 @@ export default {
       })
     }
 
+    /* ── Métricas ─────────────────────────────────────────────────────────── */
+
+    if (partes[0] === 'api' && partes[1] === 'm' && partes.length === 3) {
+      const llave = partes[2]
+      if (!LLAVE_VALIDA.test(llave)) return error(404, 'No existe.')
+
+      /* POST /api/m/<llave>: lo manda el navegador del COMPRADOR con sendBeacon,
+         así que es público a propósito: no hay credencial que un desconocido
+         pueda tener. Lo que lo acota: el tamaño, la forma, que la casa exista, y
+         que no se guarda nada del pedido salvo el paquete. */
+      if (pedido.method === 'POST') {
+        const largo = Number(pedido.headers.get('Content-Length') ?? '0')
+        if (largo > MAX_PAQUETE) return error(413, 'El paquete es demasiado grande.')
+        if (!(await env.TOURS.head(`t/${llave}/tour.json`))) return error(404, 'No existe.')
+        let crudo: unknown
+        try {
+          const cuerpo = await pedido.text()
+          if (cuerpo.length > MAX_PAQUETE) return error(413, 'El paquete es demasiado grande.')
+          crudo = JSON.parse(cuerpo)
+        } catch {
+          return error(400, 'El paquete no es JSON.')
+        }
+        const paquete = saneaPaquete(crudo)
+        if (!paquete) return error(400, 'El paquete no tiene forma de paquete.')
+        await env.TOURS.put(
+          `m/${llave}/${hoy()}/${paquete.s}-${nuevaLlave().slice(0, 8)}.json`,
+          JSON.stringify(paquete),
+          { httpMetadata: { contentType: 'application/json; charset=utf-8' } },
+        )
+        return new Response(null, { status: 204, headers: COMUNES })
+      }
+
+      /* GET /api/m/<llave>: el resumen, para quien pueda dar de baja la casa
+         —el teléfono que la publicó, el código de su inmobiliaria o la maestra—
+         que es la misma vara con la que se decide quién es su dueño. */
+      if (pedido.method === 'GET') {
+        const q = await quien(pedido, env)
+        if (!q) return error(401, 'El código de publicación no es válido.')
+        const auth = await autorizado(pedido, env, q, llave, 'bajar')
+        if (!auth.ok) return error(403, AJENA)
+        const { paquetes, completos } = await leerPaquetes(env, llave)
+        return json({ ...resumir(paquetes), paquetes: paquetes.length, completos })
+      }
+
+      return error(404, 'Esa dirección no existe.')
+    }
+
     /* ── Publicar ─────────────────────────────────────────────────────────── */
 
     if (partes[0] === 'api') {
@@ -963,9 +1085,15 @@ export default {
            el borrado de las fotos fallara a medias, lo que queda son objetos
            huérfanos que nadie puede alcanzar, no una casa a medio enseñar. */
         await env.TOURS.delete(`t/${llave}/tour.json`)
-        const listado = await env.TOURS.list({ prefix: `t/${llave}/` })
-        if (listado.objects.length > 0) {
-          await env.TOURS.delete(listado.objects.map((o) => o.key))
+        /* Las fotos, la meta… y las visitas: una casa que se da de baja se lleva
+           sus métricas. Nadie las va a leer y no son de nadie más. */
+        for (const prefijo of [`t/${llave}/`, `m/${llave}/`]) {
+          let cursor: string | undefined
+          do {
+            const pagina = await env.TOURS.list({ prefix: prefijo, cursor })
+            if (pagina.objects.length > 0) await env.TOURS.delete(pagina.objects.map((o) => o.key))
+            cursor = pagina.truncated ? pagina.cursor : undefined
+          } while (cursor)
         }
         if (auth.meta) await ajustarBytes(env, auth.meta.tenant, -auth.meta.bytes)
         return json({ ok: true })

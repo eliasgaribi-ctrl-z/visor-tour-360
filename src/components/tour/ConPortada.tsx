@@ -1,6 +1,7 @@
 import { Suspense, lazy, useEffect, useState, type ReactNode } from 'react'
 
 import type { Tour } from '../../lib/types'
+import type { Metricas } from '../../lib/metricas/cliente'
 import { aplicarMarca } from '../../lib/marca'
 import { Cargando } from '../crear/ui'
 import { Portada } from './Portada'
@@ -33,6 +34,8 @@ export type ConPortadaProps = {
   pista?: string
   /** Qué enseñar mientras baja el motor 3D. Por omisión, un "Abriendo…". */
   fallback?: ReactNode
+  /** A quién reportar las visitas. Solo la casa publicada lo trae. */
+  metricas?: Metricas | null
 }
 
 /**
@@ -76,7 +79,7 @@ export type ConPortadaProps = {
  * demo (`App.tsx` monta `TourViewer` directo) no pasa por aquí, y no le hace
  * falta: `demoTour` no trae marca.
  */
-export function ConPortada({ tour, accion, pista, fallback }: ConPortadaProps) {
+export function ConPortada({ tour, accion, pista, fallback, metricas = null }: ConPortadaProps) {
   /** ¿Ya entró al recorrido? Solo importa cuando hay portada. */
   const [entro, setEntro] = useState(false)
 
@@ -106,7 +109,7 @@ export function ConPortada({ tour, accion, pista, fallback }: ConPortadaProps) {
      arriba tire la pantalla entera. */
   return (
     <Suspense fallback={fallback ?? <Cargando texto="Abriendo el recorrido…" />}>
-      <TourViewer tour={tour} accion={accion} pista={pista} />
+      <TourViewer tour={tour} accion={accion} pista={pista} metricas={metricas} />
     </Suspense>
   )
 }

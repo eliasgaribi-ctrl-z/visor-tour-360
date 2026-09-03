@@ -375,6 +375,14 @@ revisar(
 )
 revisar('sin errores de consola en el comprador', erroresComprador.length === 0, erroresComprador.join(' | '))
 
+/* El comprador pasa a otro cuarto y toca un punto, y luego "esconde" la pestaña:
+   `pagehide` es lo que dispara el envío de métricas (junto con
+   `visibilitychange`), y es lo único de los dos que se puede despachar a mano. */
+await pc.getByRole('button', { name: 'Sala', exact: true }).click()
+await pc.waitForTimeout(1500)
+await pc.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+await pc.waitForTimeout(800)
+
 /* ── El mismo link en un aparato modesto ──────────────────────────────────── */
 const modesto = await browser.newContext(movil)
 await modesto.addInitScript(() => {
@@ -393,7 +401,63 @@ revisar(
   bajadasModesto.join(' '),
 )
 revisar('y también dibuja', (await brilloDe(pm)) > 40)
+await pm.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+await pm.waitForTimeout(800)
 await modesto.close()
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 3b · LAS VISITAS QUEDAN CONTADAS: SESIONES, NO PERSONAS
+ * ══════════════════════════════════════════════════════════════════════════ */
+console.log('\n=== Las visitas quedan contadas ===')
+
+const conMaestra = { Authorization: `Bearer ${CLAVE}` }
+const visitas = await (await fetch(`${WORKER}/api/m/${llave}`, { headers: conMaestra })).json()
+revisar('dos navegadores distintos son dos visitas', visitas.visitas === 2, JSON.stringify({ visitas: visitas.visitas, paquetes: visitas.paquetes }))
+revisar(
+  'las dos entraron al patio (la habitación de inicio) y una pasó a la sala',
+  visitas.escenas?.patio?.visitas === 2 && visitas.escenas?.sala?.visitas === 1,
+  JSON.stringify(visitas.escenas),
+)
+revisar('y el tiempo en el patio se contó', (visitas.escenas?.patio?.segundos ?? 0) >= 1, `${visitas.escenas?.patio?.segundos} s`)
+revisar('una de las dos fue un aparato modesto', visitas.aparatos?.modestos === 1 && visitas.aparatos?.normales === 1, JSON.stringify(visitas.aparatos))
+revisar('sin fallas', visitas.fallas === 0)
+revisar('el resumen no trae nada que identifique a nadie', !/ip|agent|Mozilla/i.test(JSON.stringify(visitas)))
+
+/* Quien pidió no ser seguido, no aparece. */
+const sinRastro = await browser.newContext(movil)
+await sinRastro.addInitScript(() => {
+  Object.defineProperty(navigator, 'doNotTrack', { get: () => '1' })
+})
+const ps = await sinRastro.newPage()
+await ps.goto(`${VISOR}#/p/${llave}`, { waitUntil: 'networkidle' })
+await ps.waitForTimeout(2000)
+await ps.getByRole('button', { name: /Ver el recorrido/ }).click()
+await ps.waitForTimeout(3000)
+await ps.evaluate(() => window.dispatchEvent(new Event('pagehide')))
+await ps.waitForTimeout(800)
+await sinRastro.close()
+const visitas2 = await (await fetch(`${WORKER}/api/m/${llave}`, { headers: conMaestra })).json()
+revisar('quien pidió "no rastrear" no cuenta', visitas2.visitas === 2, String(visitas2.visitas))
+
+/* Lo que el endpoint público rechaza, y quién puede leer. */
+const basura = await fetch(`${WORKER}/api/m/${llave}`, { method: 'POST', body: 'hola' })
+revisar('un paquete que no es JSON se rechaza', basura.status === 400, String(basura.status))
+const sinForma = await fetch(`${WORKER}/api/m/${llave}`, { method: 'POST', body: JSON.stringify({ s: 'x', eventos: [] }) })
+revisar('un paquete sin forma se rechaza', sinForma.status === 400, String(sinForma.status))
+const casaInexistente = await fetch(`${WORKER}/api/m/${'a'.repeat(26)}`, {
+  method: 'POST',
+  body: JSON.stringify({ s: 'abcdefghijkm', inicio: Date.now(), eventos: [] }),
+})
+revisar('una casa que no existe no acepta visitas', casaInexistente.status === 404, String(casaInexistente.status))
+revisar('sin credencial no se leen', (await fetch(`${WORKER}/api/m/${llave}`)).status === 401)
+
+/* Y el agente las ve en su editor. */
+await pg.getByRole('button', { name: 'Ver visitas' }).click()
+await pg.getByText(/2 visitas/).waitFor({ timeout: 30000 })
+revisar('el editor enseña las visitas', await pg.getByText(/2 visitas/).isVisible())
+revisar('con los cuartos por nombre', (await pg.getByText('Patio', { exact: true }).count()) >= 1 && (await pg.getByText('Sala', { exact: true }).count()) >= 1)
+await pg.getByRole('button', { name: 'Cerrar' }).click()
+await pg.waitForTimeout(500)
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 4 · EDITAR DESPUÉS DE PUBLICAR, Y VOLVER A SUBIR SOBRE EL MISMO LINK
@@ -434,6 +498,8 @@ revisar('y las fotos también', (await fetch(`${WORKER}/t/${llave}/fotos/000.jpg
 await pc.reload({ waitUntil: 'networkidle' })
 await pc.waitForTimeout(2500)
 revisar('y el comprador ve que ya no está disponible', await pc.getByText(/ya no está disponible/).isVisible())
+const visitasTrasBaja = await (await fetch(`${WORKER}/api/m/${llave}`, { headers: conMaestra })).json()
+revisar('y sus visitas se fueron con ella', visitasTrasBaja.visitas === 0, String(visitasTrasBaja.visitas))
 
 /* ══════════════════════════════════════════════════════════════════════════
  * 6 · LO QUE EL WORKER RECHAZA

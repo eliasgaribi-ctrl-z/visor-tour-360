@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react'
 
 import type { Tour } from '../../lib/types'
 import type { Ruta } from '../../lib/useHashRoute'
-import { PublicarError, abrirPublicado } from '../../lib/publicar'
+import { PublicarError, abrirPublicado, basePublicar } from '../../lib/publicar'
 import { aparato } from '../../lib/dispositivo'
+import { crearMetricas, type Metricas } from '../../lib/metricas/cliente'
 import { ConPortada } from '../tour/ConPortada'
 import { Aviso, Boton, Cargando, Pantalla } from './ui'
 
@@ -40,6 +41,21 @@ export function VisorPublicado({ llave, ir }: VisorPublicadoProps) {
     { fase: 'cargando' } | { fase: 'listo'; tour: Tour } | { fase: 'error'; mensaje: string; consejo?: string }
   >({ fase: 'cargando' })
   const [intento, setIntento] = useState(0)
+
+  /* Las métricas nacen cuando la casa está lista y mueren con esta pantalla:
+     el `cerrar()` manda lo que quede. Solo AQUÍ se crean —el visor local y la
+     demo no las tienen— así que el agente mirando su propia casa no es una
+     visita. Y pueden ser `null`: la persona pidió no ser seguida. */
+  const [metricas, setMetricas] = useState<Metricas | null>(null)
+  useEffect(() => {
+    if (estado.fase !== 'listo') return
+    const m = crearMetricas({ base: basePublicar(), llave, modesto: aparato().modesto })
+    setMetricas(m)
+    return () => {
+      m?.cerrar()
+      setMetricas(null)
+    }
+  }, [estado.fase, llave])
 
   useEffect(() => {
     let vivo = true
@@ -90,5 +106,5 @@ export function VisorPublicado({ llave, ir }: VisorPublicadoProps) {
     )
   }
 
-  return <ConPortada tour={estado.tour} />
+  return <ConPortada tour={estado.tour} metricas={metricas} />
 }
