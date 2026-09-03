@@ -134,6 +134,11 @@ const manifiestoV2 = JSON.parse(readFileSync('tools/pruebas/fixtures/v2.json', '
    miniatura y un logo como archivos, que es lo que el exportador escribe. */
 manifiestoV2.recorrido.scenes[0].miniatura = 'fotos/sala.min.jpg'
 manifiestoV2.recorrido.marca.logoArchivo = 'marca/logo.jpg'
+/* Y el plano de la casa (v3), con las dos habitaciones colocadas. */
+manifiestoV2.version = 3
+manifiestoV2.recorrido.plano = { archivo: 'plano/plano.jpg', ancho: 1600, alto: 800 }
+manifiestoV2.recorrido.scenes[0].plano = { x: 0.25, y: 0.5, giro: 90 }
+manifiestoV2.recorrido.scenes[1].plano = { x: 0.75, y: 0.5 }
 const rutaTour = join(tmp, 'casa.tour')
 writeFileSync(
   rutaTour,
@@ -141,6 +146,7 @@ writeFileSync(
     { name: 'fotos/sala.jpg', data: SALA },
     { name: 'fotos/sala.min.jpg', data: RECAMARA },
     { name: 'marca/logo.jpg', data: COCINA },
+    { name: 'plano/plano.jpg', data: RECAMARA },
   ]),
 )
 
@@ -169,6 +175,11 @@ revisar(
 )
 revisar('con la ficha, la marca y el kiosco', tourJson.ficha?.precio === 'Desde $1.9M' && tourJson.marca?.nombre === 'Inmobiliaria del Valle' && tourJson.autogiro === true)
 revisar('el logo va como archivo con la extensión de su tipo, y sin el logoId ajeno', tourJson.marca?.logo === 'logo.jpg' && tourJson.marca?.logoId === undefined, String(tourJson.marca?.logo))
+revisar(
+  'y el plano de la casa también, con dónde está cada habitación',
+  hay(CASA, 'recorrido/fotos/plano.jpg') && tourJson.plano?.archivo === 'plano.jpg' && tourJson.scenes?.[0]?.plano?.giro === 90,
+  JSON.stringify(tourJson.plano),
+)
 revisar('las fotos son los bytes del .tour, sin recomprimir', hay(CASA, 'recorrido/fotos/000.jpg') && leer(CASA, 'recorrido/fotos/000.jpg').equals(SALA) && leer(CASA, 'recorrido/fotos/000.min.jpg').equals(RECAMARA))
 
 const html = hay(CASA, 'index.html') ? leer(CASA, 'index.html').toString() : ''
@@ -210,6 +221,9 @@ revisar('al entrar aparece el visor 3D', await pc.evaluate(() => document.queryS
 const brillo = await brilloDe(pc)
 revisar('y la foto se dibuja: no es un cuarto negro', brillo > 40, `brillo ${brillo}`)
 revisar('con las habitaciones en la barra', (await pc.getByRole('button', { name: 'Sala', exact: true }).isVisible()) && (await pc.getByRole('button', { name: 'Patio', exact: true }).isVisible()))
+await pc.getByRole('button', { name: 'Ver el plano' }).click()
+await pc.waitForTimeout(800)
+revisar('y el plano de la casa se abre desde la propia carpeta', await pc.getByRole('group', { name: 'Plano de la casa' }).isVisible())
 await pc.getByRole('button', { name: 'Sala', exact: true }).click()
 await pc.waitForTimeout(1500)
 

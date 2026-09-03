@@ -36,6 +36,7 @@ function tourDe(escenas: Partial<StoredTour['scenes'][number]>[], extra: Partial
       rumbo: e.rumbo,
       nivel: e.nivel,
       coverageDeg: e.coverageDeg,
+      plano: e.plano,
       createdAt: 0,
     })),
   }
@@ -180,6 +181,22 @@ describe('armarManifiesto', () => {
     expect(m.ficha).toBeUndefined()
     expect(m.marca).toBeUndefined()
     expect(m.autogiro).toBeUndefined()
+    expect(m.plano).toBeUndefined()
+  })
+
+  it('lleva el plano de la casa y donde esta cada habitacion', () => {
+    /* El plano es un archivo, como el logo: su nombre lo pone quien sube. Sin
+       archivo no se promete plano, pero las posiciones viajan igual porque son
+       datos del recorrido. */
+    const tour = tourDe([{ id: 'a', plano: { x: 0.25, y: 0.5, giro: 90 } }, { id: 'b' }], {
+      plano: { imageId: 'img-plano', ancho: 1600, alto: 800 },
+    })
+    const m = armarManifiesto(tour, { plano: 'plano.jpg' })
+    expect(m.plano).toEqual({ archivo: 'plano.jpg', ancho: 1600, alto: 800 })
+    expect(m.scenes[0].plano).toEqual({ x: 0.25, y: 0.5, giro: 90 })
+    expect(m.scenes[1].plano).toBeUndefined()
+    expect(armarManifiesto(tour).plano).toBeUndefined()
+    expect(armarManifiesto(tour).scenes[0].plano).toEqual({ x: 0.25, y: 0.5, giro: 90 })
   })
 })
 
@@ -283,6 +300,24 @@ describe('manifiestoATour', () => {
   it('un logo con nombre fuera de la lista no llega', () => {
     const tour = manifiestoATour(llave, { ...v2, marca: { ...v2.marca, logo: 'logo.svg' } })
     expect(tour.marca?.logo).toBeUndefined()
+  })
+
+  it('resuelve el plano a una direccion y acota las posiciones como todo lo demas', () => {
+    const conPlano = {
+      ...v2,
+      plano: { archivo: 'plano.jpg', ancho: 1600, alto: 800 },
+      scenes: [{ ...v2.scenes[0], plano: { x: 1.5, y: 0.5, giro: 450 } }, v2.scenes[1]],
+    }
+    const tour = manifiestoATour(llave, conPlano)
+    expect(tour.plano).toEqual({
+      imagen: expect.stringContaining(`/t/${llave}/fotos/plano.jpg`),
+      ancho: 1600,
+      alto: 800,
+    })
+    expect(tour.scenes[0].plano).toEqual({ x: 1, y: 0.5, giro: 90 })
+    expect(tour.scenes[1].plano).toBeUndefined()
+    // Un plano con nombre fuera de la lista no llega: el Worker no lo serviría.
+    expect(manifiestoATour(llave, { ...v2, plano: { archivo: '../otro.jpg', ancho: 10, alto: 10 } }).plano).toBeUndefined()
   })
 
   it('con `base`, las direcciones salen de esa carpeta y no del Worker', () => {

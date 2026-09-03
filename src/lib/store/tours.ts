@@ -154,6 +154,8 @@ export async function deleteTour(id: string): Promise<void> {
   const imageIds = [
     ...tour.scenes.flatMap((s) => [s.imageId, s.thumbId]),
     tour.marca?.logoId,
+    // Y el plano de la casa, que también es un blob de este recorrido.
+    tour.plano?.imageId,
   ].filter(Boolean) as string[]
   for (const imageId of imageIds) releaseBlobUrl(imageId)
 
@@ -199,12 +201,22 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
       initialYaw: scene.initialYaw ?? 0,
       rumbo: scene.rumbo,
       nivel: scene.nivel,
+      plano: scene.plano,
       // Un hotspot que apunta a una habitación que ya no existe se cae aquí:
       // dejarlo mostraría un botón que no lleva a ningún lado.
       hotspots: scene.hotspots.filter(
         (h) => h.kind !== 'link' || stored.scenes.some((s) => s.id === h.to),
       ),
     })
+  }
+
+  /* El plano, por el mismo puente que las fotos: llave de Blob → URL viva. Si
+     el blob ya no está, el recorrido abre sin plano y sin error, igual que una
+     habitación sin foto se omite. */
+  let plano: Tour['plano']
+  if (stored.plano) {
+    const imagen = await blobUrl(stored.plano.imageId)
+    if (imagen) plano = { imagen, ancho: stored.plano.ancho, alto: stored.plano.alto }
   }
 
   const startSceneId = scenes.some((s) => s.id === stored.startSceneId)
@@ -243,6 +255,7 @@ export async function resolveTour(stored: StoredTour): Promise<Tour> {
     marca,
     ficha: stored.ficha,
     autogiro: stored.autogiro,
+    plano,
   }
 }
 

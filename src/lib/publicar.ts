@@ -48,11 +48,12 @@
  * publicado también es de una red que no se controla.
  */
 
-import type { Ficha, Tour, TourScene } from './types'
+import type { Ficha, PosicionEnPlano, Tour, TourScene } from './types'
 import type { MarcaGuardada, StoredTour } from './store/types'
 import type { Resumen } from './metricas/resumen'
 import { getImage } from './store/tours'
 import { limpiarEscena, limpiarFicha, limpiarMarca } from './store/migrar'
+import { limpiarPlano } from './planta'
 
 /**
  * Dirección del Worker, sin barra final. Se fija al compilar:
@@ -132,6 +133,14 @@ export function nombreDeLogo(tipo: string): string | undefined {
 
 const LOGO_VALIDO = /^logo\.(png|jpg|webp)$/
 
+/** El plano de la casa se sube igual que el logo: con la extensión de su tipo real. */
+export function nombreDePlano(tipo: string): string | undefined {
+  const extension = EXTENSION_DE_LOGO[tipo]
+  return extension ? `plano.${extension}` : undefined
+}
+
+const PLANO_VALIDO = /^plano\.(png|jpg|webp)$/
+
 /** La llave que genera el Worker: 26 letras de un alfabeto sin ambigüedades. */
 const LLAVE_VALIDA = /^[abcdefghijkmnpqrstuvwxyz23456789]{26}$/
 
@@ -155,6 +164,8 @@ type EscenaManifiesto = {
   rumbo?: number
   nivel?: { tiltX: number; tiltZ: number }
   coverageDeg?: number
+  /** Dónde está en el plano de la casa. Ver `src/lib/planta.ts`. */
+  plano?: PosicionEnPlano
 }
 
 /**
@@ -173,6 +184,8 @@ export type Manifiesto = {
   ficha?: Ficha
   marca?: MarcaPublicada
   autogiro?: boolean
+  /** La planta de la casa: el nombre del archivo subido y su tamaño. Aditivo, como todo lo demás. */
+  plano?: { archivo: string; ancho: number; alto: number }
 }
 
 /**
@@ -188,10 +201,13 @@ export type Manifiesto = {
  * foto por foto, si pudo producir la variante, y borra la declaración de las que
  * no. Así el manifiesto nunca promete un archivo que no está.
  *
- * `logo` llega de fuera porque su nombre depende del TIPO del blob, y esta
- * función no toca IndexedDB.
+ * `logo` y `plano` llegan de fuera porque su nombre depende del TIPO del blob, y
+ * esta función no toca IndexedDB.
  */
-export function armarManifiesto(tour: StoredTour, extras: { logo?: string } = {}): Manifiesto {
+export function armarManifiesto(
+  tour: StoredTour,
+  extras: { logo?: string; plano?: string } = {},
+): Manifiesto {
   const scenes: EscenaManifiesto[] = []
 
   for (const escena of tour.scenes) {
@@ -209,6 +225,7 @@ export function armarManifiesto(tour: StoredTour, extras: { logo?: string } = {}
     if (escena.rumbo !== undefined) entrada.rumbo = escena.rumbo
     if (escena.nivel) entrada.nivel = escena.nivel
     if (escena.coverageDeg !== undefined) entrada.coverageDeg = escena.coverageDeg
+    if (escena.plano) entrada.plano = escena.plano
     scenes.push(entrada)
   }
 
@@ -251,6 +268,12 @@ export function armarManifiesto(tour: StoredTour, extras: { logo?: string } = {}
     manifiesto.marca = marca
   }
   if (tour.autogiro === true) manifiesto.autogiro = true
+  /* El plano solo si hay archivo que subir —`extras.plano` llega de quien tiene
+     el blob, igual que el logo—. Las posiciones de las habitaciones viajan
+     aunque no: son datos del recorrido, y el visor las ignora sin plano. */
+  if (tour.plano && extras.plano) {
+    manifiesto.plano = { archivo: extras.plano, ancho: tour.plano.ancho, alto: tour.plano.alto }
+  }
 
   return manifiesto
 }
@@ -387,11 +410,13 @@ export async function publicarTour(
     throw new PublicarError('Esta versión del visor no tiene la publicación configurada.')
   }
 
-  /* El logo primero: su nombre va dentro del manifiesto. */
+  /* El logo y el plano primero: sus nombres van dentro del manifiesto. */
   const logo = tour.marca?.logoId ? await getImage(tour.marca.logoId) : null
   const nombreLogo = logo ? nombreDeLogo(logo.type) : undefined
+  const plano = tour.plano ? await getImage(tour.plano.imageId) : null
+  const nombrePlano = plano ? nombreDePlano(plano.type) : undefined
 
-  const manifiesto = armarManifiesto(tour, { logo: nombreLogo })
+  const manifiesto = armarManifiesto(tour, { logo: nombreLogo, plano: nombrePlano })
   if (manifiesto.scenes.length === 0) {
     throw new PublicarError(
       'Este recorrido no tiene ninguna habitación con foto.',
@@ -400,8 +425,11 @@ export async function publicarTour(
   }
 
   const conFoto = tour.scenes.filter((e) => e.imageId)
-  // Cada habitación son hasta tres archivos; el logo, uno más.
-  const total = manifiesto.scenes.reduce((n, e) => n + 2 + (e.miniatura ? 1 : 0), 0) + (nombreLogo ? 1 : 0)
+  // Cada habitación son hasta tres archivos; el logo y el plano, uno más cada uno.
+  const total =
+    manifiesto.scenes.reduce((n, e) => n + 2 + (e.miniatura ? 1 : 0), 0) +
+    (nombreLogo ? 1 : 0) +
+    (nombrePlano ? 1 : 0)
   let hechas = 0
   const avanzar = () => {
     hechas++
@@ -461,6 +489,7 @@ export async function publicarTour(
   }
 
   if (logo && nombreLogo) await subir(logo, nombreLogo, logo.type)
+  if (plano && nombrePlano) await subir(plano, nombrePlano, plano.type)
 
   const { url } = (await pedir(
     `/api/publicar/${llave}`,
@@ -602,6 +631,7 @@ export function manifiestoATour(llave: string, crudo: unknown, opciones: Opcione
     }
     if (limpia.rumbo !== undefined) escena.rumbo = limpia.rumbo
     if (limpia.nivel) escena.nivel = limpia.nivel
+    if (limpia.plano) escena.plano = limpia.plano
     scenes.push(escena)
   }
 
@@ -630,6 +660,14 @@ export function manifiestoATour(llave: string, crudo: unknown, opciones: Opcione
     tour.marca = { ...marca, logo: logo ? `${base}/${logo}` : undefined }
   }
   if (m.autogiro === true) tour.autogiro = true
+
+  /* El plano, con el nombre acotado a la lista que el Worker admite, resuelto a
+     la misma carpeta que las fotos. Sin plano, las posiciones de las
+     habitaciones no pintan nada y el minimapa no aparece. */
+  const plano = limpiarPlano(m.plano)
+  if (plano && PLANO_VALIDO.test(plano.archivo)) {
+    tour.plano = { imagen: `${base}/${plano.archivo}`, ancho: plano.ancho, alto: plano.alto }
+  }
 
   return tour
 }

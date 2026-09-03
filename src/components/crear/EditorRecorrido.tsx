@@ -773,6 +773,26 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           </Boton>
         </Tarjeta>
 
+        {/* El plano de la casa: la planta con un alfiler por habitación. Es lo
+            que le dice al comprador dónde está parado y hacia dónde mira, y va
+            aquí y no dentro de una habitación porque es UN plano para toda la
+            casa. Solo con habitaciones: sin ellas no hay nada que colocar. */}
+        {listo && (
+          <Tarjeta>
+            <p className="mb-1 font-semibold">Plano de la casa</p>
+            <p className="mb-3 text-sm text-ink-200">
+              {tour.plano
+                ? `${tour.scenes.filter((s) => s.plano).length} de ${tour.scenes.length} ${
+                    tour.scenes.length === 1 ? 'habitación colocada' : 'habitaciones colocadas'
+                  }. Quien vea el recorrido tendrá un plano con dónde está parado.`
+                : 'Sube la planta arquitectónica y marca dónde está cada habitación: quien vea el recorrido sabrá en qué parte de la casa está parado.'}
+            </p>
+            <Boton ancho onClick={() => ir({ nombre: 'plano', tourId: tour.id })}>
+              {tour.plano ? 'Editar el plano' : 'Agregar el plano'}
+            </Boton>
+          </Tarjeta>
+        )}
+
         <Boton
           tipo="fantasma"
           ancho

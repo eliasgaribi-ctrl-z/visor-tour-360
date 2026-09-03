@@ -18,6 +18,7 @@ import { useCallback, useEffect, useState } from 'react'
  *   #/capturar/<id>       tomar una panorámica con la cámara
  *   #/foto/<id>           subir una foto ya hecha
  *   #/puntos/<id>/<esc>   colocar los puntos de una habitación
+ *   #/plano/<id>          el plano de la casa: dónde está cada habitación
  *   #/ver/<id>            ver un recorrido guardado
  *   #/p/<llave>           ver una casa PUBLICADA (vive en el servidor, no aquí)
  *   #/panel               las casas publicadas con el código de la inmobiliaria
@@ -41,6 +42,7 @@ export type Ruta =
   | { nombre: 'capturar'; tourId: string; sceneId?: string }
   | { nombre: 'foto'; tourId: string; sceneId?: string }
   | { nombre: 'puntos'; tourId: string; sceneId: string }
+  | { nombre: 'plano'; tourId: string }
 
 export function leerRuta(hash: string): Ruta {
   const limpio = hash.replace(/^#\/?/, '')
@@ -76,6 +78,8 @@ export function leerRuta(hash: string): Ruta {
       return partes[1] && partes[2]
         ? { nombre: 'puntos', tourId: partes[1], sceneId: partes[2] }
         : { nombre: 'inicio' }
+    case 'plano':
+      return partes[1] ? { nombre: 'plano', tourId: partes[1] } : { nombre: 'inicio' }
     default:
       return { nombre: 'visor' }
   }
@@ -109,6 +113,8 @@ export function rutaAHash(ruta: Ruta): string {
       )
     case 'puntos':
       return `#/puntos/${encodeURIComponent(ruta.tourId)}/${encodeURIComponent(ruta.sceneId)}`
+    case 'plano':
+      return `#/plano/${encodeURIComponent(ruta.tourId)}`
   }
 }
 

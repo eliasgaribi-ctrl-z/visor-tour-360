@@ -676,7 +676,7 @@ const vuelta = await page.evaluate(async (id) => {
 }, v2Guardado.id)
 
 revisar('el nombre del archivo sale de su título', vuelta.nombre === 'casa-de-prueba-v2.tour', vuelta.nombre)
-revisar('el manifiesto sale con version 2', vuelta.manifiesto.version === 2)
+revisar('el manifiesto sale con version 3', vuelta.manifiesto.version === 3, String(vuelta.manifiesto.version))
 revisar('y el ZIP lo lee su propio lector', vuelta.entradas.includes('recorrido.json'))
 
 const CAMPOS_TOUR = ['title', 'subtitle', 'startSceneId', 'createdAt', 'marca', 'ficha', 'autogiro']
@@ -750,6 +750,58 @@ revisar(
   logo.entradas.filter((n) => !n.startsWith('fotos/')).join(', '),
 )
 revisar('y del otro lado se guarda de nuevo', logo.pesa > 0 && logo.logoIdNuevo !== logo.logoIdViejo, `${logo.pesa} B`)
+
+/* ── El plano de la casa, viajando (la v3) ──────────────────────────────────
+   El plano es un blob más, como el logo, y las posiciones son datos de cada
+   habitación. Las dos cosas tienen que cruzar el .tour enteras. */
+console.log('\n=== El plano de la casa viaja en el .tour (v3) ===')
+const planoIda = await page.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const paquete = await import('/src/lib/store/paquete.ts')
+  const zip = await import('/src/lib/store/zip.ts')
+  const jpg = await (await fetch('/panoramas/recamara.jpg')).blob()
+  const imageId = await tours.putImage(jpg)
+  const tour = await tours.getTour(id)
+  await tours.saveTour({
+    ...tour,
+    plano: { imageId, ancho: 1600, alto: 800 },
+    scenes: tour.scenes.map((s, i) => ({ ...s, plano: i === 0 ? { x: 0.25, y: 0.5, giro: 90 } : { x: 0.75, y: 0.5 } })),
+  })
+  const { blob } = await paquete.exportarTour(id)
+  const dentro = await zip.readZip(blob)
+  const manifiesto = JSON.parse(new TextDecoder().decode(dentro.find((x) => x.name === 'recorrido.json').data))
+  const reimportado = await paquete.importarTour(blob)
+  const suPlano = reimportado.plano ? await tours.getImage(reimportado.plano.imageId) : null
+  return {
+    entradas: dentro.map((x) => x.name),
+    version: manifiesto.version,
+    plano: manifiesto.recorrido.plano,
+    posiciones: manifiesto.recorrido.scenes.map((s) => s.plano),
+    vuelta: {
+      plano: reimportado.plano,
+      posiciones: reimportado.scenes.map((s) => s.plano),
+      pesa: suPlano ? suPlano.size : 0,
+      idViejo: imageId,
+    },
+  }
+}, v2Guardado.id)
+revisar('el archivo ya es la versión 3', planoIda.version === 3, String(planoIda.version))
+revisar(
+  'el plano viaja dentro del .tour, con su tamaño',
+  planoIda.entradas.includes('plano/plano.jpg') && planoIda.plano?.archivo === 'plano/plano.jpg' && planoIda.plano?.ancho === 1600,
+  JSON.stringify(planoIda.plano),
+)
+revisar(
+  'con la posición y el giro de cada habitación',
+  JSON.stringify(planoIda.posiciones) === JSON.stringify([{ x: 0.25, y: 0.5, giro: 90 }, { x: 0.75, y: 0.5 }]),
+  JSON.stringify(planoIda.posiciones),
+)
+revisar(
+  'y del otro lado se guarda de nuevo, con llave nueva',
+  planoIda.vuelta.pesa > 0 && planoIda.vuelta.plano?.imageId !== planoIda.vuelta.idViejo && planoIda.vuelta.plano?.alto === 800,
+  `${planoIda.vuelta.pesa} B`,
+)
+revisar('las posiciones llegan enteras', JSON.stringify(planoIda.vuelta.posiciones) === JSON.stringify(planoIda.posiciones))
 
 /* ==========================================================================
  * DOS HABITACIONES CON EL MISMO id
@@ -884,21 +936,31 @@ const estampas = await page.evaluate(async () => {
   // Y que al volver a guardarlo sí quede estampado.
   const reguardado = await tours.saveTour(leido)
 
+  /* La estampa se compara con la constante REAL y no con un número escrito
+     aquí: cuando el formato subió a 3, dos aserciones con el 2 a mano se
+     pusieron rojas por la razón equivocada. Lo que se afirma es que TODO
+     registro lleva la versión actual, sea cual sea. */
+  const { FORMAT_VERSION } = await import('/src/lib/store/types.ts')
   return {
+    version: FORMAT_VERSION,
     total: todos.length,
-    conEstampa: todos.filter((t) => t.formato === 2).length,
+    conEstampa: todos.filter((t) => t.formato === FORMAT_VERSION).length,
     sinEstampaSeLee: leido !== null && leido.scenes.length > 0,
     trasReguardar: reguardado.formato,
   }
 })
 
 revisar(
-  'cada recorrido guardado trae formato: 2',
+  `cada recorrido guardado trae formato: ${estampas.version}`,
   estampas.total > 0 && estampas.conEstampa === estampas.total,
   `${estampas.conEstampa} de ${estampas.total}`,
 )
 revisar('uno viejo sin estampa se sigue leyendo', estampas.sinEstampaSeLee)
-revisar('y al reguardarlo queda estampado', estampas.trasReguardar === 2, String(estampas.trasReguardar))
+revisar(
+  'y al reguardarlo queda estampado',
+  estampas.trasReguardar === estampas.version,
+  String(estampas.trasReguardar),
+)
 
 /* Esta sección va AQUÍ a propósito, y las dos vecinas fijan el sitio: edita el
    recorrido v2 en IndexedDB, así que va DESPUÉS de la ida y vuelta —que compara

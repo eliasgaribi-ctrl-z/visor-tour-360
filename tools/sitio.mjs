@@ -61,7 +61,7 @@ const VITE = join(RAIZ, 'node_modules', 'vite', 'bin', 'vite.js')
 /** La misma carpeta que lee `VisorSitio.tsx`. */
 const CARPETA = 'recorrido'
 /** Lo único que se copia a `recorrido/fotos/`: la forma que admite el visor. */
-const ARCHIVO_VALIDO = /^([0-9]{3}(\.min|\.2k)?\.jpg|logo\.(png|jpg|webp))$/
+const ARCHIVO_VALIDO = /^([0-9]{3}(\.min|\.2k)?\.jpg|(logo|plano)\.(png|jpg|webp))$/
 const EXTENSION_DE_LOGO = { '.png': 'png', '.jpg': 'jpg', '.jpeg': 'jpg', '.webp': 'webp' }
 
 function morir(mensaje) {
@@ -193,8 +193,11 @@ function desdeTour(ruta) {
     morir('El recorrido.json del .tour no es JSON.')
   }
   if (m.formato !== 'visor-tour-360') morir('Ese archivo lo hizo otro programa.')
-  if (typeof m.version !== 'number' || m.version > 2) {
-    morir(`El .tour es de la versión ${m.version} y esta herramienta lee hasta la 2: actualiza el proyecto.`)
+  /* Hasta la v3 (el plano de la casa). El número tiene que subir junto con
+     FORMAT_VERSION de src/lib/store/types.ts; `sitio.mjs` lo comprueba con un
+     .tour v3 de verdad. */
+  if (typeof m.version !== 'number' || m.version > 3) {
+    morir(`El .tour es de la versión ${m.version} y esta herramienta lee hasta la 3: actualiza el proyecto.`)
   }
   const r = m.recorrido
   if (!r || typeof r !== 'object' || !Array.isArray(r.scenes)) morir('El .tour no trae habitaciones.')
@@ -214,7 +217,10 @@ function desdeTour(ruta) {
       archivos.set(`${numero}.min.jpg`, mini)
       escena.miniatura = `${numero}.min.jpg`
     }
-    for (const campo of ['rumbo', 'nivel', 'coverageDeg']) if (e[campo] !== undefined) escena[campo] = e[campo]
+    /* `plano` es la posición en la planta (v3): sin ella el minimapa del sitio
+       no tendría alfileres. `sitio.mjs` la comprueba, y salió roja la primera
+       vez precisamente porque faltaba en esta lista. */
+    for (const campo of ['rumbo', 'nivel', 'coverageDeg', 'plano']) if (e[campo] !== undefined) escena[campo] = e[campo]
     scenes.push(escena)
   }
   if (scenes.length === 0) morir('Ninguna habitación del .tour trae su foto: no hay nada que enseñar.')
@@ -239,6 +245,15 @@ function desdeTour(ruta) {
     manifiesto.marca = marca
   }
   if (r.autogiro === true) manifiesto.autogiro = true
+  /* El plano de la casa (v3), con el mismo trato que el logo. */
+  if (r.plano && typeof r.plano === 'object' && typeof r.plano.archivo === 'string') {
+    const datos = zip.get(r.plano.archivo)
+    const extension = EXTENSION_DE_LOGO[extname(r.plano.archivo).toLowerCase()]
+    if (datos && extension) {
+      archivos.set(`plano.${extension}`, datos)
+      manifiesto.plano = { archivo: `plano.${extension}`, ancho: r.plano.ancho, alto: r.plano.alto }
+    }
+  }
   return { manifiesto, archivos }
 }
 
@@ -282,6 +297,9 @@ async function desdeLink(entrada) {
   if (manifiesto.scenes.length === 0) morir('No se pudo bajar ninguna foto de esa casa.')
   if (manifiesto.marca && typeof manifiesto.marca === 'object' && manifiesto.marca.logo !== undefined) {
     if (!(await bajar(manifiesto.marca.logo))) delete manifiesto.marca.logo
+  }
+  if (manifiesto.plano && typeof manifiesto.plano === 'object') {
+    if (!(await bajar(manifiesto.plano.archivo))) delete manifiesto.plano
   }
   return { manifiesto, archivos }
 }

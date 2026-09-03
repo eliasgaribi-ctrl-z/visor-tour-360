@@ -31,6 +31,27 @@ export type Hotspot = {
     }
 )
 
+/**
+ * ============================================================================
+ *  EL PLANO DE LA CASA
+ * ============================================================================
+ *
+ * Dónde queda cada habitación sobre la planta arquitectónica, y hacia dónde
+ * mira el frente de su foto. Las coordenadas van NORMALIZADAS a [0, 1] y no en
+ * píxeles, a propósito: así se puede cambiar el plano por uno de otra
+ * resolución (un escaneo mejor) sin recolocar nada.
+ *
+ * `giro` son los grados, en el sentido del reloj desde "arriba" del plano, a
+ * los que mira el yaw 0 de la panorámica. Con él el minimapa dibuja el cono de
+ * hacia dónde se está mirando; sin él dibuja solo el punto, que es la verdad
+ * cuando no se sabe. Ver `src/lib/planta.ts`, incluido cómo el `rumbo` de las
+ * fotos capturadas orienta las demás a partir de una.
+ */
+export type PosicionEnPlano = { x: number; y: number; giro?: number }
+
+/** El plano ya resuelto a una URL, para el visor. En `StoredTour` es una llave de Blob. */
+export type Plano = { imagen: string; ancho: number; alto: number }
+
 export type TourScene = {
   id: string
   name: string
@@ -48,6 +69,8 @@ export type TourScene = {
   rumbo?: number
   /** Corrección de nivel al ver, en grados. Ver `src/lib/nivel.ts`. */
   nivel?: { tiltX: number; tiltZ: number }
+  /** Dónde está esta habitación en el plano de la casa, si el recorrido trae plano. */
+  plano?: PosicionEnPlano
   hotspots: Hotspot[]
 }
 
@@ -142,4 +165,6 @@ export type Tour = {
   ficha?: Ficha
   /** Modo kiosco: el recorrido gira solo hasta que alguien lo toca. Apagado si falta. */
   autogiro?: boolean
+  /** La planta arquitectónica, para el minimapa. Ver `src/lib/planta.ts`. */
+  plano?: Plano
 }

@@ -19,6 +19,7 @@ import { HotspotLayer } from './ui/HotspotLayer'
 import { InfoSheet } from './ui/InfoSheet'
 import { Joystick } from './ui/Joystick'
 import { LoadingVeil } from './ui/LoadingVeil'
+import { Minimapa } from './ui/Minimapa'
 import { RoomBar } from './ui/RoomBar'
 import { ZoomControls } from './ui/ZoomControls'
 
@@ -69,6 +70,9 @@ export function TourViewer({
   const [failed, setFailed] = useState(false)
   const [info, setInfo] = useState<{ title: string; body?: string } | null>(null)
   const [hintVisible, setHintVisible] = useState(true)
+  /* El minimapa del plano, si el recorrido trae uno. Cerrado al entrar: en un
+     teléfono tapa un cuarto de la foto, y la foto es a lo que se vino. */
+  const [planoAbierto, setPlanoAbierto] = useState(false)
   const hintDismissed = useRef(false)
   const cartelError = useRef<HTMLDivElement>(null)
 
@@ -313,6 +317,17 @@ export function TourViewer({
             <RoomBar scenes={tour.scenes} activeId={scene.id} onSelect={(id) => goToScene(id)} />
           </div>
 
+          {/* El plano de la casa, cuando el recorrido trae uno y la persona lo
+              abrió: dónde está parada y hacia dónde mira. Debajo de la barra de
+              habitaciones, pegado a la derecha. Tocar un alfiler cambia de
+              cuarto por el mismo camino que la barra: sin puerta, sin empuje.
+              Ver src/components/ui/Minimapa.tsx y src/lib/planta.ts. */}
+          {tour.plano && planoAbierto && (
+            <div className="absolute right-3 top-[calc(env(safe-area-inset-top)+9.5rem)] max-w-[calc(100%-1.5rem)]">
+              <Minimapa plano={tour.plano} scenes={tour.scenes} activeId={scene.id} onSelect={(id) => goToScene(id)} />
+            </div>
+          )}
+
           {/* Joystick · esquina inferior IZQUIERDA, zona del pulgar izquierdo.
               Con el giroscopio encendido se retira: la mano ya es el joystick, y
               dos formas de girar a la vista confunden. El arrastre sigue. */}
@@ -325,6 +340,22 @@ export function TourViewer({
           {/* Zoom y reencuadre · pulgar derecho */}
           <div className="absolute bottom-0 right-0 flex flex-col items-end gap-2 p-3
                           pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
+            {/* El plano de la casa: solo si el recorrido trae uno. Abre y cierra
+                el minimapa de arriba; `aria-pressed` dice en cuál está. */}
+            {tour.plano && (
+              <button
+                type="button"
+                onClick={() => setPlanoAbierto((v) => !v)}
+                aria-pressed={planoAbierto}
+                aria-label={planoAbierto ? 'Cerrar el plano' : 'Ver el plano'}
+                className={`hud-glass pointer-events-auto grid h-11 w-11 place-items-center rounded-2xl
+                           transition-colors active:bg-white/15 ${planoAbierto ? 'text-brand-300' : 'text-hud'}`}
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M4 5h16v14H4zM4 12h7M11 5v7M15 12v7" strokeLinejoin="round" />
+                </svg>
+              </button>
+            )}
             {/* Mirar con el teléfono. No se pinta sin https ni sin el evento en
                 el navegador (escritorio): un botón que no puede hacer nada es
                 peor que ninguno. Y desaparece si al intentarlo resulta que no

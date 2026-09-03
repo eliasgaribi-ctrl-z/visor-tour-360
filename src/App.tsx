@@ -54,6 +54,9 @@ const SubirFoto = lazy(() =>
   import('./components/crear/SubirFoto').then((m) => ({ default: m.SubirFoto })),
 )
 const Panel = lazy(() => import('./components/crear/Panel').then((m) => ({ default: m.Panel })))
+const EditorPlano = lazy(() =>
+  import('./components/crear/EditorPlano').then((m) => ({ default: m.EditorPlano })),
+)
 /* La casa leída de su propia carpeta: solo la monta el build de `tools/sitio.mjs`. */
 const VisorSitio = lazy(() =>
   import('./components/crear/VisorSitio').then((m) => ({ default: m.VisorSitio })),
@@ -163,6 +166,9 @@ export default function App() {
 
       case 'puntos':
         return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
+
+      case 'plano':
+        return <EditorPlano tourId={ruta.tourId} ir={ir} />
 
       case 'ver':
         /* ── `key` y no solo la prop ──────────────────────────────────────────

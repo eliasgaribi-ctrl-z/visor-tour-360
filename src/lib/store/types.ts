@@ -1,4 +1,4 @@
-import type { Ficha, Hotspot, Marca } from '../types'
+import type { Ficha, Hotspot, Marca, PosicionEnPlano } from '../types'
 
 /**
  * ============================================================================
@@ -57,6 +57,8 @@ export type StoredScene = {
    * automática desde las tomas.
    */
   nivel?: { tiltX: number; tiltZ: number }
+  /** Dónde está esta habitación en el plano de la casa. Ver `src/lib/planta.ts`. */
+  plano?: PosicionEnPlano
   createdAt: number
 }
 
@@ -66,6 +68,13 @@ export type StoredScene = {
  * las URLs `blob:` mueren al recargar la página.
  */
 export type MarcaGuardada = Omit<Marca, 'logo'> & { logoId?: string }
+
+/**
+ * El plano de la casa como se guarda: la llave del Blob (un JPEG de hasta
+ * 1600 px que arma el editor) y su tamaño, para reservar el hueco antes de que
+ * cargue. Un plano por recorrido, no por habitación.
+ */
+export type PlanoGuardado = { imageId: string; ancho: number; alto: number }
 
 export type StoredTour = {
   id: string
@@ -100,6 +109,8 @@ export type StoredTour = {
   ficha?: Ficha
   /** Modo kiosco: gira solo al abrirlo. Opcional y aditivo, como `marca` y `ficha`. */
   autogiro?: boolean
+  /** La planta arquitectónica. Desde la versión 3 del formato; opcional. */
+  plano?: PlanoGuardado
   createdAt: number
   updatedAt: number
   /**
@@ -149,9 +160,14 @@ export type TourSummary = {
  *   1 → el original.
  *   2 → agrega `marca` y `ficha` al recorrido. Los dos OPCIONALES, así que un
  *       archivo v1 se lee sin tocar nada (ver `src/lib/store/migrar.ts`).
+ *   3 → agrega `plano` al recorrido (la planta, como `plano/plano.jpg` dentro
+ *       del ZIP) y `plano` a cada habitación (dónde está y hacia dónde mira).
+ *       Opcionales otra vez: un archivo v2 se lee igual, solo que sin plano.
  *
  * `importarTour` rechaza `version > FORMAT_VERSION` con un mensaje que dice
  * "actualiza la página", y eso es lo correcto: un lector viejo frente a un
- * archivo nuevo tiene que avisar, no adivinar ni quedarse en negro.
+ * archivo nuevo tiene que avisar, no adivinar ni quedarse en negro. Se sube el
+ * número aunque el cambio sea aditivo por eso mismo: un lector v2 que ignorara
+ * el plano en silencio dejaría al agente creyendo que el archivo lo trae.
  */
-export const FORMAT_VERSION = 2
+export const FORMAT_VERSION = 3

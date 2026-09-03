@@ -112,6 +112,8 @@ export type Env = {
 const MAX_FOTO = 12 * 1024 * 1024
 const MAX_FOTOS = 48
 const MAX_LOGO = 1024 * 1024
+/** El plano de la casa: el editor lo deja en 1600 px, pero un PNG de líneas puede pesar más que un JPEG. */
+const MAX_PLANO = 4 * 1024 * 1024
 const MAX_MANIFIESTO = 256 * 1024
 const MAX_TOTAL = 160 * 1024 * 1024
 /** Un paquete de métricas: `sendBeacon` topa en 64 KB, y 200 eventos son ~12. */
@@ -160,15 +162,17 @@ const HASH_VALIDO = /^[0-9a-f]{64}$/
  * Nombres de archivo admitidos.
  *
  * Cerrados a la forma que el teléfono manda —`000.jpg`, `000.min.jpg`,
- * `000.2k.jpg`, `logo.png`— y no a "algo que no tenga barras". Las llaves de R2
- * no son rutas de disco y no hay un `..` que escape a ningún lado, pero un
- * nombre libre sí deja escribir dentro del prefijo de otra casa, y de ahí sale
- * servir un archivo cualquiera desde nuestro dominio.
+ * `000.2k.jpg`, `logo.png`, `plano.jpg`— y no a "algo que no tenga barras". Las
+ * llaves de R2 no son rutas de disco y no hay un `..` que escape a ningún lado,
+ * pero un nombre libre sí deja escribir dentro del prefijo de otra casa, y de
+ * ahí sale servir un archivo cualquiera desde nuestro dominio.
  */
 const FOTO_VALIDA = /^[0-9]{3}(\.min|\.2k)?\.jpg$/
 const VARIANTE_2K = /^[0-9]{3}\.2k\.jpg$/
 const LOGO_VALIDO = /^logo\.(png|jpg|webp)$/
-const archivoValido = (nombre: string) => FOTO_VALIDA.test(nombre) || LOGO_VALIDO.test(nombre)
+const PLANO_VALIDO = /^plano\.(png|jpg|webp)$/
+const archivoValido = (nombre: string) =>
+  FOTO_VALIDA.test(nombre) || LOGO_VALIDO.test(nombre) || PLANO_VALIDO.test(nombre)
 
 /**
  * Qué tipo de imagen es, por su FIRMA y no por su extensión.
@@ -549,6 +553,8 @@ type EscenaPublica = {
   rumbo?: number
   nivel?: { tiltX: number; tiltZ: number }
   coverageDeg?: number
+  /** Dónde está en el plano de la casa, en [0, 1], y hacia dónde mira su foto. */
+  plano?: { x: number; y: number; giro?: number }
 }
 
 type FichaPublica = {
@@ -581,6 +587,8 @@ export type ManifiestoPublico = {
   ficha?: FichaPublica
   marca?: MarcaPublica
   autogiro?: boolean
+  /** La planta de la casa: un archivo de la lista y su tamaño. */
+  plano?: { archivo: string; ancho: number; alto: number }
 }
 
 /**
@@ -657,6 +665,19 @@ function saneaManifiesto(crudo: unknown): { ok: true; valor: ManifiestoPublico }
     const cobertura = numeroOpcional(e.coverageDeg)
     if (cobertura !== undefined && cobertura > 0 && cobertura <= 360) escena.coverageDeg = cobertura
 
+    /* La posición en el plano, a la imagen; el giro, al círculo. Sin las dos
+       coordenadas no hay posición. Mismas reglas que `limpiarPosicion`. */
+    if (e.plano && typeof e.plano === 'object') {
+      const p = e.plano as Record<string, unknown>
+      const x = numeroOpcional(p.x)
+      const y = numeroOpcional(p.y)
+      if (x !== undefined && y !== undefined) {
+        escena.plano = { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) }
+        const giro = numeroOpcional(p.giro)
+        if (giro !== undefined) escena.plano.giro = ((giro % 360) + 360) % 360
+      }
+    }
+
     scenes.push(escena)
   }
 
@@ -688,6 +709,17 @@ function saneaManifiesto(crudo: unknown): { ok: true; valor: ManifiestoPublico }
   const marca = saneaMarca(m.marca)
   if (marca) valor.marca = marca
   if (m.autogiro === true) valor.autogiro = true
+
+  /* El plano: un nombre de la lista y un tamaño en enteros positivos. Al
+     publicar se comprueba además que el archivo esté arriba. */
+  if (m.plano && typeof m.plano === 'object') {
+    const p = m.plano as Record<string, unknown>
+    const ancho = enteroOpcional(p.ancho, 16384)
+    const alto = enteroOpcional(p.alto, 16384)
+    if (typeof p.archivo === 'string' && PLANO_VALIDO.test(p.archivo) && ancho && alto) {
+      valor.plano = { archivo: p.archivo, ancho, alto }
+    }
+  }
 
   return { ok: true, valor }
 }
@@ -1070,7 +1102,8 @@ export default {
         const archivo = partes[3]
         if (!archivoValido(archivo)) return error(400, 'Nombre de archivo no admitido.')
         const esLogo = LOGO_VALIDO.test(archivo)
-        const tope = esLogo ? MAX_LOGO : MAX_FOTO
+        const esPlano = PLANO_VALIDO.test(archivo)
+        const tope = esLogo ? MAX_LOGO : esPlano ? MAX_PLANO : MAX_FOTO
 
         const largo = Number(pedido.headers.get('Content-Length') ?? '0')
         if (largo > tope) return error(413, 'Ese archivo pesa demasiado.')
@@ -1094,9 +1127,9 @@ export default {
 
         const tipo = tipoDeImagen(cuerpo)
         if (!tipo) return error(400, 'Eso no es una imagen.')
-        if (!esLogo && tipo !== 'image/jpeg') return error(400, 'Las fotos tienen que ser JPEG.')
-        if (esLogo && !archivo.endsWith(`.${EXTENSION[tipo]}`)) {
-          return error(400, 'El logo no es del tipo que dice su nombre.')
+        if (!esLogo && !esPlano && tipo !== 'image/jpeg') return error(400, 'Las fotos tienen que ser JPEG.')
+        if ((esLogo || esPlano) && !archivo.endsWith(`.${EXTENSION[tipo]}`)) {
+          return error(400, `${esLogo ? 'El logo' : 'El plano'} no es del tipo que dice su nombre.`)
         }
 
         await env.TOURS.put(`t/${llave}/fotos/${archivo}`, cuerpo, {
@@ -1157,6 +1190,11 @@ export default {
           const logo = await env.TOURS.head(`t/${llave}/fotos/${manifiesto.marca.logo}`)
           if (logo) total += logo.size
           else delete manifiesto.marca.logo
+        }
+        if (manifiesto.plano) {
+          const plano = await env.TOURS.head(`t/${llave}/fotos/${manifiesto.plano.archivo}`)
+          if (plano) total += plano.size
+          else delete manifiesto.plano
         }
         if (total > MAX_TOTAL) return error(413, 'El recorrido completo pesa demasiado.')
 

@@ -892,6 +892,112 @@ if (menos > 0) {
 }
 await kiosco.close()
 
+/* ============================================================================
+ *  EL MINIMAPA Y LOS CERO DIBUJOS POR SEGUNDO
+ * ============================================================================
+ *
+ * El plano de la casa es el candidato número uno a romper el render a pedido:
+ * un cono que sigue a la cámara es justo lo que uno escribiría con su propio
+ * requestAnimationFrame. Está hecho como la brújula —lee el pulso del HUD y
+ * escribe al DOM— así que con el plano ABIERTO y la cámara quieta tiene que
+ * seguir dando cero. Y el cono tiene que girar lo mismo que la cámara, en el
+ * mismo sentido: se compara contra el badge de ángulos, no contra la fórmula. */
+console.log('\n=== El plano de la casa: el minimapa ===')
+const conPlano = await ctx.newPage()
+conPlano.on('pageerror', (e) => errores.push(e.message))
+await conPlano.goto(BASE + '#/inicio', { waitUntil: 'networkidle' })
+const idPlano = await conPlano.evaluate(async () => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const sala = await (await fetch('/panoramas/sala.jpg')).blob()
+  const cocina = await (await fetch('/panoramas/cocina.jpg')).blob()
+  // Un plano sintético: dos cuartos en una caja clara.
+  const c = document.createElement('canvas')
+  c.width = 800
+  c.height = 500
+  const x = c.getContext('2d')
+  x.fillStyle = '#f4f1ea'
+  x.fillRect(0, 0, 800, 500)
+  x.strokeStyle = '#333'
+  x.lineWidth = 6
+  x.strokeRect(20, 20, 760, 460)
+  x.beginPath()
+  x.moveTo(400, 20)
+  x.lineTo(400, 480)
+  x.stroke()
+  const plano = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.8))
+  const imageId = await tours.putImage(plano)
+  let tour = { ...tours.createTour('Con plano'), plano: { imageId, ancho: 800, alto: 500 } }
+  const s1 = { ...tours.createScene({ id: 'sala', name: 'Sala', imageId: 'img-plano-sala', rumbo: 70 }), plano: { x: 0.25, y: 0.5, giro: 90 } }
+  tour = await tours.guardarEscenaConFoto({ tour, scene: s1, foto: sala })
+  const s2 = { ...tours.createScene({ id: 'cocina', name: 'Cocina', imageId: 'img-plano-cocina', rumbo: 160 }), plano: { x: 0.75, y: 0.5, giro: 180 } }
+  tour = await tours.guardarEscenaConFoto({ tour, scene: s2, foto: cocina })
+  return tour.id
+})
+await conPlano.goto(BASE + '#/ver/' + idPlano, { waitUntil: 'domcontentloaded' })
+await conPlano.waitForSelector('canvas', { timeout: 40000 })
+await conPlano.waitForTimeout(4000)
+
+await conPlano.getByRole('button', { name: 'Ver el plano' }).click()
+await conPlano.waitForTimeout(1200)
+const planoVisible = await conPlano.getByRole('group', { name: 'Plano de la casa' }).isVisible()
+console.log(`  ${'minimapa: se abre'.padEnd(28)} ${planoVisible ? 'sí' : 'NO'}`)
+if (!planoVisible) bien = false
+
+const abiertoQuieto = await muestrearEn(conPlano, 'minimapa abierto, parado', 3000)
+if (abiertoQuieto > 0) {
+  console.log('     ↑ MAL: con el plano abierto y la cámara quieta no debería dibujarse nada')
+  bien = false
+}
+
+/* El cono gira lo mismo que la cámara y en el mismo sentido. */
+const rotacionCono = () =>
+  conPlano.evaluate(() => {
+    const t = document.querySelector('[aria-label="Plano de la casa"] svg g')?.getAttribute('transform') ?? ''
+    const m = /rotate\(([-\d.]+)/.exec(t)
+    return m ? Number(m[1]) : null
+  })
+const c0 = await rotacionCono()
+const yaw0 = (await angulos(conPlano))?.yaw
+const desdePlano = await sobreLaFoto(conPlano)
+await conPlano.mouse.move(desdePlano.x, desdePlano.y)
+await conPlano.mouse.down()
+for (let i = 1; i <= 8; i++) {
+  await conPlano.mouse.move(desdePlano.x - i * 20, desdePlano.y, { steps: 2 })
+  await conPlano.waitForTimeout(20)
+}
+await conPlano.mouse.up()
+await conPlano.waitForTimeout(1500)
+const c1 = await rotacionCono()
+const yaw1 = (await angulos(conPlano))?.yaw
+const giroCamara = yaw0 !== undefined && yaw1 !== undefined ? wrap180(yaw1 - yaw0) : NaN
+const giroCono = c0 !== null && c1 !== null ? wrap180(c1 - c0) : NaN
+const conoSigue = Math.abs(giroCamara) > 5 && Math.abs(giroCono - giroCamara) < 3
+console.log(
+  `  ${'minimapa: el cono sigue'.padEnd(28)} ${conoSigue ? 'sí' : 'NO'} cámara ${giroCamara.toFixed(1)}° · cono ${giroCono.toFixed(1)}°`,
+)
+if (!conoSigue) bien = false
+
+/* Tocar un alfiler cambia de cuarto por el mismo camino que la barra. */
+await conPlano.locator('[aria-label="Plano de la casa"] button[aria-label="Cocina en el plano"]').click()
+await conPlano.waitForTimeout(2500)
+const anuncio = await conPlano.locator('[aria-live="polite"]').textContent()
+const cambio = /Cocina/.test(anuncio ?? '')
+console.log(`  ${'minimapa: el alfiler cambia'.padEnd(28)} ${cambio ? 'sí' : 'NO'} ${(anuncio ?? '').trim()}`)
+if (!cambio) bien = false
+const trasCambiar = await muestrearEn(conPlano, 'minimapa: tras cambiar, parado', 2500)
+if (trasCambiar > 0) {
+  console.log('     ↑ MAL: parado tras cambiar de cuarto por el plano tiene que volver a cero')
+  bien = false
+}
+await conPlano.getByRole('button', { name: 'Cerrar el plano' }).click()
+await conPlano.waitForTimeout(1200)
+const cerrado = await muestrearEn(conPlano, 'minimapa cerrado, parado', 2000)
+if (cerrado > 0) {
+  console.log('     ↑ MAL: cerrado el plano no debería dibujarse nada')
+  bien = false
+}
+await conPlano.close()
+
 console.log(`\n${bien ? 'TODO BIEN' : 'HAY ALGO MAL'}`)
 console.log('errores de consola:', errores.length ? errores : 'ninguno')
 await browser.close()

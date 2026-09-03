@@ -235,8 +235,16 @@ await pg.evaluate(async (id) => {
     (c) => c.charCodeAt(0),
   )
   const logoId = await tours.putImage(new Blob([png], { type: 'image/png' }))
+  /* Y un plano con las dos habitaciones colocadas, para que viaje también. */
+  const plano = await (await fetch('/panoramas/recamara.jpg')).blob()
+  const planoId = await tours.putImage(plano)
   const tour = await tours.getTour(id)
-  await tours.saveTour({ ...tour, marca: { ...tour.marca, logoId } })
+  await tours.saveTour({
+    ...tour,
+    marca: { ...tour.marca, logoId },
+    plano: { imageId: planoId, ancho: 1600, alto: 800 },
+    scenes: tour.scenes.map((s, i) => ({ ...s, plano: { x: 0.25 + i * 0.5, y: 0.5, giro: i * 90 } })),
+  })
 }, id)
 
 await pg.goto(`${VISOR}#/editar/${id}`, { waitUntil: 'networkidle' })
@@ -283,6 +291,19 @@ revisar(
   String(manifiesto.marca?.colores?.ink50),
 )
 revisar('el logo viaja como archivo', manifiesto.marca?.logo === 'logo.png', String(manifiesto.marca?.logo))
+revisar(
+  'el plano viaja como archivo, con la posición de cada habitación',
+  manifiesto.plano?.archivo === 'plano.jpg' &&
+    manifiesto.plano?.ancho === 1600 &&
+    manifiesto.scenes.every((e) => e.plano && typeof e.plano.x === 'number'),
+  JSON.stringify(manifiesto.plano),
+)
+const planoResp = await fetch(`${WORKER}/t/${llave}/fotos/plano.jpg`)
+revisar(
+  'y el servidor lo sirve como JPEG',
+  planoResp.status === 200 && (planoResp.headers.get('content-type') ?? '').includes('image/jpeg'),
+  String(planoResp.status),
+)
 const logoResp = await fetch(`${WORKER}/t/${llave}/fotos/logo.png`)
 revisar(
   'y se sirve como PNG',
@@ -401,6 +422,11 @@ revisar(
   bajadasNormal.join(' '),
 )
 revisar('sin errores de consola en el comprador', erroresComprador.length === 0, erroresComprador.join(' | '))
+
+/* El plano de la casa llegó con el manifiesto: el comprador lo abre. */
+await pc.getByRole('button', { name: 'Ver el plano' }).click()
+await pc.waitForTimeout(800)
+revisar('y puede abrir el plano de la casa', await pc.getByRole('group', { name: 'Plano de la casa' }).isVisible())
 
 /* El comprador pasa a otro cuarto y toca un punto, y luego "esconde" la pestaña:
    `pagehide` es lo que dispara el envío de métricas (junto con

@@ -1,7 +1,8 @@
-import type { Ficha, Hotspot, Marca } from '../types'
+import type { Ficha, Hotspot, Marca, PosicionEnPlano } from '../types'
 import type { MarcaGuardada, SceneOrigin } from './types'
 import { clamp, wrap360 } from '../math'
 import { revisarPaleta } from '../contraste'
+import { limpiarPosicion } from '../planta'
 
 /**
  * ============================================================================
@@ -220,6 +221,8 @@ export type EscenaLimpia = {
   coverageDeg?: number
   rumbo?: number
   nivel?: { tiltX: number; tiltZ: number }
+  /** Desde la v3: dónde está en el plano de la casa. */
+  plano?: PosicionEnPlano
   createdAt: number
 }
 
@@ -341,6 +344,11 @@ export function limpiarEscena(crudo: unknown): EscenaLimpia | undefined {
     }
   }
 
+  /* La posición en el plano se acota a la imagen y el giro al círculo; sin las
+     dos coordenadas no hay posición. Ver `limpiarPosicion` en ../planta.ts. */
+  const posicion = limpiarPosicion(e.plano)
+  if (posicion) escena.plano = posicion
+
   /* Una fecha de creación que no es una fecha se cambia por ahora, no por cero:
      el listado ordena por ella, y un cero manda la habitación al año 1970. */
   if (escena.createdAt <= 0) escena.createdAt = Date.now()
@@ -362,6 +370,13 @@ function de1a2(recorrido: Record<string, unknown>): Record<string, unknown> {
   return recorrido
 }
 
+function de2a3(recorrido: Record<string, unknown>): Record<string, unknown> {
+  // v3 agrega `plano` al recorrido y a cada habitación, los dos opcionales: un
+  // archivo v2 simplemente no trae plano, y eso ya lo entiende el resto del
+  // importador. El peldaño queda escrito por la misma razón que el anterior.
+  return recorrido
+}
+
 /**
  * Deja el `recorrido` de un manifiesto en la forma de la versión actual.
  *
@@ -374,6 +389,7 @@ export function migrarRecorrido(
 ): Record<string, unknown> {
   let actual = recorrido
   if (version < 2) actual = de1a2(actual)
+  if (version < 3) actual = de2a3(actual)
   return actual
 }
 

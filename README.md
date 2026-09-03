@@ -190,6 +190,8 @@ src/
 │   ├── contraste.ts            * Que una marca ajena no lo deje ilegible (WCAG)
 │   ├── rumbo.ts                * El norte de verdad: de dónde sale y con qué signo
 │   ├── nivel.ts                * Enderezar el horizonte al ver, rotando la esfera
+│   ├── planta.ts               * El plano de la casa: posiciones normalizadas, el cono y el regalo del rumbo
+│   ├── planta.test.ts
 │   ├── publicar.ts             * Subir la casa al Worker y leer el manifiesto v2 que baja (sección 14)
 │   ├── metricas/               ── las visitas de la casa publicada (sección 14) ──
 │   │   ├── cliente.ts          * sendBeacon en pagehide, sin cookies ni IP: sesiones, no personas
@@ -226,7 +228,7 @@ src/
     │   ├── Portada.tsx         * La ficha de la casa, ANTES del 3D y sin WebGL
     │   ├── ConPortada.tsx      Portada + marca + visor perezoso: la costura que comparten dueño y comprador
     │   └── ViewerGuard.tsx     Red de seguridad de WebGL
-    ├── ui/                     Joystick, hotspots, brújula, zoom, hojas…
+    ├── ui/                     Joystick, hotspots, brújula, minimapa del plano, zoom, hojas…
     └── crear/                  ── las pantallas de creación ──
         ├── Inicio.tsx          Mis recorridos
         ├── EditorRecorrido.tsx Habitaciones, orden, exportar
@@ -235,6 +237,7 @@ src/
         ├── SubirFoto.tsx       Importar una foto que ya existe
         ├── EditorPuntos.tsx    Colocar hotspots sobre la escena
         ├── PuntosEditables.tsx Marcadores arrastrables
+        ├── EditorPlano.tsx     El plano de la casa: subirlo y colocar cada habitación (sección 5)
         ├── VisorGuardado.tsx   Abre un recorrido guardado
         ├── VisorPublicado.tsx  Abre una casa publicada por link (sección 14)
         ├── VisorSitio.tsx      La casa leída de su PROPIA carpeta: el sitio autocontenido (sección 14)
@@ -364,6 +367,7 @@ Mis recorridos → Nuevo recorrido → Agregar habitación
                                     └─ Usar una foto que ya tengo
                                   → nombrarla → colocar los puntos
                                   → Datos de la casa (precio, m², contacto)
+                                  → Plano de la casa (dónde está cada habitación)
                                   → Preparar archivo → compartir el .tour
 ```
 
@@ -409,6 +413,42 @@ decisión: en los listados reales de México aparece "Desde $1.9M", "Precio a
 consultar", y mezclados USD y MXN. Un número obligaría a meter una decisión de
 moneda y de locale dentro del visor, y perdería el "Desde", que es información y
 no adorno.
+
+### El plano de la casa, y el minimapa
+
+Un comprador que no sabe si la recámara da al patio no compra. **Plano de la
+casa** (en el editor, o `#/plano/<id>`) sube la planta arquitectónica —una foto
+o una imagen, reducida a 1600 px— y coloca cada habitación con un toque y un
+arrastre: el mismo gesto que los puntos y las filas del recorrido, con su
+umbral, la posición escrita al DOM mientras el dedo se mueve y un solo guardado
+al soltar. Las coordenadas van **normalizadas a [0, 1]** y no en píxeles, para
+poder cambiar el plano por un escaneo mejor sin recolocar nada.
+
+En el visor, el botón del plano abre el **minimapa**: un alfiler por
+habitación, el de la actual con un cono de hacia dónde se está mirando, y tocar
+un alfiler cambia de cuarto. Está hecho como la brújula y por la misma razón: el
+cono lee el pulso del HUD y escribe al SVG, así que **con el plano abierto y la
+cámara quieta el visor sigue en cero dibujos por segundo** (`rendimiento.mjs` lo
+mide, y mide que el cono gira exactamente lo que gira la cámara). Va cerrado
+por omisión: en un teléfono tapa un cuarto de la foto. El plano es un `<img>`
+del DOM y no pasa por el caché de texturas ni ocupa memoria de video.
+
+**Hacia dónde mira cada foto.** El cono necesita `giro`: a qué ángulo del plano
+mira el frente de la panorámica, en el sentido del reloj desde "arriba" del
+plano. Es la orientación de la foto **sobre el plano**, no un rumbo geográfico:
+un plano no siempre tiene el norte arriba, y una foto importada no tiene
+rumbo. Sin `giro` no hay cono, solo el alfiler; la orientación no se inventa. Y
+aquí está el regalo del `rumbo` de la sección 14: dos habitaciones capturadas
+con el teléfono se orientan **entre sí** por la diferencia de sus rumbos (si la
+sala mira al rumbo 70 y en el plano apunta a 90°, un cuarto que mira al rumbo
+160 apunta a 180°), así que el agente orienta una con el control y las demás
+capturadas se orientan solas. La geometría vive en `src/lib/planta.ts`, con sus
+casos escritos como escenarios físicos en `planta.test.ts`.
+
+El plano viaja por los tres caminos: dentro del `.tour` (versión 3, como
+`plano/plano.jpg` más la posición de cada habitación), en el manifiesto
+publicado (`plano.jpg`, con los mismos filtros en el Worker y en el visor) y en
+el sitio autocontenido de `tools/sitio.mjs`.
 
 El contacto va en la portada y **no** dentro del visor, también a propósito: en
 el recorrido el dedo está mirando alrededor, y un botón de llamar ahí se toca sin
@@ -569,12 +609,16 @@ recorrido.json           formato, version, y el recorrido
 fotos/<escena>.jpg       la panorámica de cada habitación
 fotos/<escena>.min.jpg   su miniatura
 marca/logo.png           el logo de la inmobiliaria, si el recorrido trae
+plano/plano.jpg          la planta de la casa, si el recorrido trae (v3)
 ```
 
 El manifiesto lleva `version`, y el número **importa en las dos direcciones**:
 
 - **La v2 agregó `marca`, `ficha` y `rumbo`**, los tres opcionales, así que un
-  archivo v1 se abre sin tocar nada.
+  archivo v1 se abre sin tocar nada. **La v3 agregó `plano`** al recorrido y a
+  cada habitación, opcional otra vez; el número sube igual, a propósito: un
+  lector v2 que ignorara el plano en silencio dejaría al agente creyendo que el
+  archivo lo trae.
 - Y un lector **viejo** frente a un archivo nuevo hace lo correcto: rechaza
   `version > FORMAT_VERSION` con un "se hizo con una versión más nueva,
   actualiza la página" en vez de adivinar o quedarse en negro.
@@ -1228,12 +1272,12 @@ código 1 si algo no cuadra. El mismo `revision.yml` los corre todos.
 | `contraste.mjs` | la cuenta WCAG contra razones **publicadas**, y qué paletas de marca entran | no |
 | `rumbo.mjs` | la brújula apunta al norte, con el signo correcto, en 2,860 combinaciones | no |
 | `nivel.mjs` | existe un nivel que endereza un ladeo conocido, y cada eje mueve lo que dice su etiqueta | no |
-| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, abrir y cerrar una nota no dibuja, todo lo tocable responde, y el modo kiosco gira, se detiene al tocar y vuelve a cero | sí |
+| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, abrir y cerrar una nota no dibuja, todo lo tocable responde, el modo kiosco gira, se detiene al tocar y vuelve a cero, y con el minimapa abierto sigue en cero mientras el cono gira lo mismo que la cámara | sí |
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
-| `tactil.mjs` | los 14 recorridos de pantalla, todo ≥ 44 px | sí |
+| `tactil.mjs` | los 19 recorridos de pantalla —el editor del plano y el visor con el plano abierto incluidos—, todo ≥ 44 px | sí |
 | `reordenar.mjs` | arrastrar reordena y el orden sobrevive a recargar; un roce no levanta la fila; cancelar revierte | sí |
 | `giroscopio.mjs` | con sensores sintéticos a 60 Hz: quieto **0 dibujos/s**, girar 90° gira 90°, encender y apagar no saltan, el dedo corrige, la pestaña oculta apaga | sí |
-| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 100 aserciones | sí |
+| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero, el plano de la casa incluido (v3) | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
 | `publicar.mjs` | publicar por link de punta a punta con el Worker real en local: la casa abre en un navegador con IndexedDB **vacío**, con portada y marca; la variante de 2048 según el aparato; resubir conserva el link; dar de baja; y `tools/sitio.mjs` baja la casa publicada como carpeta | sí |
 | `sitio.mjs` | el sitio autocontenido: `tools/sitio.mjs` arma la carpeta desde el `.tour`, un servidor de Node la sirve desde un **subdirectorio** y abre en un navegador limpio con portada, marca y la foto dibujada; **ninguna petición sale de la carpeta** y nada da 404; también con un `.tour` v1 | sí |
@@ -1681,8 +1725,6 @@ pagar nada.
 
 ## 15. Siguientes pasos naturales
 
-- Planta arquitectónica con la posición de cada escena, con el cono de hacia
-  dónde se está mirando. Depende de tener un plano por casa.
 - Compensar la exposición contra la mediana de todas las tomas y no contra la
   primera: hoy, si la primera foto apunta a la ventana, toda la panorámica
   queda sesgada. En Safari no se puede bloquear la exposición por hardware, así
@@ -1706,6 +1748,10 @@ pagar nada.
 
 ### Lo que se hizo desde que esto se escribió
 
+- ✅ **La planta arquitectónica con el cono de hacia dónde se mira** — el plano
+  de la casa (sección 5): un plano por recorrido, la posición de cada habitación
+  normalizada, el minimapa que sigue a la cámara sin gastar un dibujo, y el
+  `rumbo` orientando las habitaciones capturadas a partir de una.
 - ✅ **Corrección de nivel** — quedó fuera de esta lista porque su premisa estaba
   corrida: `stitcher.ts:337` ya mete el cuaternión COMPLETO de cada toma, ladeo
   incluido, en la proyección inversa, así que una panorámica capturada **ya sale

@@ -1,9 +1,10 @@
-import type { Hotspot } from '../types'
+import type { Hotspot, PosicionEnPlano } from '../types'
 import type { StoredScene, StoredTour } from './types'
 import { FORMAT_VERSION } from './types'
 import type { Ficha } from '../types'
 import type { MarcaGuardada } from './types'
 import { limpiarEscena, limpiarFicha, limpiarMarca, migrarRecorrido } from './migrar'
+import { limpiarPlano } from '../planta'
 import { createZip, readZip, type ZipEntry } from './zip'
 import { leerBytes } from './bytes'
 import { PaqueteError } from './entregar'
@@ -35,6 +36,7 @@ export { PaqueteError, entregarArchivo, mensajeDePaquete } from './entregar'
  *   fotos/000.jpg      la panorámica de la primera habitación
  *   fotos/000.min.jpg  su miniatura
  *   marca/logo.png     el logo de la inmobiliaria, si el recorrido trae
+ *   plano/plano.jpg    la planta arquitectónica, si el recorrido trae (v3)
  *
  * Se puede abrir con cualquier descompresor, así que las fotos nunca quedan
  * secuestradas dentro de un formato propio.
@@ -56,8 +58,16 @@ type EscenaManifiesto = {
   /* Desde la v2, junto con marca y ficha. Opcionales: un archivo v1 se lee igual. */
   rumbo?: number
   nivel?: { tiltX: number; tiltZ: number }
+  /* Desde la v3: dónde está en el plano de la casa. Opcional. */
+  plano?: PosicionEnPlano
   createdAt: number
 }
+
+/**
+ * El plano dentro del manifiesto: una entrada del ZIP y su tamaño. Mismo patrón
+ * que el logo, y por la misma razón: la llave de IndexedDB no cruza teléfonos.
+ */
+type PlanoManifiesto = { archivo: string; ancho: number; alto: number }
 
 /**
  * La marca dentro del manifiesto.
@@ -84,6 +94,8 @@ type Manifiesto = {
     marca?: MarcaManifiesto
     ficha?: Ficha
     autogiro?: boolean
+    /* Desde la v3. Opcional: un archivo v2 se lee igual, sin plano. */
+    plano?: PlanoManifiesto
   }
 }
 
@@ -177,6 +189,7 @@ export async function exportarTour(
       coverageDeg: scene.coverageDeg,
       rumbo: scene.rumbo,
       nivel: scene.nivel,
+      plano: scene.plano,
       createdAt: scene.createdAt,
     })
 
@@ -194,6 +207,7 @@ export async function exportarTour(
      teléfono los colores y el nombre, y el logo desaparecía sin un solo error:
      `logoId` es una llave local y del otro lado no apunta a nada. */
   const marca = await marcaParaArchivo(tour.marca, entradas)
+  const plano = await planoParaArchivo(tour.plano, entradas)
 
   const manifiesto: Manifiesto = {
     formato: MARCA,
@@ -213,6 +227,7 @@ export async function exportarTour(
       /* Solo si está encendido: un `false` explícito no dice nada que la
          ausencia no diga, y un archivo v2 viejo no trae el campo. */
       autogiro: tour.autogiro === true ? true : undefined,
+      plano,
     },
   }
 
@@ -278,6 +293,25 @@ async function marcaParaArchivo(
   }
 
   return marca
+}
+
+/**
+ * El plano viaja como archivo, igual que el logo: `plano/plano.jpg` (o `.png`,
+ * `.webp`, según lo que sea el blob) y su tamaño en el manifiesto. Si el blob ya
+ * no está en el teléfono, el archivo sale sin plano y las posiciones de las
+ * habitaciones viajan igual: son datos del recorrido, no de la imagen.
+ */
+async function planoParaArchivo(
+  guardado: StoredTour['plano'],
+  entradas: ZipEntry[],
+): Promise<PlanoManifiesto | undefined> {
+  if (!guardado) return undefined
+  const blob = await getImage(guardado.imageId)
+  const extension = blob ? LOGOS[blob.type] : undefined
+  if (!blob || !extension) return undefined
+  const nombre = `plano/plano${extension}`
+  entradas.push({ name: nombre, data: await bytes(blob) })
+  return { archivo: nombre, ancho: guardado.ancho, alto: guardado.alto }
 }
 
 /* ------------------------------------------------- LO QUE VIENE DE AFUERA */
@@ -476,6 +510,7 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
       coverageDeg: escena.coverageDeg,
       rumbo: escena.rumbo,
       nivel: escena.nivel,
+      plano: escena.plano,
       createdAt: escena.createdAt,
     })
   }
@@ -512,6 +547,22 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     }
   }
 
+  /* El plano, con el mismo trato que el logo: el tipo del Blob sale de la
+     extensión de la lista blanca, nunca de lo que diga el archivo. Un manifiesto
+     que nombra un plano que no viene en el ZIP se importa sin plano. */
+  let plano: StoredTour['plano']
+  const planoDeclarado = limpiarPlano(manifiesto.recorrido.plano)
+  if (planoDeclarado) {
+    const datos = porNombre.get(planoDeclarado.archivo)
+    const punto = planoDeclarado.archivo.lastIndexOf('.')
+    const tipo = punto < 0 ? undefined : TIPO_DE_LOGO[planoDeclarado.archivo.slice(punto).toLowerCase()]
+    if (datos && tipo) {
+      const imageId = newId('img')
+      blobs.push({ id: imageId, blob: new Blob([datos], { type: tipo }) })
+      plano = { imageId, ancho: planoDeclarado.ancho, alto: planoDeclarado.alto }
+    }
+  }
+
   const ahora = Date.now()
   const tour: StoredTour = {
     id: tourId,
@@ -523,6 +574,7 @@ export async function importarTour(archivo: Blob): Promise<StoredTour> {
     ficha,
     // Un booleano de verdad, o nada: `"sí"` o `1` en el archivo no encienden nada.
     autogiro: manifiesto.recorrido.autogiro === true ? true : undefined,
+    plano,
     title: texto(manifiesto.recorrido.title, 80, 'Recorrido importado'),
     subtitle: textoOpcional(manifiesto.recorrido.subtitle, 120),
     startSceneId: escenas.some((s) => s.id === manifiesto.recorrido.startSceneId)
