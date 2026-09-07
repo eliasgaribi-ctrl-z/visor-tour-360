@@ -41,6 +41,9 @@ const PRUEBA = {
   '--color-brand-500': '#7c3aed',
   '--color-brand-600': '#5b21b6',
   '--hud-fondo': '#f5f3ff',
+  /* Vidrio claro → tinta del HUD oscura, sin tocar la de la página. */
+  '--color-hud': '#1e1b4b',
+  '--color-hud-2': '#4c1d95',
   '--fondo-app': '#1e1b4b',
   '--tinta-marca': '#ffffff',
 }
@@ -91,6 +94,10 @@ const SONDAS = [
   { nombre: 'vidrio del HUD', selector: '.hud-glass', propiedad: 'background-color' },
   // El fondo, que llega por el estilo inline de index.html y no por la hoja.
   { nombre: 'fondo de la app', selector: 'body', propiedad: 'background-color' },
+  // El texto encima del vidrio: tiene token propio para poder aclarar el vidrio
+  // sin oscurecer la página. Las dos tintas, porque son dos tokens distintos.
+  { nombre: 'texto del HUD', selector: '.text-hud', propiedad: 'color' },
+  { nombre: 'texto secundario del HUD', selector: '.text-hud-2', propiedad: 'color' },
 ]
 
 /* No se sondea el aro del joystick aunque sea de marca: solo se pinta con el
@@ -130,6 +137,36 @@ for (const s of SONDAS) {
      el selector, la prueba tiene que gritarlo y no dar por bueno que no
      encontró nada. Es la misma política del aro de `rendimiento.mjs`. */
   if (!encontrado) console.log(`     no se encontró "${s.selector}" en la página`)
+  if (!ok) bien = false
+}
+
+/* ==========================================================================
+ * LA TINTA DEL HUD SIGUE A LA DE LA APP HASTA QUE LA MARCA DIGA OTRA COSA
+ *
+ * `--color-hud` se declara en el @theme como `var(--color-ink-50)`, no como un
+ * hex. Eso es lo que hace que una marca que solo mueva `ink50` mueva también el
+ * HUD —como siempre lo hizo— y que una que traiga `hudTinta` pueda aclarar el
+ * vidrio sin oscurecer la página. Las dos direcciones se miden en píxeles: si
+ * Tailwind resolviera la referencia al compilar, la primera se pondría roja y
+ * `aplicarMarca` seguiría "funcionando" sin pintar el HUD.
+ * ========================================================================== */
+console.log('\n=== La tinta del HUD sigue a ink-50 hasta que la marca diga otra cosa ===')
+const hudAntes = await colorDe('.text-hud', 'color')
+await poner({ '--color-ink-50': '#ff0000' })
+await page.waitForTimeout(200)
+const sigue = await colorDe('.text-hud', 'color')
+await poner({ '--color-hud': '#00ff00' })
+await page.waitForTimeout(200)
+const propia = await colorDe('.text-hud', 'color')
+await quitar({ '--color-ink-50': 1, '--color-hud': 1 })
+await page.waitForTimeout(200)
+const hudDespues = await colorDe('.text-hud', 'color')
+for (const [que, ok, valor] of [
+  ['solo con ink-50 cambiado, el HUD lo sigue', sigue === 'rgb(255, 0, 0)', sigue],
+  ['con tinta propia, la propia manda', propia === 'rgb(0, 255, 0)', propia],
+  ['y al quitar las dos vuelve', hudAntes !== null && hudDespues === hudAntes, `${hudAntes} → ${hudDespues}`],
+]) {
+  console.log(`  ${que.padEnd(44)} ${ok ? 'ok' : 'MAL'}   ${valor}`)
   if (!ok) bien = false
 }
 

@@ -5,9 +5,11 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 
 import type { Ruta } from '../../lib/useHashRoute'
 import type { StoredScene, StoredTour } from '../../lib/store/types'
-import { deleteImage, getTour, saveTour } from '../../lib/store/tours'
+import { deleteImage, getTour, saveTour, type OpcionesDeGuardado } from '../../lib/store/tours'
 import { entregarArchivo, mensajeDePaquete } from '../../lib/store/entregar'
 import { limpiarFicha } from '../../lib/store/migrar'
+import { visitasRecientes } from '../../lib/metricas/resumen'
+import { nombresDe } from '../../lib/metricas/formato'
 import { useBlobUrl } from '../../lib/store/useBlobUrl'
 import { contextoSeguro } from '../../lib/capture/camera'
 import {
@@ -17,9 +19,12 @@ import {
   enlacePublico,
   guardarClave,
   publicarTour,
+  resumenDeVisitas,
   sePuedePublicar,
+  type ResumenDeVisitas,
 } from '../../lib/publicar'
 import { Aviso, Boton, Campo, Cargando, Hoja, Interruptor, Pantalla, Tarjeta } from './ui'
+import { ResumenVisitas } from './Visitas'
 
 export type EditorRecorridoProps = {
   tourId: string
@@ -35,6 +40,7 @@ function Miniatura({ scene }: { scene: StoredScene }) {
     </div>
   )
 }
+
 
 export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const [tour, setTour] = useState<StoredTour | null | 'no-existe'>(null)
@@ -95,6 +101,14 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const [pidiendoClave, setPidiendoClave] = useState(false)
   const [claveEscrita, setClaveEscrita] = useState('')
   const [copiado, setCopiado] = useState(false)
+  /* La hoja de visitas: se piden al abrirla, no antes. Es una llamada al Worker
+     que suma paquetes; no tiene sentido pagarla en cada render del editor. */
+  const [visitas, setVisitas] = useState<
+    | null
+    | { estado: 'cargando' }
+    | { estado: 'listo'; resumen: ResumenDeVisitas; ultimos7: number }
+    | { estado: 'error'; mensaje: string }
+  >(null)
 
   const [paquete, setPaquete] = useState<
     | { estado: 'armando' }
@@ -118,11 +132,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }, [cargar])
 
   /** Devuelve si la escritura llegó al disco. Quien llama cierra su hoja solo si sí. */
-  const guardar = async (siguiente: StoredTour): Promise<boolean> => {
+  const guardar = async (siguiente: StoredTour, opciones?: OpcionesDeGuardado): Promise<boolean> => {
     setEscribiendo(true)
     setErrorGuardado(null)
     try {
-      const guardado = await saveTour(siguiente)
+      const guardado = await saveTour(siguiente, opciones)
       setTour(guardado)
       return true
     } catch (e) {
@@ -354,13 +368,29 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   const subir = async (clave: string) => {
     setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
     try {
-      const { llave } = await publicarTour(tour, clave, (avance) =>
-        setPublicando({ estado: 'subiendo', ...avance }),
+      /* Si ya hay una llave se publica SOBRE ella: el link que el agente ya
+         mandó sigue sirviendo y enseña la casa nueva. Antes cada "volver a
+         subir" creaba una llave nueva y dejaba la vieja viva en el servidor. */
+      const { llave, editToken, publicadoEn } = await publicarTour(
+        tour,
+        clave,
+        (avance) => setPublicando({ estado: 'subiendo', ...avance }),
+        tour.publicacion,
       )
       /* Se guarda la llave ANTES de dar por buena la publicación: si esta
          escritura fallara y no se guardara, la casa quedaría en línea y sin
-         forma de bajarla desde aquí. */
-      await guardar({ ...tour, publicadoComo: llave })
+         forma de bajarla desde aquí.
+
+         Y se guarda SIN mover `updatedAt`: publicar no es editar la casa. Es lo
+         que hace que "hay cambios sin publicar" compare fechas de verdad —el
+         contenido contra la subida— y no salte justo después de publicar. */
+      await guardar(
+        {
+          ...tour,
+          publicacion: { llave, editToken: editToken ?? tour.publicacion?.editToken, publicadoEn },
+        },
+        { conservarFecha: true },
+      )
       setPublicando(null)
       setCopiado(false)
     } catch (e) {
@@ -385,11 +415,11 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }
 
   const bajar = async () => {
-    if (!tour.publicadoComo) return
+    if (!tour.publicacion) return
     setPublicando({ estado: 'subiendo', hechas: 0, total: 1 })
     try {
-      await despublicar(tour.publicadoComo, claveGuardada())
-      await guardar({ ...tour, publicadoComo: undefined })
+      await despublicar(tour.publicacion.llave, claveGuardada(), tour.publicacion.editToken)
+      await guardar({ ...tour, publicacion: undefined }, { conservarFecha: true })
       setPublicando(null)
     } catch (e) {
       setPublicando({
@@ -400,9 +430,9 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
   }
 
   const copiarEnlace = async () => {
-    if (!tour.publicadoComo) return
+    if (!tour.publicacion) return
     try {
-      await navigator.clipboard.writeText(enlacePublico(tour.publicadoComo))
+      await navigator.clipboard.writeText(enlacePublico(tour.publicacion.llave))
       setCopiado(true)
       window.setTimeout(() => setCopiado(false), 2000)
     } catch {
@@ -416,14 +446,51 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
     }
   }
 
+  const verVisitas = async () => {
+    if (!tour.publicacion) return
+    setVisitas({ estado: 'cargando' })
+    try {
+      const resumen = await resumenDeVisitas(
+        tour.publicacion.llave,
+        claveGuardada(),
+        tour.publicacion.editToken,
+      )
+      setVisitas({ estado: 'listo', resumen, ultimos7: visitasRecientes(resumen.porDia, Date.now()) })
+    } catch (e) {
+      setVisitas({
+        estado: 'error',
+        mensaje:
+          e instanceof PublicarError
+            ? [e.message, e.consejo].filter(Boolean).join(' ')
+            : 'No se pudieron leer las visitas.',
+      })
+    }
+  }
+
   const listo = tour.scenes.length > 0
+
+  /* ── "Hay cambios sin publicar" ─────────────────────────────────────────────
+     Publicar → editar en local → el link sigue enseñando lo viejo, EN SILENCIO.
+     Es la queja de soporte número uno si falta. `updatedAt` solo se mueve al
+     editar la casa (anotar la publicación lo conserva), así que comparar las
+     dos fechas dice la verdad. */
+  const publicacion = tour.publicacion
+  /* `>=` y no `>`: cuando se publica bien, `updatedAt` es la fecha de la última
+     edición del contenido, siempre ANTERIOR a que la subida termine (subir tarda
+     segundos). Con `>`, un guardado que moviera la fecha en el mismo milisegundo
+     que `publicadoEn` pasaría por "al día": el sabotaje de quitar
+     `conservarFecha` solo se veía a veces. Con `>=` se ve siempre. */
+  const hayCambios = publicacion !== undefined && tour.updatedAt >= publicacion.publicadoEn
+  const fechaPublicada = publicacion
+    ? new Date(publicacion.publicadoEn).toLocaleString('es-MX', { dateStyle: 'medium', timeStyle: 'short' })
+    : ''
 
   /* El mismo mensaje se enseña en dos sitios porque el fallo puede venir de dos
      lados: de una hoja abierta (renombrar, ajustes, borrar) o de las flechas de
      reordenar, que están en la lista. Cuando hay una hoja encima, la lista está
      tapada, así que ahí no sirve de nada ponerlo. */
   const hojaAbierta =
-    agregando || datos !== null || confirmarBorrado !== null || editando !== null || pidiendoClave
+    agregando || datos !== null || confirmarBorrado !== null || editando !== null || pidiendoClave || visitas !== null
   const avisoError = errorGuardado ? (
     <p className="text-sm leading-relaxed text-red-300">{errorGuardado}</p>
   ) : null
@@ -555,23 +622,37 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                 instalar nada y sin cuenta. El link no aparece en Google: solo entra quien lo tenga.
               </p>
 
-              {tour.publicadoComo ? (
+              {publicacion ? (
                 <div className="flex flex-col gap-2">
                   <p
                     className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm
                                break-all text-ink-50 select-all"
                   >
-                    {enlacePublico(tour.publicadoComo)}
+                    {enlacePublico(publicacion.llave)}
                   </p>
-                  <Boton tipo="principal" ancho onClick={() => void copiarEnlace()}>
-                    {copiado ? 'Copiado' : 'Copiar el link'}
-                  </Boton>
+                  {hayCambios ? (
+                    <Aviso tono="alerta" titulo="Hay cambios sin publicar">
+                      El link enseña la versión que subiste el {fechaPublicada}. Vuelve a subir
+                      para que quien lo abra vea los cambios.
+                    </Aviso>
+                  ) : (
+                    <p className="text-xs text-ink-200/70">
+                      El link está al día: enseña lo que subiste el {fechaPublicada}.
+                    </p>
+                  )}
                   <Boton
+                    tipo={hayCambios ? 'principal' : 'normal'}
                     ancho
                     onClick={() => void subir(claveGuardada())}
                     disabled={publicando?.estado === 'subiendo'}
                   >
                     Volver a subir con los cambios
+                  </Boton>
+                  <Boton tipo={hayCambios ? 'normal' : 'principal'} ancho onClick={() => void copiarEnlace()}>
+                    {copiado ? 'Copiado' : 'Copiar el link'}
+                  </Boton>
+                  <Boton ancho onClick={() => void verVisitas()}>
+                    Ver visitas
                   </Boton>
                   <Boton
                     tipo="fantasma"
@@ -581,9 +662,23 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
                   >
                     Quitar de internet
                   </Boton>
-                  <p className="text-xs text-ink-200/70">
-                    Los cambios que hagas aquí no se ven en el link hasta que vuelvas a subir.
-                  </p>
+                  {/* El código de rescate vive SOLO en este teléfono. Si se
+                      pierde el aparato, con él se puede volver a subir o dar de
+                      baja este link desde otro; sin él, solo dar de baja con el
+                      código de la inmobiliaria. Se enseña plegado: es un dato
+                      para guardar aparte, no para leer cada vez. */}
+                  {publicacion.editToken && (
+                    <details className="rounded-2xl border border-white/10 bg-black/20 px-4 py-2 text-sm">
+                      <summary className="cursor-pointer py-1 text-ink-200">Código de rescate</summary>
+                      <p className="mt-2 text-xs text-ink-200/70">
+                        Si cambias de teléfono, con este código puedes volver a subir o dar de baja
+                        este link desde otro. Guárdalo aparte.
+                      </p>
+                      <p className="mt-2 font-mono text-sm break-all text-ink-50 select-all">
+                        {publicacion.editToken}
+                      </p>
+                    </details>
+                  )}
                 </div>
               ) : (
                 <Boton
@@ -598,7 +693,7 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
 
               {publicando?.estado === 'subiendo' && (
                 <p className="mt-2 text-sm text-ink-200" role="status" aria-live="polite">
-                  Subiendo {publicando.hechas} de {publicando.total} fotos…
+                  Subiendo {publicando.hechas} de {publicando.total} archivos…
                 </p>
               )}
               {publicando?.estado === 'error' && (
@@ -678,6 +773,26 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
           </Boton>
         </Tarjeta>
 
+        {/* El plano de la casa: la planta con un alfiler por habitación. Es lo
+            que le dice al comprador dónde está parado y hacia dónde mira, y va
+            aquí y no dentro de una habitación porque es UN plano para toda la
+            casa. Solo con habitaciones: sin ellas no hay nada que colocar. */}
+        {listo && (
+          <Tarjeta>
+            <p className="mb-1 font-semibold">Plano de la casa</p>
+            <p className="mb-3 text-sm text-ink-200">
+              {tour.plano
+                ? `${tour.scenes.filter((s) => s.plano).length} de ${tour.scenes.length} ${
+                    tour.scenes.length === 1 ? 'habitación colocada' : 'habitaciones colocadas'
+                  }. Quien vea el recorrido tendrá un plano con dónde está parado.`
+                : 'Sube la planta arquitectónica y marca dónde está cada habitación: quien vea el recorrido sabrá en qué parte de la casa está parado.'}
+            </p>
+            <Boton ancho onClick={() => ir({ nombre: 'plano', tourId: tour.id })}>
+              {tour.plano ? 'Editar el plano' : 'Agregar el plano'}
+            </Boton>
+          </Tarjeta>
+        )}
+
         <Boton
           tipo="fantasma"
           ancho
@@ -689,19 +804,33 @@ export function EditorRecorrido({ tourId, ir }: EditorRecorridoProps) {
         </Boton>
       </div>
 
+      {visitas && (
+        <Hoja titulo="Visitas" onCerrar={() => setVisitas(null)}>
+          {visitas.estado === 'cargando' && <Cargando texto="Sumando las visitas…" />}
+          {visitas.estado === 'error' && (
+            <Aviso tono="error" titulo="No se pudieron leer">
+              {visitas.mensaje}
+            </Aviso>
+          )}
+          {visitas.estado === 'listo' && (
+            <ResumenVisitas resumen={visitas.resumen} ultimos7={visitas.ultimos7} nombres={nombresDe(tour)} />
+          )}
+        </Hoja>
+      )}
+
       {pidiendoClave && (
-        <Hoja titulo="Clave para publicar" onCerrar={() => setPidiendoClave(false)}>
+        <Hoja titulo="Código para publicar" onCerrar={() => setPidiendoClave(false)}>
           <div className="flex flex-col gap-4">
             <p className="text-sm text-ink-200">
-              Es la clave del servidor donde se guardan las casas publicadas. Se escribe una sola
-              vez: queda guardada en este teléfono. No viene dentro de la app porque cualquiera
-              podría leerla.
+              Es el código de invitación de tu inmobiliaria (o la clave del servidor, si tú lo
+              operas). Se escribe una sola vez: queda guardado en este teléfono. No viene dentro
+              de la app porque cualquiera podría leerlo.
             </p>
             <Campo
-              etiqueta="Clave"
+              etiqueta="Código"
               valor={claveEscrita}
               onChange={setClaveEscrita}
-              placeholder="La que configuraste en el servidor"
+              placeholder="El código que te dio tu inmobiliaria"
             />
             <Boton
               tipo="principal"

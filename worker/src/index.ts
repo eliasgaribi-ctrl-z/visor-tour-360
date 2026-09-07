@@ -19,34 +19,84 @@
  *
  * No hay cuentas, ni base de datos, ni sesiones. Un recorrido publicado son
  * unos cuantos objetos en R2 bajo una llave que nadie puede adivinar, y se
- * borra tirando esos objetos. Todo lo que hace falta para eso cabe aquí.
+ * borra tirando esos objetos. Los códigos de invitación y lo que se sabe de cada
+ * llave también son objetos en R2. Todo lo que hace falta cabe aquí.
  *
- * ── Las tres decisiones ─────────────────────────────────────────────────────
+ * ── Quién puede publicar: tres identificadores, ninguno es un login ────────
  *
- * QUIÉN PUEDE SUBIR · una clave compartida, que viaja en el encabezado
- * Authorization y vive como secreto del Worker. NO está en el paquete de la
- * app: el JavaScript de un sitio estático es público y cualquiera lo lee, así
- * que una clave ahí dentro no es una clave. La escribe la persona una vez en su
- * teléfono y se queda en el almacenamiento local del navegador.
+ *   CLAVE_PUBLICACION   la clave MAESTRA. Secreto del Worker. Crea códigos de
+ *                       invitación y puede tocar cualquier publicación. Es la
+ *                       de quien opera el servicio, no la de un agente.
  *
- * Sin esto, cualquiera que encuentre la dirección puede llenar el bucket de
- * archivos ajenos, y la cuenta la paga el dueño.
+ *   código              el código de invitación de UNA inmobiliaria. Es el
+ *                       inquilino: con él se publica, y todo lo publicado con él
+ *                       cuenta contra sus cuotas. Se guarda HASHEADO en R2
+ *                       (`c/<sha256>.json`): un volcado del bucket no reparte
+ *                       permisos de publicar.
  *
- * QUIÉN PUEDE VER · quien tenga el link. La llave son 128 bits de azar: no se
- * llega por probar. Y todas las respuestas llevan `X-Robots-Tag: noindex`, más
- * un robots.txt que cierra el sitio entero, porque una casa en venta puede
- * estar habitada y su interior no tiene por qué quedar en Google.
+ *   código de rescate   el secreto de UNA publicación, que se entrega una sola
+ *   (editToken)         vez al crearla y solo vive en el teléfono que publicó.
+ *                       Autoriza a volver a subir y a dar de baja ESA llave.
+ *                       Hasheado en `t/<llave>/meta.json`.
  *
- * QUÉ SE PUEDE SUBIR · solo JPEG, con tope de tamaño, de cantidad y de peso
- * total. El manifiesto se vuelve a sanear aquí aunque el teléfono ya lo haya
- * hecho: lo que viene por la red es de quien tenga la clave, y una clave
- * compartida entre varios teléfonos acaba en más manos de las previstas.
+ * Por qué no basta una clave compartida, y no es por seguridad sino por
+ * FACTURA: un endpoint de publicación con una sola clave para todos es
+ * almacenamiento gratis para cualquiera que la tenga, y una clave compartida
+ * entre los teléfonos de un equipo acaba en más manos de las previstas. El
+ * código por inmobiliaria resuelve el abuso —cada código tiene tope de bytes y
+ * de casas por día— y de paso da la multi-inquilinato: es donde viven las
+ * cuotas.
+ *
+ * Y por qué el código de rescate además del código: dos agentes de la misma
+ * inmobiliaria comparten código, y sin él cualquiera de los dos podría
+ * sobrescribir la casa del otro por accidente al "volver a subir". El token ata
+ * la llave al teléfono que la creó. Si ese teléfono se pierde, el código de la
+ * inmobiliaria sirve de llave maestra PARA DAR DE BAJA (no para republicar):
+ * bajar la casa es lo que hace falta en ese caso.
+ *
+ * Ninguna de las tres está en el paquete de la app: el JavaScript de un sitio
+ * estático es público y cualquiera lo lee. La persona escribe su código una vez
+ * en su teléfono y se queda en el almacenamiento local del navegador.
+ *
+ * Lo que se difiere sin dolor: correo, contraseña, magic link, roles. Una fase
+ * de cuentas solo le colgaría un correo verificado al mismo código; cero
+ * migración de datos.
+ *
+ * ── Quién puede ver ─────────────────────────────────────────────────────────
+ *
+ * Quien tenga el link. La llave son 128 bits de azar: no se llega por probar. Y
+ * todas las respuestas llevan `X-Robots-Tag: noindex`, más un robots.txt que
+ * cierra el sitio entero, porque una casa en venta puede estar habitada y su
+ * interior no tiene por qué quedar en Google.
+ *
+ * ── Qué se puede subir ──────────────────────────────────────────────────────
+ *
+ * Solo imágenes, con tope de tamaño, de cantidad y de peso total. El manifiesto
+ * se vuelve a sanear aquí aunque el teléfono ya lo haya hecho: lo que viene por
+ * la red es de quien tenga un código, y un código acaba en más manos de las
+ * previstas.
+ *
+ * ── El manifiesto es la versión 2 ───────────────────────────────────────────
+ *
+ * La v1 llevaba las habitaciones y sus puntos. La v2 lleva además lo que hace
+ * que el link sea un PRODUCTO y no una foto: la ficha de la casa (precio,
+ * metros, contacto) que el visor enseña como portada y que aquí se usa para la
+ * tarjeta de WhatsApp; la marca de la inmobiliaria, con su logo; el modo kiosco;
+ * y por habitación el rumbo, el nivel y la cobertura. Y una variante de 2048 px
+ * de cada foto, para que un teléfono modesto no baje 1.5 MB que va a encoger.
+ *
+ * Todo es ADITIVO y opcional: un visor cacheado de la semana pasada que lea un
+ * manifiesto v2 verá menos, no verá mal. Y lo que se guarda aquí lo vuelve a
+ * filtrar el visor al bajarlo (`limpiarMarca`, `limpiarFicha`, `limpiarEscena`):
+ * el Worker acota tamaños y formas; el visor decide qué se puede pintar.
  */
 
+import { resumir, type PaqueteCrudo } from '../../src/lib/metricas/resumen'
+
 export type Env = {
-  /** Bucket de R2 donde viven las casas publicadas. */
+  /** Bucket de R2 donde viven las casas publicadas, los códigos, las metas y las visitas. */
   TOURS: R2Bucket
-  /** Clave compartida. Se pone con `wrangler secret put CLAVE_PUBLICACION`. */
+  /** La clave maestra. Se pone con `wrangler secret put CLAVE_PUBLICACION`. */
   CLAVE_PUBLICACION: string
   /**
    * De dónde se sirve la app del visor, con la barra final.
@@ -61,14 +111,24 @@ export type Env = {
    salga de eso es un error o alguien probando. */
 const MAX_FOTO = 12 * 1024 * 1024
 const MAX_FOTOS = 48
+const MAX_LOGO = 1024 * 1024
+/** El plano de la casa: el editor lo deja en 1600 px, pero un PNG de líneas puede pesar más que un JPEG. */
+const MAX_PLANO = 4 * 1024 * 1024
 const MAX_MANIFIESTO = 256 * 1024
-const MAX_TOTAL = 120 * 1024 * 1024
+const MAX_TOTAL = 160 * 1024 * 1024
+/** Un paquete de métricas: `sendBeacon` topa en 64 KB, y 200 eventos son ~12. */
+const MAX_PAQUETE = 64 * 1024
+const MAX_EVENTOS = 200
+/** Cuántos paquetes se leen para el resumen antes de decir "hay más". */
+const MAX_PAQUETES_RESUMEN = 5000
 
 /** Alfabeto sin caracteres que se confunden al leerlos en voz alta o a mano. */
 const ALFABETO = 'abcdefghijkmnpqrstuvwxyz23456789'
 
 /**
  * Llave de una casa publicada: 128 bits de azar del generador criptográfico.
+ * Sirve igual para los códigos de invitación y de rescate, que son secretos con
+ * la misma exigencia.
  *
  * No es un identificador bonito a propósito. Es lo único que separa una casa
  * de cualquiera que pase por ahí, así que tiene que ser imposible de adivinar
@@ -95,17 +155,55 @@ function nuevaLlave(): string {
 
 /** Una llave que nosotros generamos tiene exactamente esta forma. */
 const LLAVE_VALIDA = new RegExp(`^[${ALFABETO}]{26}$`)
+/** Un hash SHA-256 en hexadecimal, que es como se nombra un código en R2. */
+const HASH_VALIDO = /^[0-9a-f]{64}$/
 
 /**
- * Nombre de foto admitido.
+ * Nombres de archivo admitidos.
  *
- * Cerrado a la forma que el teléfono manda —`000.jpg`, `000.min.jpg`— y no a
- * "algo que no tenga barras". Las llaves de R2 no son rutas de disco y no hay
- * un `..` que escape a ningún lado, pero un nombre libre sí deja escribir
- * dentro del prefijo de otra casa, y de ahí sale servir un archivo cualquiera
- * desde nuestro dominio.
+ * Cerrados a la forma que el teléfono manda —`000.jpg`, `000.min.jpg`,
+ * `000.2k.jpg`, `logo.png`, `plano.jpg`— y no a "algo que no tenga barras". Las
+ * llaves de R2 no son rutas de disco y no hay un `..` que escape a ningún lado,
+ * pero un nombre libre sí deja escribir dentro del prefijo de otra casa, y de
+ * ahí sale servir un archivo cualquiera desde nuestro dominio.
  */
-const FOTO_VALIDA = /^[0-9]{3}(\.min)?\.jpg$/
+const FOTO_VALIDA = /^[0-9]{3}(\.min|\.2k)?\.jpg$/
+const VARIANTE_2K = /^[0-9]{3}\.2k\.jpg$/
+const LOGO_VALIDO = /^logo\.(png|jpg|webp)$/
+const PLANO_VALIDO = /^plano\.(png|jpg|webp)$/
+const archivoValido = (nombre: string) =>
+  FOTO_VALIDA.test(nombre) || LOGO_VALIDO.test(nombre) || PLANO_VALIDO.test(nombre)
+
+/**
+ * Qué tipo de imagen es, por su FIRMA y no por su extensión.
+ *
+ * No es una validación fuerte —nadie con un código necesita engañarnos— pero
+ * atrapa el error de verdad frecuente, que es subir un blob equivocado y
+ * descubrirlo cuando el cliente abre el link y ve una esfera negra. Y como el
+ * `Content-Type` con el que se sirve sale de aquí, un `logo.png` con otra cosa
+ * dentro no se sirve como PNG.
+ */
+function tipoDeImagen(cuerpo: ArrayBuffer): 'image/jpeg' | 'image/png' | 'image/webp' | null {
+  const b = new Uint8Array(cuerpo.slice(0, 12))
+  if (b.length < 4) return null
+  if (b[0] === 0xff && b[1] === 0xd8) return 'image/jpeg'
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return 'image/png'
+  if (
+    b.length >= 12 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) {
+    return 'image/webp'
+  }
+  return null
+}
+
+/** La extensión que corresponde a cada tipo: un `logo.png` tiene que SER un PNG. */
+const EXTENSION: Record<string, string> = {
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'image/webp': 'webp',
+}
 
 /* ── Respuestas ──────────────────────────────────────────────────────────── */
 
@@ -137,26 +235,284 @@ function error(status: number, mensaje: string): Response {
   return json({ error: mensaje }, status)
 }
 
+/* ── Quién es ────────────────────────────────────────────────────────────── */
+
+type Cuotas = {
+  /** Bytes totales publicados con este código, sumando todas sus casas. */
+  bytes: number
+  /** Cuántas casas nuevas puede crear por día. */
+  recorridosPorDia: number
+}
+
+type RegistroDeCodigo = {
+  nombre: string
+  creadoEn: number
+  cuotas: Cuotas
+  uso: { bytes: number; dia: string; recorridosHoy: number }
+  /**
+   * Las llaves publicadas con este código, para el panel. Se anota al publicar
+   * por primera vez y se quita al dar de baja: un `list` de todo `t/` por cada
+   * apertura del panel sería leer el bucket entero para encontrar cinco casas.
+   */
+  casas?: string[]
+}
+
+/** Lo que se sabe de una llave publicada, aparte del manifiesto. */
+type Meta = {
+  /** `'admin'` o el hash del código que la creó. */
+  tenant: string
+  /** sha256 del código de rescate. El código en claro no se guarda nunca. */
+  tokenHash: string
+  creadoEn: number
+  publicadoEn?: number
+  /** Bytes que ocupa la casa, contados al publicar. */
+  bytes: number
+}
+
+type Quien = { tipo: 'admin' } | { tipo: 'codigo'; hash: string; registro: RegistroDeCodigo }
+
 /**
- * ¿Trae la clave correcta?
- *
- * La comparación recorre los dos textos completos siempre, sin cortar en la
+ * Las cuotas por omisión, con la vara del plan: 2 GB son unas 150 casas de
+ * 12 MB, más de lo que una inmobiliaria mediana publica en un año; 20 casas al
+ * día es lo que un equipo entero publica en un día bueno, y un tope contra un
+ * bucle. Se pueden fijar por código al crearlo.
+ */
+const CUOTAS_POR_DEFECTO: Cuotas = { bytes: 2 * 1024 * 1024 * 1024, recorridosPorDia: 20 }
+
+async function sha256(texto: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(texto))
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Comparación que recorre los dos textos completos siempre, sin cortar en la
  * primera letra distinta. Comparar con `===` tarda un poquito más cuantas más
  * letras coincidan, y esa diferencia —medida muchas veces— alcanza para ir
- * adivinando la clave letra por letra.
+ * adivinando un secreto letra por letra.
  */
-function claveCorrecta(pedido: Request, env: Env): boolean {
-  const cabecera = pedido.headers.get('Authorization') ?? ''
-  const dada = cabecera.startsWith('Bearer ') ? cabecera.slice(7) : ''
-  const esperada = env.CLAVE_PUBLICACION ?? ''
-  if (!esperada) return false
-  const a = new TextEncoder().encode(dada)
-  const b = new TextEncoder().encode(esperada)
-  let diferencia = a.length ^ b.length
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    diferencia |= (a[i] ?? 0) ^ (b[i] ?? 0)
-  }
+function igualesSinPrisa(a: string, b: string): boolean {
+  const x = new TextEncoder().encode(a)
+  const y = new TextEncoder().encode(b)
+  let diferencia = x.length ^ y.length
+  for (let i = 0; i < Math.max(x.length, y.length); i++) diferencia |= (x[i] ?? 0) ^ (y[i] ?? 0)
   return diferencia === 0
+}
+
+function credencialDe(pedido: Request): string {
+  const cabecera = pedido.headers.get('Authorization') ?? ''
+  return cabecera.startsWith('Bearer ') ? cabecera.slice(7) : ''
+}
+
+/** ¿Quién manda este pedido? `null` si nadie que conozcamos. */
+async function quien(pedido: Request, env: Env): Promise<Quien | null> {
+  const dada = credencialDe(pedido)
+  if (!dada) return null
+  if (env.CLAVE_PUBLICACION && igualesSinPrisa(dada, env.CLAVE_PUBLICACION)) return { tipo: 'admin' }
+  /* Un código tiene la forma de una llave. Lo que no la tenga no se busca: es
+     una clave maestra mal escrita, no un código. */
+  if (!LLAVE_VALIDA.test(dada)) return null
+  const hash = await sha256(dada)
+  const objeto = await env.TOURS.get(`c/${hash}.json`)
+  if (!objeto) return null
+  return { tipo: 'codigo', hash, registro: (await objeto.json()) as RegistroDeCodigo }
+}
+
+const hoy = () => new Date().toISOString().slice(0, 10)
+
+/** El uso de hoy, con el contador diario en cero si el día cambió. */
+function usoDeHoy(registro: RegistroDeCodigo): RegistroDeCodigo['uso'] {
+  return registro.uso.dia === hoy() ? registro.uso : { bytes: registro.uso.bytes, dia: hoy(), recorridosHoy: 0 }
+}
+
+async function guardarCodigo(env: Env, hash: string, registro: RegistroDeCodigo): Promise<void> {
+  await env.TOURS.put(`c/${hash}.json`, JSON.stringify(registro), {
+    httpMetadata: { contentType: 'application/json; charset=utf-8' },
+  })
+}
+
+/**
+ * Suma (o resta) bytes al uso de un código, releyéndolo: quien llama puede
+ * traer un registro viejo, o ser la clave maestra tocando la casa de otro.
+ * Dos publicaciones a la vez pueden pisarse la cuenta; a esta escala es un
+ * error de unos megabytes que se corrige en la siguiente, y no vale una base
+ * de datos.
+ */
+async function ajustarBytes(env: Env, tenant: string, delta: number): Promise<void> {
+  if (tenant === 'admin' || delta === 0) return
+  const objeto = await env.TOURS.get(`c/${tenant}.json`)
+  if (!objeto) return // código revocado: ya no hay a quién cobrarle
+  const registro = (await objeto.json()) as RegistroDeCodigo
+  const uso = usoDeHoy(registro)
+  uso.bytes = Math.max(0, uso.bytes + delta)
+  await guardarCodigo(env, tenant, { ...registro, uso })
+}
+
+const enMB = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MB`
+
+/** Anota (o quita) una llave en la lista de casas de un código. */
+async function anotarCasa(env: Env, tenant: string, llave: string, agregar: boolean): Promise<void> {
+  if (tenant === 'admin') return
+  const objeto = await env.TOURS.get(`c/${tenant}.json`)
+  if (!objeto) return // código revocado
+  const registro = (await objeto.json()) as RegistroDeCodigo
+  const casas = new Set(registro.casas ?? [])
+  if (agregar) casas.add(llave)
+  else casas.delete(llave)
+  await guardarCodigo(env, tenant, { ...registro, casas: [...casas] })
+}
+
+/* ── El panel ─────────────────────────────────────────────────────────────────
+ *
+ * Lo que vive en el servidor a nombre de un código: sus casas, con link,
+ * fecha, peso y los nombres de sus habitaciones y puntos (para leer las
+ * visitas). Con la clave maestra, todas las casas del servicio. Es el panel del
+ * inquilino que el plan colgaba del `tenantId`; el `tenantId` es el código.
+ */
+
+type CasaDelPanel = {
+  llave: string
+  titulo: string
+  subtitulo?: string
+  precio?: string
+  portada?: string
+  publicadoEn?: number
+  creadoEn: number
+  bytes: number
+  habitaciones: number
+  url: string
+  nombres: Record<string, string>
+}
+
+async function casaDelPanel(env: Env, llave: string, origen: string): Promise<CasaDelPanel | null> {
+  const [metaObj, tourObj] = await Promise.all([
+    env.TOURS.get(`t/${llave}/meta.json`),
+    env.TOURS.get(`t/${llave}/tour.json`),
+  ])
+  // Sin manifiesto no hay casa: quedó a medio subir, o se dio de baja.
+  if (!tourObj) return null
+  const meta = metaObj ? ((await metaObj.json()) as Meta) : null
+  const tour = (await tourObj.json()) as ManifiestoPublico
+  const primera = tour.scenes[0]
+  const nombres: Record<string, string> = {}
+  for (const s of tour.scenes) {
+    nombres[s.id] = s.name
+    for (const h of s.hotspots as { id?: string; label?: string }[]) {
+      if (typeof h.id === 'string') nombres[h.id] = h.label ?? h.id
+    }
+  }
+  return {
+    llave,
+    titulo: tour.title,
+    subtitulo: tour.subtitle,
+    precio: tour.ficha?.precio,
+    portada: primera ? `${origen}/t/${llave}/fotos/${primera.miniatura ?? primera.foto}` : undefined,
+    publicadoEn: meta?.publicadoEn,
+    creadoEn: meta?.creadoEn ?? 0,
+    bytes: meta?.bytes ?? 0,
+    habitaciones: tour.scenes.length,
+    url: `${origen}/t/${llave}`,
+    nombres,
+  }
+}
+
+/**
+ * ¿Puede este pedido tocar esta llave (subir, publicar, bajar)?
+ *
+ *   · la clave maestra, siempre;
+ *   · el código de rescate correcto (cabecera `X-Edit-Token`), siempre;
+ *   · el código con el que se creó la llave, SOLO para dar de baja: es la
+ *     llave de rescate cuando se perdió el teléfono, y bajar una casa es lo
+ *     que se necesita en ese caso. Republicar sin el token no, para que un
+ *     compañero de la misma inmobiliaria no sobrescriba la casa de otro.
+ *
+ * Una llave sin `meta.json` la publicó la versión anterior del Worker, con la
+ * clave compartida: solo la clave maestra la puede tocar.
+ */
+async function autorizado(
+  pedido: Request,
+  env: Env,
+  q: Quien,
+  llave: string,
+  accion: 'escribir' | 'bajar',
+): Promise<{ ok: true; meta: Meta | null } | { ok: false }> {
+  const objeto = await env.TOURS.get(`t/${llave}/meta.json`)
+  if (!objeto) return q.tipo === 'admin' ? { ok: true, meta: null } : { ok: false }
+  const meta = (await objeto.json()) as Meta
+  if (q.tipo === 'admin') return { ok: true, meta }
+  const token = pedido.headers.get('X-Edit-Token') ?? ''
+  if (token && meta.tokenHash && igualesSinPrisa(await sha256(token), meta.tokenHash)) return { ok: true, meta }
+  if (accion === 'bajar' && meta.tenant === q.hash) return { ok: true, meta }
+  return { ok: false }
+}
+
+const AJENA = 'Este recorrido lo publicó otro teléfono.'
+
+/* ── Métricas ────────────────────────────────────────────────────────────────
+ *
+ * Lo que manda `src/lib/metricas/cliente.ts` desde el navegador del comprador:
+ * un paquete por sesión y vaciado, con eventos de habitación, punto y falla.
+ * Se guarda TAL CUAL (saneado) como un objeto más en R2, append-only:
+ * `m/<llave>/<día>/<sesión>-<azar>.json`. Sin base de datos: el resumen los
+ * suma al leer, y cuando duela, un cron los enrolla por día.
+ *
+ * PRIVACIDAD POR DISEÑO, escrita aquí y no solo en un documento: este Worker
+ * no guarda la IP ni ningún encabezado del pedido, el id de sesión lo inventa
+ * el navegador y muere con la pestaña, y no hay cookies. Se miden sesiones, no
+ * personas. Es lo que quita la necesidad de un banner de consentimiento.
+ */
+
+const SESION_VALIDA = /^[a-z2-9]{12}$/
+const EVENTOS_CONOCIDOS = new Set(['abrir', 'escena', 'punto', 'falla', 'fin'])
+
+/** Deja un paquete en su forma, o `null` si no es uno. Lo escribió un endpoint público. */
+function saneaPaquete(crudo: unknown): PaqueteCrudo | null {
+  if (!crudo || typeof crudo !== 'object') return null
+  const p = crudo as Record<string, unknown>
+  if (typeof p.s !== 'string' || !SESION_VALIDA.test(p.s)) return null
+  if (typeof p.inicio !== 'number' || !Number.isFinite(p.inicio)) return null
+  if (!Array.isArray(p.eventos) || p.eventos.length > MAX_EVENTOS) return null
+  const eventos: PaqueteCrudo['eventos'] = []
+  for (const cruda of p.eventos) {
+    if (!cruda || typeof cruda !== 'object') continue
+    const ev = cruda as Record<string, unknown>
+    if (typeof ev.e !== 'string' || !EVENTOS_CONOCIDOS.has(ev.e)) continue
+    if (typeof ev.t !== 'number' || !Number.isFinite(ev.t) || ev.t < 0) continue
+    const limpio: PaqueteCrudo['eventos'][number] = { e: ev.e, t: Math.round(ev.t) }
+    if (typeof ev.id === 'string') limpio.id = ev.id.slice(0, 64)
+    if (ev.kind === 'link' || ev.kind === 'info') limpio.kind = ev.kind
+    if (typeof ev.que === 'string') limpio.que = ev.que.slice(0, 120)
+    if (ev.aparato === 'modesto' || ev.aparato === 'normal') limpio.aparato = ev.aparato
+    if (typeof ev.tactil === 'boolean') limpio.tactil = ev.tactil
+    if (typeof ev.ancho === 'number' && Number.isFinite(ev.ancho)) limpio.ancho = Math.round(ev.ancho)
+    eventos.push(limpio)
+  }
+  return { v: 1, s: p.s, inicio: Math.round(p.inicio), eventos }
+}
+
+/** Todos los paquetes de una casa, hasta el tope. */
+async function leerPaquetes(env: Env, llave: string): Promise<{ paquetes: PaqueteCrudo[]; completos: boolean }> {
+  const llaves: string[] = []
+  let cursor: string | undefined
+  do {
+    const pagina = await env.TOURS.list({ prefix: `m/${llave}/`, cursor })
+    for (const o of pagina.objects) llaves.push(o.key)
+    cursor = pagina.truncated ? pagina.cursor : undefined
+  } while (cursor && llaves.length < MAX_PAQUETES_RESUMEN)
+
+  const paquetes: PaqueteCrudo[] = []
+  // De veinte en veinte: ni uno por uno (lento) ni todos a la vez (memoria).
+  for (let i = 0; i < Math.min(llaves.length, MAX_PAQUETES_RESUMEN); i += 20) {
+    const lote = await Promise.all(llaves.slice(i, i + 20).map((k) => env.TOURS.get(k)))
+    for (const objeto of lote) {
+      if (!objeto) continue
+      try {
+        paquetes.push((await objeto.json()) as PaqueteCrudo)
+      } catch {
+        /* un objeto roto no tumba el resumen */
+      }
+    }
+  }
+  return { paquetes, completos: llaves.length <= MAX_PAQUETES_RESUMEN }
 }
 
 /* ── Saneo del manifiesto ────────────────────────────────────────────────── */
@@ -170,25 +526,87 @@ const textoOpcional = (v: unknown, max: number): string | undefined =>
 const numero = (v: unknown, porDefecto = 0): number =>
   typeof v === 'number' && Number.isFinite(v) ? v : porDefecto
 
+const numeroOpcional = (v: unknown): number | undefined =>
+  typeof v === 'number' && Number.isFinite(v) ? v : undefined
+
+const enteroOpcional = (v: unknown, max: number): number | undefined => {
+  const n = numeroOpcional(v)
+  if (n === undefined) return undefined
+  const r = Math.round(n)
+  return r >= 0 && r <= max ? r : undefined
+}
+
+/** Un color solo se acepta si es un hex que cualquier navegador entiende. */
+const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i
+const colorOpcional = (v: unknown): string | undefined =>
+  typeof v === 'string' && HEX.test(v.trim()) ? v.trim() : undefined
+
 type EscenaPublica = {
   id: string
   name: string
   foto: string
   miniatura?: string
+  /** La misma foto a 2048 px, para los teléfonos que igual la iban a encoger. */
+  foto2048?: string
   initialYaw: number
   hotspots: unknown[]
+  rumbo?: number
+  nivel?: { tiltX: number; tiltZ: number }
+  coverageDeg?: number
+  /** Dónde está en el plano de la casa, en [0, 1], y hacia dónde mira su foto. */
+  plano?: { x: number; y: number; giro?: number }
+}
+
+type FichaPublica = {
+  precio?: string
+  superficie?: string
+  recamaras?: number
+  banos?: number
+  direccion?: string
+  descripcion?: string
+  agente?: { nombre?: string; telefono?: string; whatsapp?: string; correo?: string }
+}
+
+type MarcaPublica = {
+  nombre?: string
+  colores?: Record<string, string>
+  hudFondo?: string
+  hudTinta?: string
+  hudTintaSuave?: string
+  fondoApp?: string
+  tipografia?: string
+  logo?: string
+}
+
+export type ManifiestoPublico = {
+  version: 2
+  title: string
+  subtitle?: string
+  startSceneId: string
+  scenes: EscenaPublica[]
+  ficha?: FichaPublica
+  marca?: MarcaPublica
+  autogiro?: boolean
+  /** La planta de la casa: un archivo de la lista y su tamaño. */
+  plano?: { archivo: string; ancho: number; alto: number }
 }
 
 /**
  * Deja el manifiesto en algo que el visor pueda pintar sin reventar.
  *
  * Se hace aquí ADEMÁS de en el teléfono. No es desconfianza del código propio:
- * es que a este endpoint llega lo que mande quien tenga la clave, y una clave
- * compartida entre los teléfonos de un equipo termina, con el tiempo, en más
+ * es que a este endpoint llega lo que mande quien tenga un código, y un código
+ * compartido entre los teléfonos de un equipo termina, con el tiempo, en más
  * manos de las que uno cree. Lo que se guarda aquí se lo va a comer el visor de
  * un cliente.
+ *
+ * Lo que se acota aquí son FORMAS y TAMAÑOS. Lo que significa cada cosa —si un
+ * color deja legible el HUD, si un correo puede llevar un BCC escondido— lo
+ * decide el visor al bajar el manifiesto, con las mismas funciones con las que
+ * filtra un `.tour` ajeno. Dos filtros y no uno, porque los dos lados reciben
+ * datos de una red que no controlan.
  */
-function saneaManifiesto(crudo: unknown): { ok: true; valor: unknown } | { ok: false; por: string } {
+function saneaManifiesto(crudo: unknown): { ok: true; valor: ManifiestoPublico } | { ok: false; por: string } {
   if (!crudo || typeof crudo !== 'object') return { ok: false, por: 'El manifiesto no es un objeto.' }
   const m = crudo as Record<string, unknown>
 
@@ -216,15 +634,51 @@ function saneaManifiesto(crudo: unknown): { ok: true; valor: unknown } | { ok: f
 
     const miniatura =
       typeof e.miniatura === 'string' && FOTO_VALIDA.test(e.miniatura) ? e.miniatura : undefined
+    const foto2048 =
+      typeof e.foto2048 === 'string' && VARIANTE_2K.test(e.foto2048) ? e.foto2048 : undefined
 
-    scenes.push({
+    const escena: EscenaPublica = {
       id,
       name: texto(e.name, 60, 'Habitación'),
       foto: e.foto,
       miniatura,
+      foto2048,
       initialYaw: numero(e.initialYaw),
-      hotspots: saneaHotspots(e.hotspots, vistos),
-    })
+      hotspots: saneaHotspots(e.hotspots),
+    }
+
+    /* Los tres campos de la v2 por habitación. Se acotan igual que en el
+       visor: el rumbo al círculo, el nivel a ±15, la cobertura a (0, 360]. */
+    const rumbo = numeroOpcional(e.rumbo)
+    if (rumbo !== undefined) escena.rumbo = ((rumbo % 360) + 360) % 360
+    if (e.nivel && typeof e.nivel === 'object') {
+      const n = e.nivel as Record<string, unknown>
+      const tiltX = numeroOpcional(n.tiltX)
+      const tiltZ = numeroOpcional(n.tiltZ)
+      if (tiltX !== undefined && tiltZ !== undefined) {
+        escena.nivel = {
+          tiltX: Math.max(-15, Math.min(15, tiltX)),
+          tiltZ: Math.max(-15, Math.min(15, tiltZ)),
+        }
+      }
+    }
+    const cobertura = numeroOpcional(e.coverageDeg)
+    if (cobertura !== undefined && cobertura > 0 && cobertura <= 360) escena.coverageDeg = cobertura
+
+    /* La posición en el plano, a la imagen; el giro, al círculo. Sin las dos
+       coordenadas no hay posición. Mismas reglas que `limpiarPosicion`. */
+    if (e.plano && typeof e.plano === 'object') {
+      const p = e.plano as Record<string, unknown>
+      const x = numeroOpcional(p.x)
+      const y = numeroOpcional(p.y)
+      if (x !== undefined && y !== undefined) {
+        escena.plano = { x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y)) }
+        const giro = numeroOpcional(p.giro)
+        if (giro !== undefined) escena.plano.giro = ((giro % 360) + 360) % 360
+      }
+    }
+
+    scenes.push(escena)
   }
 
   if (scenes.length === 0) return { ok: false, por: 'Ninguna habitación traía una foto válida.' }
@@ -242,19 +696,35 @@ function saneaManifiesto(crudo: unknown): { ok: true; valor: unknown } | { ok: f
   const startSceneId =
     typeof m.startSceneId === 'string' && ids.has(m.startSceneId) ? m.startSceneId : scenes[0].id
 
-  return {
-    ok: true,
-    valor: {
-      version: 1,
-      title: texto(m.title, 80, 'Recorrido'),
-      subtitle: textoOpcional(m.subtitle, 120),
-      startSceneId,
-      scenes,
-    },
+  const valor: ManifiestoPublico = {
+    version: 2,
+    title: texto(m.title, 80, 'Recorrido'),
+    subtitle: textoOpcional(m.subtitle, 120),
+    startSceneId,
+    scenes,
   }
+
+  const ficha = saneaFicha(m.ficha)
+  if (ficha) valor.ficha = ficha
+  const marca = saneaMarca(m.marca)
+  if (marca) valor.marca = marca
+  if (m.autogiro === true) valor.autogiro = true
+
+  /* El plano: un nombre de la lista y un tamaño en enteros positivos. Al
+     publicar se comprueba además que el archivo esté arriba. */
+  if (m.plano && typeof m.plano === 'object') {
+    const p = m.plano as Record<string, unknown>
+    const ancho = enteroOpcional(p.ancho, 16384)
+    const alto = enteroOpcional(p.alto, 16384)
+    if (typeof p.archivo === 'string' && PLANO_VALIDO.test(p.archivo) && ancho && alto) {
+      valor.plano = { archivo: p.archivo, ancho, alto }
+    }
+  }
+
+  return { ok: true, valor }
 }
 
-function saneaHotspots(crudo: unknown, _ids: Set<string>): unknown[] {
+function saneaHotspots(crudo: unknown): unknown[] {
   if (!Array.isArray(crudo)) return []
   const salida: unknown[] = []
   for (const h of crudo.slice(0, 100)) {
@@ -282,6 +752,69 @@ function saneaHotspots(crudo: unknown, _ids: Set<string>): unknown[] {
   return salida
 }
 
+/** La ficha de la casa, acotada campo por campo. Mismos topes que `limpiarFicha` del visor. */
+function saneaFicha(crudo: unknown): FichaPublica | undefined {
+  if (!crudo || typeof crudo !== 'object') return undefined
+  const f = crudo as Record<string, unknown>
+  const ficha: FichaPublica = {}
+  const precio = textoOpcional(f.precio, 40)
+  if (precio) ficha.precio = precio
+  const superficie = textoOpcional(f.superficie, 40)
+  if (superficie) ficha.superficie = superficie
+  const recamaras = enteroOpcional(f.recamaras, 20)
+  if (recamaras !== undefined) ficha.recamaras = recamaras
+  const banos = enteroOpcional(f.banos, 20)
+  if (banos !== undefined) ficha.banos = banos
+  const direccion = textoOpcional(f.direccion, 160)
+  if (direccion) ficha.direccion = direccion
+  const descripcion = textoOpcional(f.descripcion, 600)
+  if (descripcion) ficha.descripcion = descripcion
+
+  if (f.agente && typeof f.agente === 'object') {
+    const a = f.agente as Record<string, unknown>
+    const agente: NonNullable<FichaPublica['agente']> = {}
+    const nombre = textoOpcional(a.nombre, 80)
+    if (nombre) agente.nombre = nombre
+    const telefono = textoOpcional(a.telefono, 30)
+    if (telefono) agente.telefono = telefono
+    const whatsapp = textoOpcional(a.whatsapp, 20)
+    if (whatsapp) agente.whatsapp = whatsapp
+    const correo = textoOpcional(a.correo, 120)
+    if (correo) agente.correo = correo
+    if (Object.keys(agente).length > 0) ficha.agente = agente
+  }
+  return Object.keys(ficha).length > 0 ? ficha : undefined
+}
+
+const TOKENS_DE_COLOR = ['brand300', 'brand400', 'brand500', 'brand600', 'ink50', 'ink200', 'ink700', 'ink900']
+const TIPOGRAFIAS = ['sistema', 'serif', 'geometrica']
+
+/** La marca, acotada. Los colores tienen que ser hex; el logo, un nombre de la lista. */
+function saneaMarca(crudo: unknown): MarcaPublica | undefined {
+  if (!crudo || typeof crudo !== 'object') return undefined
+  const m = crudo as Record<string, unknown>
+  const marca: MarcaPublica = {}
+  const nombre = textoOpcional(m.nombre, 60)
+  if (nombre) marca.nombre = nombre
+
+  if (m.colores && typeof m.colores === 'object') {
+    const colores: Record<string, string> = {}
+    for (const clave of TOKENS_DE_COLOR) {
+      const c = colorOpcional((m.colores as Record<string, unknown>)[clave])
+      if (c) colores[clave] = c
+    }
+    if (Object.keys(colores).length > 0) marca.colores = colores
+  }
+  for (const clave of ['hudFondo', 'hudTinta', 'hudTintaSuave', 'fondoApp'] as const) {
+    const c = colorOpcional(m[clave])
+    if (c) marca[clave] = c
+  }
+  if (typeof m.tipografia === 'string' && TIPOGRAFIAS.includes(m.tipografia)) marca.tipografia = m.tipografia
+  if (typeof m.logo === 'string' && LOGO_VALIDO.test(m.logo)) marca.logo = m.logo
+
+  return Object.keys(marca).length > 0 ? marca : undefined
+}
+
 /* ── La página que ve WhatsApp ───────────────────────────────────────────── */
 
 function escapar(s: string): string {
@@ -297,18 +830,27 @@ function escapar(s: string): string {
  * apunta aquí: esta página trae el título, la descripción y la miniatura ya
  * escritos en el HTML, y a una persona la rebota al visor.
  *
+ * La tarjeta es un ANUNCIO, no un nombre de archivo: con ficha, el título
+ * empieza por el precio y la descripción es la dirección, que es lo que un
+ * comprador quiere leer antes de tocar. Y `og:site_name` lleva la inmobiliaria,
+ * que es a quien le importa que se vea su nombre.
+ *
  * El rebote va en JavaScript y no en un 302 porque el 302 se lo llevaría también
  * el robot, que acabaría leyendo el index.html vacío de la app. Y hay un enlace
  * visible detrás, para quien tenga el JavaScript apagado.
  */
-function paginaDeEnlace(env: Env, llave: string, manifiesto: { title: string; subtitle?: string; scenes: { miniatura?: string; foto: string }[] }, origen: string): Response {
-  const titulo = escapar(manifiesto.title)
+function paginaDeEnlace(env: Env, llave: string, manifiesto: ManifiestoPublico, origen: string): Response {
+  const ficha = manifiesto.ficha
+  const titulo = escapar(ficha?.precio ? `${ficha.precio} · ${manifiesto.title}` : manifiesto.title)
   const descripcion = escapar(
-    manifiesto.subtitle ?? `Recorrido virtual de ${manifiesto.scenes.length} espacios.`,
+    ficha?.direccion ??
+      manifiesto.subtitle ??
+      `Recorrido virtual de ${manifiesto.scenes.length} ${manifiesto.scenes.length === 1 ? 'espacio' : 'espacios'}.`,
   )
   const portada = manifiesto.scenes[0]
   const imagen = `${origen}/t/${llave}/fotos/${portada.miniatura ?? portada.foto}`
   const destino = `${env.APP_BASE.replace(/\/+$/, '/')}#/p/${llave}`
+  const sitio = manifiesto.marca?.nombre ? `<meta property="og:site_name" content="${escapar(manifiesto.marca.nombre)}">\n` : ''
 
   const html = `<!doctype html>
 <html lang="es">
@@ -318,7 +860,7 @@ function paginaDeEnlace(env: Env, llave: string, manifiesto: { title: string; su
 <meta name="robots" content="noindex, nofollow">
 <title>${titulo}</title>
 <meta property="og:type" content="website">
-<meta property="og:title" content="${titulo}">
+${sitio}<meta property="og:title" content="${titulo}">
 <meta property="og:description" content="${descripcion}">
 <meta property="og:image" content="${escapar(imagen)}">
 <meta name="twitter:card" content="summary_large_image">
@@ -363,8 +905,8 @@ export default {
         status: 204,
         headers: {
           ...COMUNES,
-          'Access-Control-Allow-Methods': 'GET, PUT, POST, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+          'Access-Control-Allow-Methods': 'GET, HEAD, PUT, POST, DELETE, OPTIONS',
+          'Access-Control-Allow-Headers': 'Authorization, Content-Type, X-Edit-Token',
           'Access-Control-Max-Age': '86400',
         },
       })
@@ -377,16 +919,174 @@ export default {
       })
     }
 
+    /* ── Métricas ─────────────────────────────────────────────────────────── */
+
+    if (partes[0] === 'api' && partes[1] === 'm' && partes.length === 3) {
+      const llave = partes[2]
+      if (!LLAVE_VALIDA.test(llave)) return error(404, 'No existe.')
+
+      /* POST /api/m/<llave>: lo manda el navegador del COMPRADOR con sendBeacon,
+         así que es público a propósito: no hay credencial que un desconocido
+         pueda tener. Lo que lo acota: el tamaño, la forma, que la casa exista, y
+         que no se guarda nada del pedido salvo el paquete. */
+      if (pedido.method === 'POST') {
+        const largo = Number(pedido.headers.get('Content-Length') ?? '0')
+        if (largo > MAX_PAQUETE) return error(413, 'El paquete es demasiado grande.')
+        if (!(await env.TOURS.head(`t/${llave}/tour.json`))) return error(404, 'No existe.')
+        let crudo: unknown
+        try {
+          const cuerpo = await pedido.text()
+          if (cuerpo.length > MAX_PAQUETE) return error(413, 'El paquete es demasiado grande.')
+          crudo = JSON.parse(cuerpo)
+        } catch {
+          return error(400, 'El paquete no es JSON.')
+        }
+        const paquete = saneaPaquete(crudo)
+        if (!paquete) return error(400, 'El paquete no tiene forma de paquete.')
+        await env.TOURS.put(
+          `m/${llave}/${hoy()}/${paquete.s}-${nuevaLlave().slice(0, 8)}.json`,
+          JSON.stringify(paquete),
+          { httpMetadata: { contentType: 'application/json; charset=utf-8' } },
+        )
+        return new Response(null, { status: 204, headers: COMUNES })
+      }
+
+      /* GET /api/m/<llave>: el resumen, para quien pueda dar de baja la casa
+         —el teléfono que la publicó, el código de su inmobiliaria o la maestra—
+         que es la misma vara con la que se decide quién es su dueño. */
+      if (pedido.method === 'GET') {
+        const q = await quien(pedido, env)
+        if (!q) return error(401, 'El código de publicación no es válido.')
+        const auth = await autorizado(pedido, env, q, llave, 'bajar')
+        if (!auth.ok) return error(403, AJENA)
+        const { paquetes, completos } = await leerPaquetes(env, llave)
+        return json({ ...resumir(paquetes), paquetes: paquetes.length, completos })
+      }
+
+      return error(404, 'Esa dirección no existe.')
+    }
+
     /* ── Publicar ─────────────────────────────────────────────────────────── */
 
     if (partes[0] === 'api') {
-      if (!claveCorrecta(pedido, env)) {
-        return error(401, 'Clave de publicación incorrecta.')
+      const q = await quien(pedido, env)
+      if (!q) return error(401, 'El código de publicación no es válido.')
+
+      /* ── Códigos de invitación: solo la clave maestra ──────────────────── */
+      if (partes[1] === 'codigos') {
+        if (q.tipo !== 'admin') return error(403, 'Solo la clave maestra administra los códigos.')
+
+        // POST /api/codigos  { nombre, cuotas? }  →  { codigo, hash, nombre, cuotas }
+        if (pedido.method === 'POST' && partes.length === 2) {
+          let crudo: Record<string, unknown> = {}
+          try {
+            crudo = (await pedido.json()) as Record<string, unknown>
+          } catch {
+            /* sin cuerpo: nombre por omisión y cuotas por omisión */
+          }
+          const nombre = texto(crudo?.nombre, 60, 'Sin nombre')
+          const pedidas = (crudo?.cuotas ?? {}) as Record<string, unknown>
+          const cuotas: Cuotas = {
+            bytes: Math.max(1, Math.round(numero(pedidas.bytes, CUOTAS_POR_DEFECTO.bytes))),
+            recorridosPorDia: Math.max(
+              1,
+              Math.round(numero(pedidas.recorridosPorDia, CUOTAS_POR_DEFECTO.recorridosPorDia)),
+            ),
+          }
+          const codigo = nuevaLlave()
+          const hash = await sha256(codigo)
+          await guardarCodigo(env, hash, {
+            nombre,
+            creadoEn: Date.now(),
+            cuotas,
+            uso: { bytes: 0, dia: hoy(), recorridosHoy: 0 },
+          })
+          /* El código en claro sale UNA vez, aquí. No se guarda en ningún lado. */
+          return json({ codigo, hash, nombre, cuotas })
+        }
+
+        // GET /api/codigos  →  [{ hash, nombre, creadoEn, cuotas, uso }]
+        if (pedido.method === 'GET' && partes.length === 2) {
+          const listado = await env.TOURS.list({ prefix: 'c/' })
+          const codigos = []
+          for (const objeto of listado.objects) {
+            const registro = await env.TOURS.get(objeto.key)
+            if (!registro) continue
+            const hash = objeto.key.slice(2, -5)
+            const r = (await registro.json()) as RegistroDeCodigo
+            codigos.push({ hash, ...r, uso: usoDeHoy(r) })
+          }
+          return json(codigos)
+        }
+
+        // DELETE /api/codigos/<hash>  →  revocar. Sus casas siguen en línea.
+        if (pedido.method === 'DELETE' && partes.length === 3 && HASH_VALIDO.test(partes[2])) {
+          await env.TOURS.delete(`c/${partes[2]}.json`)
+          return json({ ok: true })
+        }
+
+        return error(404, 'Esa dirección no existe.')
       }
 
-      // POST /api/nuevo  →  { llave }
+      // GET /api/panel  →  { quien, casas }
+      if (pedido.method === 'GET' && partes[1] === 'panel' && partes.length === 2) {
+        let llaves: string[]
+        if (q.tipo === 'codigo') {
+          llaves = q.registro.casas ?? []
+        } else {
+          /* La maestra ve todo: las "carpetas" bajo t/, sin bajar sus archivos. */
+          llaves = []
+          let cursor: string | undefined
+          do {
+            const pagina = await env.TOURS.list({ prefix: 't/', delimiter: '/', cursor })
+            for (const p of pagina.delimitedPrefixes) llaves.push(p.slice(2, -1))
+            cursor = pagina.truncated ? pagina.cursor : undefined
+          } while (cursor && llaves.length < 1000)
+        }
+        const casas: CasaDelPanel[] = []
+        for (let i = 0; i < llaves.length; i += 10) {
+          const lote = await Promise.all(llaves.slice(i, i + 10).map((l) => casaDelPanel(env, l, origen)))
+          for (const c of lote) if (c) casas.push(c)
+        }
+        casas.sort((a, b) => (b.publicadoEn ?? b.creadoEn) - (a.publicadoEn ?? a.creadoEn))
+        return json({
+          quien:
+            q.tipo === 'admin'
+              ? 'admin'
+              : { nombre: q.registro.nombre, cuotas: q.registro.cuotas, uso: usoDeHoy(q.registro) },
+          casas,
+        })
+      }
+
+      // POST /api/nuevo  →  { llave, editToken }
       if (pedido.method === 'POST' && partes[1] === 'nuevo' && partes.length === 2) {
-        return json({ llave: nuevaLlave() })
+        if (q.tipo === 'codigo') {
+          const { cuotas } = q.registro
+          const uso = usoDeHoy(q.registro)
+          if (uso.recorridosHoy >= cuotas.recorridosPorDia) {
+            return error(
+              429,
+              `Este código ya publicó ${uso.recorridosHoy} ${uso.recorridosHoy === 1 ? 'casa' : 'casas'} hoy; su límite es ${cuotas.recorridosPorDia} al día.`,
+            )
+          }
+          if (uso.bytes >= cuotas.bytes) {
+            return error(413, `Este código llegó a su tope de almacenamiento (${enMB(cuotas.bytes)}). Da de baja alguna casa o pide más espacio.`)
+          }
+          await guardarCodigo(env, q.hash, { ...q.registro, uso: { ...uso, recorridosHoy: uso.recorridosHoy + 1 } })
+        }
+        const llave = nuevaLlave()
+        const editToken = nuevaLlave()
+        const meta: Meta = {
+          tenant: q.tipo === 'admin' ? 'admin' : q.hash,
+          tokenHash: await sha256(editToken),
+          creadoEn: Date.now(),
+          bytes: 0,
+        }
+        await env.TOURS.put(`t/${llave}/meta.json`, JSON.stringify(meta), {
+          httpMetadata: { contentType: 'application/json; charset=utf-8' },
+        })
+        /* El código de rescate sale UNA vez, aquí. Se guarda hasheado. */
+        return json({ llave, editToken })
       }
 
       const llave = partes[2]
@@ -396,32 +1096,50 @@ export default {
 
       // PUT /api/subir/<llave>/<archivo>
       if (pedido.method === 'PUT' && partes[1] === 'subir' && partes.length === 4) {
+        const auth = await autorizado(pedido, env, q, llave, 'escribir')
+        if (!auth.ok) return error(403, AJENA)
+
         const archivo = partes[3]
-        if (!FOTO_VALIDA.test(archivo)) return error(400, 'Nombre de foto no admitido.')
+        if (!archivoValido(archivo)) return error(400, 'Nombre de archivo no admitido.')
+        const esLogo = LOGO_VALIDO.test(archivo)
+        const esPlano = PLANO_VALIDO.test(archivo)
+        const tope = esLogo ? MAX_LOGO : esPlano ? MAX_PLANO : MAX_FOTO
 
         const largo = Number(pedido.headers.get('Content-Length') ?? '0')
-        if (largo > MAX_FOTO) return error(413, 'Esa foto pesa demasiado.')
+        if (largo > tope) return error(413, 'Ese archivo pesa demasiado.')
 
         const cuerpo = await pedido.arrayBuffer()
-        if (cuerpo.byteLength > MAX_FOTO) return error(413, 'Esa foto pesa demasiado.')
-        if (cuerpo.byteLength === 0) return error(400, 'La foto venía vacía.')
+        if (cuerpo.byteLength > tope) return error(413, 'Ese archivo pesa demasiado.')
+        if (cuerpo.byteLength === 0) return error(400, 'El archivo venía vacío.')
 
-        /* Que empiece con SOI. No es una validación fuerte —nadie con la clave
-           necesita engañarnos— pero atrapa el error de verdad frecuente, que es
-           subir un blob equivocado y descubrirlo cuando el cliente abre el
-           link y ve una esfera negra. */
-        const cabecera = new Uint8Array(cuerpo.slice(0, 2))
-        if (cabecera[0] !== 0xff || cabecera[1] !== 0xd8) {
-          return error(400, 'Eso no es un JPEG.')
+        /* La cuota de bytes se mira antes de guardar. Lo que un código sube y
+           nunca publica no se cuenta —solo lo publicado— pero está acotado por
+           su cuota de casas al día y por MAX_TOTAL por casa. */
+        if (q.tipo === 'codigo') {
+          const uso = usoDeHoy(q.registro)
+          if (uso.bytes + cuerpo.byteLength > q.registro.cuotas.bytes) {
+            return error(
+              413,
+              `Este código llegó a su tope de almacenamiento (${enMB(q.registro.cuotas.bytes)}). Da de baja alguna casa o pide más espacio.`,
+            )
+          }
+        }
+
+        const tipo = tipoDeImagen(cuerpo)
+        if (!tipo) return error(400, 'Eso no es una imagen.')
+        if (!esLogo && !esPlano && tipo !== 'image/jpeg') return error(400, 'Las fotos tienen que ser JPEG.')
+        if ((esLogo || esPlano) && !archivo.endsWith(`.${EXTENSION[tipo]}`)) {
+          return error(400, `${esLogo ? 'El logo' : 'El plano'} no es del tipo que dice su nombre.`)
         }
 
         await env.TOURS.put(`t/${llave}/fotos/${archivo}`, cuerpo, {
           httpMetadata: {
-            contentType: 'image/jpeg',
-            /* La llave es única e irrepetible, así que el contenido de esta
-               dirección no va a cambiar nunca: se puede guardar para siempre.
-               Es lo que hace que volver a abrir la casa sea instantáneo. */
-            cacheControl: 'public, max-age=31536000, immutable',
+            contentType: tipo,
+            /* Las fotos de una llave solo cambian al volver a publicar, y el
+               visor las pide con la ruta exacta, así que una copia vieja se
+               retira sola en un día. Un año, como antes, dejaba al que republica
+               con las fotos viejas en el teléfono del comprador. */
+            cacheControl: 'public, max-age=86400',
           },
         })
         return json({ ok: true })
@@ -429,6 +1147,9 @@ export default {
 
       // PUT /api/publicar/<llave>   ← el manifiesto, al final: es el interruptor
       if (pedido.method === 'PUT' && partes[1] === 'publicar' && partes.length === 3) {
+        const auth = await autorizado(pedido, env, q, llave, 'escribir')
+        if (!auth.ok) return error(403, AJENA)
+
         const largo = Number(pedido.headers.get('Content-Length') ?? '0')
         if (largo > MAX_MANIFIESTO) return error(413, 'El manifiesto es demasiado grande.')
 
@@ -441,35 +1162,84 @@ export default {
 
         const saneado = saneaManifiesto(crudo)
         if (!saneado.ok) return error(400, saneado.por)
+        const manifiesto = saneado.valor
 
         /* Se comprueba que las fotos estén ARRIBA antes de encender el
            interruptor. Si una subida falló y nadie se dio cuenta, el cliente
            abriría la casa con un cuarto en negro; es mejor que falle aquí,
-           mientras quien publica sigue mirando la pantalla. */
-        const manifiesto = saneado.valor as { scenes: { foto: string; miniatura?: string }[] }
+           mientras quien publica sigue mirando la pantalla. La variante de 2048
+           y el logo se comprueban igual: si faltan, se quitan del manifiesto en
+           vez de dejar una referencia rota, porque son opcionales. */
         let total = 0
         for (const escena of manifiesto.scenes) {
           const objeto = await env.TOURS.head(`t/${llave}/fotos/${escena.foto}`)
           if (!objeto) return error(409, `Falta subir la foto ${escena.foto}.`)
           total += objeto.size
+          if (escena.miniatura) {
+            const mini = await env.TOURS.head(`t/${llave}/fotos/${escena.miniatura}`)
+            if (mini) total += mini.size
+            else delete escena.miniatura
+          }
+          if (escena.foto2048) {
+            const chica = await env.TOURS.head(`t/${llave}/fotos/${escena.foto2048}`)
+            if (chica) total += chica.size
+            else delete escena.foto2048
+          }
+        }
+        if (manifiesto.marca?.logo) {
+          const logo = await env.TOURS.head(`t/${llave}/fotos/${manifiesto.marca.logo}`)
+          if (logo) total += logo.size
+          else delete manifiesto.marca.logo
+        }
+        if (manifiesto.plano) {
+          const plano = await env.TOURS.head(`t/${llave}/fotos/${manifiesto.plano.archivo}`)
+          if (plano) total += plano.size
+          else delete manifiesto.plano
         }
         if (total > MAX_TOTAL) return error(413, 'El recorrido completo pesa demasiado.')
 
-        await env.TOURS.put(`t/${llave}/tour.json`, JSON.stringify(saneado.valor), {
+        await env.TOURS.put(`t/${llave}/tour.json`, JSON.stringify(manifiesto), {
           httpMetadata: { contentType: 'application/json; charset=utf-8', cacheControl: 'public, max-age=60' },
         })
+
+        /* La meta: cuánto ocupa la casa y cuándo se publicó. Una llave de la
+           versión anterior del Worker (sin meta) la recibe aquí, a nombre de la
+           clave maestra y sin código de rescate: solo la maestra la sigue
+           tocando, que es lo que ya pasaba. */
+        const meta: Meta = auth.meta ?? { tenant: 'admin', tokenHash: '', creadoEn: Date.now(), bytes: 0 }
+        await ajustarBytes(env, meta.tenant, total - meta.bytes)
+        await env.TOURS.put(
+          `t/${llave}/meta.json`,
+          JSON.stringify({ ...meta, bytes: total, publicadoEn: Date.now() } satisfies Meta),
+          { httpMetadata: { contentType: 'application/json; charset=utf-8' } },
+        )
+        // La primera publicación de la llave la anota en el panel de su código.
+        if (!meta.publicadoEn) await anotarCasa(env, meta.tenant, llave, true)
         return json({ ok: true, llave, url: `${origen}/t/${llave}` })
       }
 
       // DELETE /api/publicar/<llave>  →  bajar la casa
       if (pedido.method === 'DELETE' && partes[1] === 'publicar' && partes.length === 3) {
+        const auth = await autorizado(pedido, env, q, llave, 'bajar')
+        if (!auth.ok) return error(403, AJENA)
+
         /* Primero el manifiesto: en cuanto no está, el link deja de abrir. Si
            el borrado de las fotos fallara a medias, lo que queda son objetos
            huérfanos que nadie puede alcanzar, no una casa a medio enseñar. */
         await env.TOURS.delete(`t/${llave}/tour.json`)
-        const listado = await env.TOURS.list({ prefix: `t/${llave}/` })
-        if (listado.objects.length > 0) {
-          await env.TOURS.delete(listado.objects.map((o) => o.key))
+        /* Las fotos, la meta… y las visitas: una casa que se da de baja se lleva
+           sus métricas. Nadie las va a leer y no son de nadie más. */
+        for (const prefijo of [`t/${llave}/`, `m/${llave}/`]) {
+          let cursor: string | undefined
+          do {
+            const pagina = await env.TOURS.list({ prefix: prefijo, cursor })
+            if (pagina.objects.length > 0) await env.TOURS.delete(pagina.objects.map((o) => o.key))
+            cursor = pagina.truncated ? pagina.cursor : undefined
+          } while (cursor)
+        }
+        if (auth.meta) {
+          await ajustarBytes(env, auth.meta.tenant, -auth.meta.bytes)
+          await anotarCasa(env, auth.meta.tenant, llave, false)
         }
         return json({ ok: true })
       }
@@ -479,7 +1249,10 @@ export default {
 
     /* ── Ver ──────────────────────────────────────────────────────────────── */
 
-    if (partes[0] === 't' && pedido.method === 'GET') {
+    /* GET y también HEAD: el robot de una vista previa, un verificador de links
+       o el propio visor pueden preguntar por el tamaño antes de bajar. Sin esto
+       un HEAD daba 404 y parecía que la foto no existía. */
+    if (partes[0] === 't' && (pedido.method === 'GET' || pedido.method === 'HEAD')) {
       const llave = partes[1]
       if (!llave || !LLAVE_VALIDA.test(llave)) return error(404, 'No existe.')
 
@@ -488,7 +1261,7 @@ export default {
 
       // GET /t/<llave>            →  la página con la vista previa
       if (partes.length === 2) {
-        const datos = (await manifiesto.json()) as Parameters<typeof paginaDeEnlace>[2]
+        const datos = (await manifiesto.json()) as ManifiestoPublico
         return paginaDeEnlace(env, llave, datos, origen)
       }
 
@@ -504,13 +1277,15 @@ export default {
       }
 
       // GET /t/<llave>/fotos/<archivo>
-      if (partes.length === 4 && partes[2] === 'fotos' && FOTO_VALIDA.test(partes[3])) {
+      if (partes.length === 4 && partes[2] === 'fotos' && archivoValido(partes[3])) {
         const foto = await env.TOURS.get(`t/${llave}/fotos/${partes[3]}`)
         if (!foto) return error(404, 'Esa foto no está.')
-        return new Response(foto.body, {
+        return new Response(pedido.method === 'HEAD' ? null : foto.body, {
           headers: {
-            'Content-Type': 'image/jpeg',
-            'Cache-Control': 'public, max-age=31536000, immutable',
+            'Content-Type': foto.httpMetadata?.contentType ?? 'image/jpeg',
+            // El tamaño se sabe: con él el navegador puede enseñar avance.
+            'Content-Length': String(foto.size),
+            'Cache-Control': 'public, max-age=86400',
             ...COMUNES,
           },
         })

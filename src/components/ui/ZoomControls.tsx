@@ -17,7 +17,7 @@ export function ZoomControls({ step = 10, className = '' }: { step?: number; cla
         type="button"
         onClick={() => zoom(1)}
         aria-label="Acercar"
-        className="grid h-11 w-11 place-items-center text-xl leading-none text-ink-50 transition-colors active:bg-white/15"
+        className="grid h-11 w-11 place-items-center text-xl leading-none text-hud transition-colors active:bg-white/15"
       >
         +
       </button>
@@ -26,7 +26,7 @@ export function ZoomControls({ step = 10, className = '' }: { step?: number; cla
         type="button"
         onClick={() => zoom(-1)}
         aria-label="Alejar"
-        className="grid h-11 w-11 place-items-center text-xl leading-none text-ink-50 transition-colors active:bg-white/15"
+        className="grid h-11 w-11 place-items-center text-xl leading-none text-hud transition-colors active:bg-white/15"
       >
         −
       </button>

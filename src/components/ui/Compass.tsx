@@ -72,11 +72,11 @@ export function Compass({
         >
           {norte}
         </span>
-        <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[9px] text-ink-200">E</span>
-        <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 text-[9px] text-ink-200">S</span>
-        <span className="absolute left-0.5 top-1/2 -translate-y-1/2 text-[9px] text-ink-200">O</span>
+        <span className="absolute right-0.5 top-1/2 -translate-y-1/2 text-[9px] text-hud-2">E</span>
+        <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 text-[9px] text-hud-2">S</span>
+        <span className="absolute left-0.5 top-1/2 -translate-y-1/2 text-[9px] text-hud-2">O</span>
       </div>
-      <span ref={labelRef} className="text-[12px] font-semibold tabular-nums text-ink-50">
+      <span ref={labelRef} className="text-[12px] font-semibold tabular-nums text-hud">
         0°
       </span>
     </div>

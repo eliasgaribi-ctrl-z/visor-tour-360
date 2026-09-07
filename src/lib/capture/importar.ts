@@ -35,6 +35,13 @@ export type GPano = {
   alto: number
   izquierda: number
   arriba: number
+  /**
+   * Hacia dónde mira el centro de la foto, 0 = norte, en [0, 360). Lo escribe
+   * esta misma app al exportar (`GPano:PoseHeadingDegrees`, ver xmp.ts) y las
+   * cámaras 360 con brújula. `null` si el archivo no lo trae: la foto no sabe
+   * su norte y la brújula dirá "frente".
+   */
+  rumbo?: number | null
 }
 
 /**
@@ -85,7 +92,15 @@ export async function leerGPano(file: Blob): Promise<GPano | null> {
     if (ancho > anchoTotal || alto > altoTotal) return null
     if (izquierda + ancho > anchoTotal || arriba + alto > altoTotal) return null
 
-    return { anchoTotal, altoTotal, ancho, alto, izquierda, arriba }
+    /* El único campo con decimales. Antes se leía el resto del GPano y este se
+       tiraba: una foto exportada por esta app volvía sin brújula. */
+    const rumboCrudo =
+      /GPano:PoseHeadingDegrees\s*=\s*"(-?[\d.]+)"/.exec(texto) ??
+      /<GPano:PoseHeadingDegrees>\s*(-?[\d.]+)\s*<\/GPano:PoseHeadingDegrees>/.exec(texto)
+    const rumboNumero = rumboCrudo ? Number(rumboCrudo[1]) : NaN
+    const rumbo = Number.isFinite(rumboNumero) ? ((rumboNumero % 360) + 360) % 360 : null
+
+    return { anchoTotal, altoTotal, ancho, alto, izquierda, arriba, rumbo }
   } catch {
     return null
   }

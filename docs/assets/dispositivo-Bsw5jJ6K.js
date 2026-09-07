@@ -1,0 +1,1 @@
+var e=null;function t(){var t;if(e)return e;let n=navigator.deviceMemory,r=(t=navigator.hardwareConcurrency)==null?8:t;return e=(typeof n==`number`?n<=3:r<=4)?{modesto:!0,anchoTextura:2048,precargas:1,maximoEnCache:5,dpr:1}:{modesto:!1,anchoTextura:4096,precargas:2,maximoEnCache:5,dpr:[1,2]},e}export{t};

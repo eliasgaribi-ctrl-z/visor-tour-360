@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { memo, useCallback, useEffect, useRef, type ReactNode } from 'react'
 import { Canvas } from '@react-three/fiber'
 import type { WebGLRenderer } from 'three'
 
@@ -14,6 +14,17 @@ import { aparato } from '../../lib/dispositivo'
 import type { Deteccion } from '../../lib/webgl'
 
 export const BASE_FOV = 75
+
+/* Los dos objetos van FUERA del componente a propósito. Escritos en línea, cada
+   render de Escena360 —o sea cada re-render del HUD que lo contiene: abrir una
+   nota, retirar la pista— le pasaba a <Canvas> un objeto NUEVO, R3F lo tomaba
+   por un cambio, reaplicaba la posición de la cámara y pedía un cuadro. Medido
+   en giroscopio.mjs: 1 dibujo/s en la ventana de "quieto" justo cuando la pista
+   se retiraba a los 7 s. Con la identidad estable no hay nada que aplicar y un
+   re-render del HUD vuelve a costar cero dibujos. `rendimiento.mjs` lo mide
+   abriendo y cerrando una nota. */
+const GL = { antialias: false, powerPreference: 'high-performance' as const }
+const CAMARA = { fov: BASE_FOV, near: 0.1, far: 1100, position: [0, 0, 0.001] as [number, number, number] }
 
 export type Escena360Props = {
   engine: TourEngine
@@ -62,7 +73,16 @@ export type Escena360Props = {
  * estados de binding, los grupos de uniforms— se queda colgando. Por eso el
  * `gl.dispose()` de abajo no sobra: es lo único que lo libera.
  */
-export function Escena360({
+/**
+ * `memo`, y no por costumbre: cualquier estado del visor de arriba —abrir una
+ * nota, retirar la pista, cambiar el aviso del giroscopio— re-renderiza a
+ * `TourViewer`, y sin esto también a `<Canvas>`, que al reconfigurarse pide un
+ * cuadro aunque la cámara no se haya movido. Medido en rendimiento.mjs: abrir y
+ * cerrar una nota costaba 2 dibujos; con la capa 3D aislada, cero. Para que el
+ * memo sirva, TODAS las props tienen que ser estables: los callbacks vienen en
+ * `useCallback` desde arriba, no como flechas en línea.
+ */
+export const Escena360 = memo(function Escena360({
   engine,
   url,
   initialYaw = 0,
@@ -150,8 +170,8 @@ export function Escena360({
              pantalla es una sola esfera con una foto encima. Lo único que
              hacía era reservar un búfer multimuestreado —de dos a cuatro
              veces el tamaño del normal— para no mejorar ni un píxel. */
-          gl={{ antialias: false, powerPreference: 'high-performance' }}
-          camera={{ fov: BASE_FOV, near: 0.1, far: 1100, position: [0, 0, 0.001] }}
+          gl={GL}
+          camera={CAMARA}
           onCreated={alCrear}
         >
             {/* El puente de contexto: <Canvas> monta su propio reconciliador de
@@ -168,4 +188,4 @@ export function Escena360({
       )}
     </div>
   )
-}
+})

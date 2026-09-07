@@ -270,6 +270,16 @@ revisar('y con los colores que sí eran hex', m?.colores?.brand500 === '#7c3aed'
 revisar('la inyección de CSS se descarta', m?.colores?.ink50 === undefined, String(m?.colores?.ink50))
 revisar('un color que no es hex se descarta', m?.colores?.ink900 === undefined, String(m?.colores?.ink900))
 revisar('una tipografía fuera de la lista se descarta', m?.tipografia === undefined, String(m?.tipografia))
+/* La tinta del HUD viaja aparte de la de la app: es lo que permite un vidrio
+   claro sobre una página oscura. Y entra al recorrido guardado, que es de donde
+   la lee `resolveTour` y de donde la exporta `marcaParaArchivo`: la ida y vuelta
+   de más abajo compara `marca` completa, así que si el exportador la olvida, ahí
+   se pone rojo. */
+revisar(
+  'la tinta del HUD llega con la marca',
+  m?.hudTinta === '#f8fafc' && m?.hudTintaSuave === '#cbd5e1',
+  JSON.stringify([m?.hudTinta, m?.hudTintaSuave]),
+)
 revisar('el campo desconocido no se copia', m !== undefined && !('campoQueNoExiste' in m))
 
 /* ── El logo de OTRO teléfono ────────────────────────────────────────────
@@ -666,7 +676,7 @@ const vuelta = await page.evaluate(async (id) => {
 }, v2Guardado.id)
 
 revisar('el nombre del archivo sale de su título', vuelta.nombre === 'casa-de-prueba-v2.tour', vuelta.nombre)
-revisar('el manifiesto sale con version 2', vuelta.manifiesto.version === 2)
+revisar('el manifiesto sale con version 3', vuelta.manifiesto.version === 3, String(vuelta.manifiesto.version))
 revisar('y el ZIP lo lee su propio lector', vuelta.entradas.includes('recorrido.json'))
 
 const CAMPOS_TOUR = ['title', 'subtitle', 'startSceneId', 'createdAt', 'marca', 'ficha', 'autogiro']
@@ -740,6 +750,58 @@ revisar(
   logo.entradas.filter((n) => !n.startsWith('fotos/')).join(', '),
 )
 revisar('y del otro lado se guarda de nuevo', logo.pesa > 0 && logo.logoIdNuevo !== logo.logoIdViejo, `${logo.pesa} B`)
+
+/* ── El plano de la casa, viajando (la v3) ──────────────────────────────────
+   El plano es un blob más, como el logo, y las posiciones son datos de cada
+   habitación. Las dos cosas tienen que cruzar el .tour enteras. */
+console.log('\n=== El plano de la casa viaja en el .tour (v3) ===')
+const planoIda = await page.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const paquete = await import('/src/lib/store/paquete.ts')
+  const zip = await import('/src/lib/store/zip.ts')
+  const jpg = await (await fetch('/panoramas/recamara.jpg')).blob()
+  const imageId = await tours.putImage(jpg)
+  const tour = await tours.getTour(id)
+  await tours.saveTour({
+    ...tour,
+    plano: { imageId, ancho: 1600, alto: 800 },
+    scenes: tour.scenes.map((s, i) => ({ ...s, plano: i === 0 ? { x: 0.25, y: 0.5, giro: 90 } : { x: 0.75, y: 0.5 } })),
+  })
+  const { blob } = await paquete.exportarTour(id)
+  const dentro = await zip.readZip(blob)
+  const manifiesto = JSON.parse(new TextDecoder().decode(dentro.find((x) => x.name === 'recorrido.json').data))
+  const reimportado = await paquete.importarTour(blob)
+  const suPlano = reimportado.plano ? await tours.getImage(reimportado.plano.imageId) : null
+  return {
+    entradas: dentro.map((x) => x.name),
+    version: manifiesto.version,
+    plano: manifiesto.recorrido.plano,
+    posiciones: manifiesto.recorrido.scenes.map((s) => s.plano),
+    vuelta: {
+      plano: reimportado.plano,
+      posiciones: reimportado.scenes.map((s) => s.plano),
+      pesa: suPlano ? suPlano.size : 0,
+      idViejo: imageId,
+    },
+  }
+}, v2Guardado.id)
+revisar('el archivo ya es la versión 3', planoIda.version === 3, String(planoIda.version))
+revisar(
+  'el plano viaja dentro del .tour, con su tamaño',
+  planoIda.entradas.includes('plano/plano.jpg') && planoIda.plano?.archivo === 'plano/plano.jpg' && planoIda.plano?.ancho === 1600,
+  JSON.stringify(planoIda.plano),
+)
+revisar(
+  'con la posición y el giro de cada habitación',
+  JSON.stringify(planoIda.posiciones) === JSON.stringify([{ x: 0.25, y: 0.5, giro: 90 }, { x: 0.75, y: 0.5 }]),
+  JSON.stringify(planoIda.posiciones),
+)
+revisar(
+  'y del otro lado se guarda de nuevo, con llave nueva',
+  planoIda.vuelta.pesa > 0 && planoIda.vuelta.plano?.imageId !== planoIda.vuelta.idViejo && planoIda.vuelta.plano?.alto === 800,
+  `${planoIda.vuelta.pesa} B`,
+)
+revisar('las posiciones llegan enteras', JSON.stringify(planoIda.vuelta.posiciones) === JSON.stringify(planoIda.posiciones))
 
 /* ==========================================================================
  * DOS HABITACIONES CON EL MISMO id
@@ -874,21 +936,31 @@ const estampas = await page.evaluate(async () => {
   // Y que al volver a guardarlo sí quede estampado.
   const reguardado = await tours.saveTour(leido)
 
+  /* La estampa se compara con la constante REAL y no con un número escrito
+     aquí: cuando el formato subió a 3, dos aserciones con el 2 a mano se
+     pusieron rojas por la razón equivocada. Lo que se afirma es que TODO
+     registro lleva la versión actual, sea cual sea. */
+  const { FORMAT_VERSION } = await import('/src/lib/store/types.ts')
   return {
+    version: FORMAT_VERSION,
     total: todos.length,
-    conEstampa: todos.filter((t) => t.formato === 2).length,
+    conEstampa: todos.filter((t) => t.formato === FORMAT_VERSION).length,
     sinEstampaSeLee: leido !== null && leido.scenes.length > 0,
     trasReguardar: reguardado.formato,
   }
 })
 
 revisar(
-  'cada recorrido guardado trae formato: 2',
+  `cada recorrido guardado trae formato: ${estampas.version}`,
   estampas.total > 0 && estampas.conEstampa === estampas.total,
   `${estampas.conEstampa} de ${estampas.total}`,
 )
 revisar('uno viejo sin estampa se sigue leyendo', estampas.sinEstampaSeLee)
-revisar('y al reguardarlo queda estampado', estampas.trasReguardar === 2, String(estampas.trasReguardar))
+revisar(
+  'y al reguardarlo queda estampado',
+  estampas.trasReguardar === estampas.version,
+  String(estampas.trasReguardar),
+)
 
 /* Esta sección va AQUÍ a propósito, y las dos vecinas fijan el sitio: edita el
    recorrido v2 en IndexedDB, así que va DESPUÉS de la ida y vuelta —que compara
@@ -1085,6 +1157,15 @@ revisar(
   String(avisoFaltante),
 )
 
+/* Y el editor de puntos de esa habitación sin foto tiene que DECIRLO, no
+   quedarse en "Abriendo la habitación…" para siempre: así estaba, porque el
+   canvas solo se monta con URL y sin blob no había URL ni mensaje. */
+await page.goto(`${BASE}#/puntos/${v2Guardado.id}/sala`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1500)
+const sinFoto = await page.getByText(/ya no tiene foto/).isVisible().catch(() => false)
+const cambiarFoto = await page.getByRole('button', { name: 'Cambiar la foto' }).isVisible().catch(() => false)
+revisar('sin foto, el editor lo dice y ofrece cambiarla', sinFoto && cambiarFoto, `aviso ${sinFoto} · botón ${cambiarFoto}`)
+
 /* ==========================================================================
  * ARCHIVOS HOSTILES: cada uno tiene que dar un MENSAJE, no una pantalla negra
  * ========================================================================== */
@@ -1142,6 +1223,55 @@ await page.waitForTimeout(1200)
 await meterArchivo('roto.tour', Buffer.from('esto no es un zip'), 2500)
 const aviso = await page.getByText(/Algo salió mal/).isVisible().catch(() => false)
 revisar('el aviso aparece en la pantalla', aviso)
+
+/* ==========================================================================
+ * UNA FOTO CON NORTE EN SUS METADATOS ENTRA CON BRÚJULA
+ *
+ * La app escribe GPano:PoseHeadingDegrees al exportar (xmp.ts), igual que las
+ * cámaras 360 con brújula. Al subir esa foto, el rumbo tiene que llegar a la
+ * escena: antes se leía el resto del GPano y el norte se tiraba, así que una
+ * foto exportada por esta app volvía sin brújula. El escritor ya está probado
+ * contra un modelo físico aparte (xmp.test.ts); aquí se prueba el cableado.
+ * ========================================================================== */
+console.log('\n=== Una foto con norte en sus metadatos entra con brújula ===')
+const conNorte = await page.evaluate(async () => {
+  const { conGPano } = await import('/src/lib/capture/xmp.ts')
+  const blob = await (await fetch('/panoramas/cocina.jpg')).blob()
+  const bitmap = await createImageBitmap(blob)
+  const out = await conGPano(blob, { ancho: bitmap.width, alto: bitmap.height, norte: 123.5 })
+  bitmap.close()
+  const bytes = new Uint8Array(await out.arrayBuffer())
+  let s = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
+  return { b64: btoa(s), crecio: out.size > blob.size }
+})
+revisar('el escritor metió el paquete GPano', conNorte.crecio)
+await page.goto(`${BASE}#/editar/${v2Guardado.id}`, { waitUntil: 'networkidle' })
+await page.waitForTimeout(1200)
+await page.getByRole('button', { name: 'Agregar habitación' }).click()
+await page.waitForTimeout(400)
+await page.getByRole('button', { name: 'Usar una foto que ya tengo' }).click()
+await page.waitForTimeout(400)
+await page
+  .locator('input[type=file]')
+  .first()
+  .setInputFiles({ name: 'con-norte.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(conNorte.b64, 'base64') })
+await page.waitForTimeout(3000)
+await page.getByRole('textbox', { name: 'Nombre de la habitación' }).fill('Con norte')
+await page.getByRole('button', { name: 'Guardar habitación' }).click()
+await page.waitForTimeout(3500)
+const escenaConNorte = await page.evaluate(async (id) => {
+  const tours = await import('/src/lib/store/tours.ts')
+  const t = await tours.getTour(id)
+  return t?.scenes.find((e) => e.name === 'Con norte') ?? null
+}, v2Guardado.id)
+revisar(
+  'la habitación entra con su rumbo',
+  escenaConNorte !== null &&
+    typeof escenaConNorte.rumbo === 'number' &&
+    Math.abs(escenaConNorte.rumbo - 123.5) < 0.01,
+  `rumbo ${escenaConNorte?.rumbo}`,
+)
 
 /* ==========================================================================
  * SEGURIDAD: un .tour ajeno se abre en el telefono de un COMPRADOR.

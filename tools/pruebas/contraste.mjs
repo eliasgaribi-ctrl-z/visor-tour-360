@@ -140,9 +140,15 @@ for (const malo of ['navy', 'rgb(11,29,81)', '#0b1d51ff', '#12345', '', 'var(--x
  * sigue midiendo contra el ámbar, y aprueba paletas que en pantalla no se leen.
  * Así que se compara con el archivo, no con la memoria.
  *
- * `hudFondo` es la única excepción y está declarada: en el CSS es
- * `rgba(12,16,22,.55)` —el vidrio, que no es un hex— y en `TEMA_BASE` va su
- * versión opaca. Se comprueba que sean el MISMO color, no el mismo texto.
+ * `hudFondo` es una excepción declarada: en el CSS es `rgba(12,16,22,.72)` —el
+ * vidrio, que no es un hex— y en `TEMA_BASE` va su versión opaca. Se comprueba
+ * que sean el MISMO color, no el mismo texto.
+ *
+ * `hudTinta`/`hudTintaSuave` son la otra: en el CSS no son un hex sino
+ * `var(--color-ink-50)` / `var(--color-ink-200)`. Lo que se exige es que el CSS
+ * diga ESO —si alguien lo cambia por un hex, la tinta del HUD deja de seguir a la
+ * de la app y `revisarPaleta` mediría una cosa mientras se pinta otra— y que
+ * `TEMA_BASE` lleve el mismo valor que el token al que sigue.
  * ========================================================================== */
 console.log('\n=== El tema base no se desincronizó del CSS ===')
 const css = readFileSync('src/index.css', 'utf8')
@@ -161,6 +167,13 @@ for (const [clave, valor] of Object.entries(TEMA_BASE)) {
     const m = /--fondo-app,\s*(#[0-9a-f]{3,8})/i.exec(css)
     enCss = m ? m[1] : null
     como = 'el respaldo del body'
+  } else if (clave === 'hudTinta' || clave === 'hudTintaSuave') {
+    // `--color-hud: var(--color-ink-50);` — sigue a ink, no es un hex.
+    const sigueA = clave === 'hudTinta' ? 'ink-50' : 'ink-200'
+    const propiedad = clave === 'hudTinta' ? '--color-hud' : '--color-hud-2'
+    const m = new RegExp(`${propiedad}:\\s*var\\(--color-${sigueA}\\)`).exec(tema)
+    enCss = m ? TEMA_BASE[sigueA.replace('-', '')] : null
+    como = `sigue a ${sigueA} en el @theme`
   } else {
     const propiedad = clave.replace(/^(brand|ink)/, '$1-').replace(/(\d)/, '$1')
     const m = new RegExp(`--color-${propiedad}:\\s*(#[0-9a-f]{3,6})`, 'i').exec(tema)
@@ -199,7 +212,34 @@ const PALETAS = [
   ['"tinta = oscuro": el caso medido', { colores: { ink50: '#111111' } }, false],
   ['solo el fondo claro, sin tintas', { fondoApp: '#f5f3ff' }, false],
   ['vidrio blanco con tintas de hoy', { hudFondo: '#ffffff' }, false],
-  ['todo del mismo color', { colores: { ink50: '#808080', ink200: '#808080' }, fondoApp: '#808080', hudFondo: '#808080' }, false],
+  /* El caso para el que existe la tinta propia del HUD: vidrio claro sobre la
+     app oscura de siempre. Los acentos van a media luminancia a propósito, y no
+     es capricho: `brand400`/`brand500` se pintan sobre los DOS fondos, así que
+     tienen que dar 3:1 contra casi negro y contra blanco a la vez, y eso solo
+     lo cumple un color de luminancia entre 0.11 y 0.30. Es una restricción real
+     que una inmobiliaria con vidrio claro va a sentir, y mejor que la diga la
+     prueba que un visor con el joystick invisible. */
+  [
+    'vidrio CLARO sobre app oscura, con tinta propia',
+    {
+      hudFondo: '#ffffff',
+      hudTinta: '#111827',
+      hudTintaSuave: '#374151',
+      colores: { brand300: '#5b21b6', brand400: '#8b5cf6', brand500: '#7c3aed', brand600: '#6d28d9' },
+    },
+    true,
+  ],
+  [
+    'vidrio claro con tinta propia… clara',
+    {
+      hudFondo: '#ffffff',
+      hudTinta: '#f8f8f8',
+      hudTintaSuave: '#374151',
+      colores: { brand300: '#5b21b6', brand400: '#8b5cf6', brand500: '#7c3aed', brand600: '#6d28d9' },
+    },
+    false,
+  ],
+  ['tinta del HUD oscura sobre el vidrio oscuro de hoy', { hudTinta: '#111827' }, false],
 ]
 for (const [que, marca, deberia] of PALETAS) {
   const fallos = revisarPaleta(marca)
@@ -208,6 +248,42 @@ for (const [que, marca, deberia] of PALETAS) {
     ? fallos.map((f) => `${f.tinta}/${f.superficie} ${f.razon.toFixed(2)}`).slice(0, 2).join(' · ')
     : ''
   console.log(`  ${que.padEnd(34)} ${(fallos.length === 0 ? 'entra' : 'se rechaza').padEnd(11)} ${ok ? 'ok' : 'MAL'}   ${detalle}`)
+  if (!ok) bien = false
+}
+
+/* ── El caso inverso, que antes era imposible: PÁGINA clara con el vidrio oscuro
+ * de siempre. Sin tinta propia, la del HUD sigue a `ink50`, que aquí es oscura
+ * para leerse sobre la página… y sobre el vidrio oscuro no se lee. Se exige que
+ * ESA sea la única razón del rechazo —no otra tinta, no otro fondo— y que
+ * agregar la tinta propia clara para el vidrio sea lo que la deja entrar. Los
+ * acentos van a media luminancia por lo mismo de arriba: se pintan en los dos. */
+console.log('\n=== Página clara con el vidrio oscuro de hoy ===')
+const PAGINA_CLARA = {
+  colores: {
+    ink50: '#111827',
+    ink200: '#374151',
+    ink900: '#f5f3ff',
+    brand300: '#c4b5fd',
+    brand400: '#8b5cf6',
+    brand500: '#7c3aed',
+    brand600: '#6d28d9',
+  },
+  fondoApp: '#f5f3ff',
+}
+const sinTintaHud = revisarPaleta(PAGINA_CLARA)
+const soloPorElHud =
+  sinTintaHud.length > 0 &&
+  sinTintaHud.every((f) => f.superficie === 'hudFondo' && /^hudTinta/.test(f.tinta))
+const conTintaHud = revisarPaleta({ ...PAGINA_CLARA, hudTinta: '#f8f8f8', hudTintaSuave: '#d2d4d7' })
+for (const [que, ok, detalle] of [
+  [
+    'sin tinta propia se rechaza, y SOLO por la tinta del HUD',
+    soloPorElHud,
+    sinTintaHud.map((f) => `${f.tinta}/${f.superficie} ${f.razon.toFixed(2)}`).join(' · '),
+  ],
+  ['con tinta propia clara para el vidrio, entra', conTintaHud.length === 0, conTintaHud.map((f) => f.tinta).join(', ')],
+]) {
+  console.log(`  ${que.padEnd(56)} ${ok ? 'ok' : 'MAL'}   ${detalle}`)
   if (!ok) bien = false
 }
 

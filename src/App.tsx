@@ -53,6 +53,14 @@ const Capturar = lazy(() =>
 const SubirFoto = lazy(() =>
   import('./components/crear/SubirFoto').then((m) => ({ default: m.SubirFoto })),
 )
+const Panel = lazy(() => import('./components/crear/Panel').then((m) => ({ default: m.Panel })))
+const EditorPlano = lazy(() =>
+  import('./components/crear/EditorPlano').then((m) => ({ default: m.EditorPlano })),
+)
+/* La casa leída de su propia carpeta: solo la monta el build de `tools/sitio.mjs`. */
+const VisorSitio = lazy(() =>
+  import('./components/crear/VisorSitio').then((m) => ({ default: m.VisorSitio })),
+)
 
 const PISTA_DEMO = 'Es un ejemplo — toca "Crear el mío" arriba para usar tu cámara'
 
@@ -76,7 +84,8 @@ export default function App() {
   const [inicial, setInicial] = useState<string | null | 'demo'>(null)
 
   useEffect(() => {
-    if (ruta.nombre !== 'visor') return
+    // En el sitio autocontenido no hay recorrido activo que buscar: ni toca IndexedDB.
+    if (ruta.nombre !== 'visor' || import.meta.env.VITE_SITIO) return
     let vivo = true
     void (async () => {
       const id = recorridoActivo()
@@ -133,6 +142,15 @@ export default function App() {
   )
 
   const pantalla = () => {
+    /* ── El sitio autocontenido ─────────────────────────────────────────────
+     *
+     * Con `VITE_SITIO` (el build que arma `tools/sitio.mjs`) esta app ES una
+     * casa, y cualquier ruta la enseña. No hay "mis recorridos" que listar, y el
+     * link que se le da a un comprador no debe abrir la administración de nadie
+     * aunque le agreguen `#/inicio` a mano. En el build normal la variable no
+     * existe y esta línea desaparece. */
+    if (import.meta.env.VITE_SITIO) return <VisorSitio />
+
     switch (ruta.nombre) {
       case 'inicio':
         return <Inicio ir={ir} />
@@ -148,6 +166,9 @@ export default function App() {
 
       case 'puntos':
         return <EditorPuntos tourId={ruta.tourId} sceneId={ruta.sceneId} ir={ir} />
+
+      case 'plano':
+        return <EditorPlano tourId={ruta.tourId} ir={ir} />
 
       case 'ver':
         /* ── `key` y no solo la prop ──────────────────────────────────────────
@@ -168,10 +189,16 @@ export default function App() {
          se descarga. Es la ruta por la que entra un cliente que nunca ha usado
          esta app y que llegó por un link de WhatsApp. */
       case 'publicado':
-        return <VisorPublicado llave={ruta.llave} ir={ir} />
+        // El mismo `key` que en 'ver', por lo mismo: otra llave es otra casa.
+        return <VisorPublicado key={ruta.llave} llave={ruta.llave} ir={ir} />
 
       case 'demo':
         return <TourViewer tour={demoTour} accion={botonCrear} pista={PISTA_DEMO} />
+
+      /* Las casas publicadas con el código de la inmobiliaria, desde cualquier
+         teléfono. Como 'publicado', no toca IndexedDB. */
+      case 'panel':
+        return <Panel ir={ir} />
 
       case 'visor':
       default:

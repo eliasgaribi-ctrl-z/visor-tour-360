@@ -1,0 +1,1 @@
+import{o as e}from"./math-B4A-dmJY.js";function t(t,n){if(!(n===null||!Number.isFinite(n)||!Number.isFinite(t)))return e(t+n)}function n(e,t){return t===void 0?-e:-(e+t)}function r(t,n){return e(n===void 0?t:t+n)}function i(e,t){return Math.round(r(e,t))%360}function a(e){return e===void 0?`frente`:`N`}export{t as i,n,i as r,a as t};

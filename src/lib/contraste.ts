@@ -19,7 +19,7 @@
  *
  * ── El límite honesto, que hay que decir y no esconder ────────────────────
  *
- * El vidrio del HUD es `rgba(12,16,22,.55)` SOBRE LA FOTO. O sea que el fondo
+ * El vidrio del HUD es `rgba(12,16,22,.72)` SOBRE LA FOTO. O sea que el fondo
  * real de ese texto es la panorámica, y cambia con cada habitación y con cada
  * píxel: nadie lo puede validar de antemano. Aquí se mide contra `#0c1016`, que
  * es el vidrio como si fuera opaco, y eso es el lado OPTIMISTA para un texto
@@ -109,9 +109,14 @@ export function contrasteOk(acento: string, fondoHud = '#0c1016'): boolean {
  * prueba se pone roja en vez de dejar que la validación mida contra colores que
  * ya no existen.
  *
- * `hudFondo` es la excepción declarada: en el CSS es `rgba(12,16,22,.55)`, que no
+ * `hudFondo` es la excepción declarada: en el CSS es `rgba(12,16,22,.72)`, que no
  * es un hex y no se puede medir. Aquí va su versión opaca, con el límite que el
  * encabezado de este archivo explica.
+ *
+ * `hudTinta` y `hudTintaSuave` son la otra excepción: en el CSS no son un hex
+ * sino `var(--color-ink-50)` y `var(--color-ink-200)` —la tinta del HUD SIGUE a
+ * la de la app hasta que una marca diga otra cosa—, así que aquí van los mismos
+ * valores que `ink50` e `ink200`, y la prueba exige que el CSS diga eso.
  */
 export const TEMA_BASE = {
   brand300: '#eec474',
@@ -124,18 +129,37 @@ export const TEMA_BASE = {
   ink900: '#0c1016',
   fondoApp: '#0b0f19',
   hudFondo: '#0c1016',
+  hudTinta: '#f8f8f8',
+  hudTintaSuave: '#d2d4d7',
 } as const
+
+type Clave = keyof typeof TEMA_BASE
 
 /** Las tres cosas que pueden quedar DETRÁS del texto. */
 const SUPERFICIES = ['fondoApp', 'hudFondo', 'ink900'] as const
-/** Los tokens que salen como letras. */
-const TEXTOS = ['ink50', 'ink200', 'brand300'] as const
-/** Los que salen como relleno o borde de algo grande. */
-const GRAFICOS = ['brand400', 'brand500'] as const
+/**
+ * Los tokens que salen como letras, y SOBRE QUÉ. `ink50`/`ink200` colorean la
+ * página (el body, la portada, las pantallas); `hudTinta`/`hudTintaSuave`
+ * colorean lo que va encima del vidrio. Medir `ink50` contra el vidrio cuando
+ * la marca trae su propia tinta de HUD rechazaría justo el caso para el que
+ * existe la tinta propia: un vidrio claro sobre una app oscura.
+ *
+ * `brand300` va con el HUD y no con la página, y salió de grepear: en el visor
+ * —que es donde se aplica una marca— solo se pinta como texto encima del vidrio
+ * (el icono del giroscopio encendido, la píldora del editor de puntos). Medirlo
+ * también contra la página exigiría un color que se lea 4.5:1 sobre casi negro Y
+ * sobre blanco a la vez, que casi no existe, y haría imposible el vidrio claro.
+ */
+const TEXTOS_APP: readonly Clave[] = ['ink50', 'ink200']
+const TEXTOS_HUD: readonly Clave[] = ['hudTinta', 'hudTintaSuave', 'brand300']
+/** Los que salen como relleno o borde de algo grande, en los dos sitios. */
+const GRAFICOS: readonly Clave[] = ['brand400', 'brand500']
 
 export type ParteDeMarca = {
   colores?: Record<string, string | undefined>
   hudFondo?: string
+  hudTinta?: string
+  hudTintaSuave?: string
   fondoApp?: string
 }
 
@@ -172,17 +196,23 @@ export type Ilegible = { tinta: string; superficie: string; razon: number; pedid
  * fondo cambia a `brand600` al apretarlo, porque la tinta no cambia con él.
  */
 export function revisarPaleta(marca: ParteDeMarca): Ilegible[] {
-  const efectivo = (clave: keyof typeof TEMA_BASE): string => {
+  const efectivo = (clave: Clave): string => {
     if (clave === 'hudFondo') return marca.hudFondo ?? TEMA_BASE.hudFondo
     if (clave === 'fondoApp') return marca.fondoApp ?? TEMA_BASE.fondoApp
+    /* La tinta del HUD sigue a la de la app mientras la marca no diga otra
+       cosa: es lo que hace el CSS (`--color-hud: var(--color-ink-50)`), y la
+       revisión tiene que medir lo que se va a PINTAR, no lo que dice el tema. */
+    if (clave === 'hudTinta') return marca.hudTinta ?? efectivo('ink50')
+    if (clave === 'hudTintaSuave') return marca.hudTintaSuave ?? efectivo('ink200')
     return marca.colores?.[clave] ?? TEMA_BASE[clave]
   }
 
   const fallos: Ilegible[] = []
   for (const superficie of SUPERFICIES) {
     const fondo = efectivo(superficie)
+    const textos = superficie === 'hudFondo' ? TEXTOS_HUD : TEXTOS_APP
     for (const [tokens, pedido] of [
-      [TEXTOS, CONTRASTE_TEXTO],
+      [textos, CONTRASTE_TEXTO],
       [GRAFICOS, CONTRASTE_MINIMO],
     ] as const) {
       for (const token of tokens) {

@@ -96,7 +96,7 @@ node --experimental-strip-types tools/pruebas/nivel.mjs       # la corrección d
 node tools/pruebas/patrones.mjs                               # patrones que no deben volver
 ```
 
-Los otros siete levantan un navegador (`npm i -D playwright` primero, y
+Los otros ocho levantan un navegador (`npm i -D playwright` primero, y
 `npm run dev` en otra terminal):
 
 ```bash
@@ -107,9 +107,10 @@ node tools/pruebas/reordenar.mjs http://localhost:5173/     # el orden se guarda
 node tools/pruebas/giroscopio.mjs http://localhost:5173/    # el giroscopio sigue a la mano y quieto no dibuja
 node tools/pruebas/formato.mjs http://localhost:5173/       # el .tour abre lo viejo y vuelve entero
 node tools/pruebas/marca.mjs http://localhost:5173/         # la marca reviste el visor
+node tools/pruebas/publicar.mjs                             # publicar por link de punta a punta (levanta lo suyo; sección 14)
 ```
 
-**Los doce corren solos en cada push** (`.github/workflows/revision.yml`), junto
+**Los trece corren solos en cada push** (`.github/workflows/revision.yml`), junto
 con `lint`, `typecheck`, `build` y la medición del peso del arranque, que falla
 arriba de 400 kB. Playwright se instala ahí con `--no-save`: no está en las
 `devDependencies` a propósito, para no obligar a nadie a bajarlo, y por eso los
@@ -189,6 +190,14 @@ src/
 │   ├── contraste.ts            * Que una marca ajena no lo deje ilegible (WCAG)
 │   ├── rumbo.ts                * El norte de verdad: de dónde sale y con qué signo
 │   ├── nivel.ts                * Enderezar el horizonte al ver, rotando la esfera
+│   ├── planta.ts               * El plano de la casa: posiciones normalizadas, el cono y el regalo del rumbo
+│   ├── planta.test.ts
+│   ├── publicar.ts             * Subir la casa al Worker y leer el manifiesto v2 que baja (sección 14)
+│   ├── metricas/               ── las visitas de la casa publicada (sección 14) ──
+│   │   ├── cliente.ts          * sendBeacon en pagehide, sin cookies ni IP: sesiones, no personas
+│   │   ├── resumen.ts          de paquetes a números; lo usan el Worker y la hoja "Visitas"
+│   │   ├── resumen.test.ts
+│   │   └── formato.ts          "1 min 20 s" y el mapa id → nombre para leer las visitas
 │   ├── capture/                ── armar la panorámica ──
 │   │   ├── orientation.ts      * ¿hacia dónde apunta el teléfono?
 │   │   ├── camera.ts           getUserMedia, lentes, errores en español
@@ -206,7 +215,7 @@ src/
 │       ├── entregar.ts         * compartir el archivo y el tipo del error, aparte y estáticos
 │       ├── migrar.ts           * la frontera: lo que viene de un archivo se filtra campo por campo
 │       ├── normalizar.ts       lo que sale de IndexedDB, con su estampa de versión
-│       ├── useBlobUrl.ts       blobId -> blob: URL, con su limpieza
+│       ├── useBlobUrl.ts       blobId -> blob: URL; y si el blob ya no existe, lo dice
 │       ├── bytes.ts            leer un Blob sin arrayBuffer() (iOS 13)
 │       ├── quota.ts            espacio del navegador
 │       └── ids.ts              identificadores
@@ -217,8 +226,9 @@ src/
     │   ├── CameraRig.tsx       * Traduce el input a rotación de cámara
     │   ├── PanoSphere.tsx      La esfera 360 y el fundido entre habitaciones
     │   ├── Portada.tsx         * La ficha de la casa, ANTES del 3D y sin WebGL
+    │   ├── ConPortada.tsx      Portada + marca + visor perezoso: la costura que comparten dueño y comprador
     │   └── ViewerGuard.tsx     Red de seguridad de WebGL
-    ├── ui/                     Joystick, hotspots, brújula, zoom, hojas…
+    ├── ui/                     Joystick, hotspots, brújula, minimapa del plano, zoom, hojas…
     └── crear/                  ── las pantallas de creación ──
         ├── Inicio.tsx          Mis recorridos
         ├── EditorRecorrido.tsx Habitaciones, orden, exportar
@@ -227,10 +237,16 @@ src/
         ├── SubirFoto.tsx       Importar una foto que ya existe
         ├── EditorPuntos.tsx    Colocar hotspots sobre la escena
         ├── PuntosEditables.tsx Marcadores arrastrables
+        ├── EditorPlano.tsx     El plano de la casa: subirlo y colocar cada habitación (sección 5)
         ├── VisorGuardado.tsx   Abre un recorrido guardado
+        ├── VisorPublicado.tsx  Abre una casa publicada por link (sección 14)
+        ├── VisorSitio.tsx      La casa leída de su PROPIA carpeta: el sitio autocontenido (sección 14)
+        ├── Panel.tsx           Las casas publicadas con el código de la inmobiliaria (sección 14)
+        ├── Visitas.tsx         El resumen de visitas que comparten el editor y el panel
         └── ui.tsx              Botones, campos, hojas
 
 tools/make_test_panoramas.py    Genera las panorámicas de prueba
+tools/sitio.mjs                 La casa como sitio estático autocontenido, desde el .tour o desde el link (sección 14)
 tools/pruebas/costura.html      Banco de pruebas de la costura (sección 12)
 public/prueba.html              Diagnóstico de compatibilidad del teléfono
 
@@ -248,8 +264,10 @@ tools/pruebas/rendimiento.mjs   Batería, tirones y que todo responda (sección 
 tools/pruebas/tactil.mjs        Que todo mida ≥44 px para el pulgar (sección 11)
 tools/pruebas/reordenar.mjs     Reordenar arrastrando guarda de verdad y revierte al cancelar
 tools/pruebas/giroscopio.mjs    El giroscopio sigue a la mano, y quieto no dibuja
-tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (97 aserciones)
+tools/pruebas/formato.mjs       El .tour abre lo viejo y vuelve entero (100 aserciones)
 tools/pruebas/marca.mjs         La marca reviste el visor, medido en PÍXELES
+tools/pruebas/publicar.mjs      Publicar por link de punta a punta, con el Worker de verdad en local
+tools/pruebas/sitio.mjs         El sitio autocontenido abre desde cualquier carpeta, y nada sale de ella
 
 .github/workflows/revision.yml  Los corre todos en cada push
 ```
@@ -349,6 +367,7 @@ Mis recorridos → Nuevo recorrido → Agregar habitación
                                     └─ Usar una foto que ya tengo
                                   → nombrarla → colocar los puntos
                                   → Datos de la casa (precio, m², contacto)
+                                  → Plano de la casa (dónde está cada habitación)
                                   → Preparar archivo → compartir el .tour
 ```
 
@@ -394,6 +413,42 @@ decisión: en los listados reales de México aparece "Desde $1.9M", "Precio a
 consultar", y mezclados USD y MXN. Un número obligaría a meter una decisión de
 moneda y de locale dentro del visor, y perdería el "Desde", que es información y
 no adorno.
+
+### El plano de la casa, y el minimapa
+
+Un comprador que no sabe si la recámara da al patio no compra. **Plano de la
+casa** (en el editor, o `#/plano/<id>`) sube la planta arquitectónica —una foto
+o una imagen, reducida a 1600 px— y coloca cada habitación con un toque y un
+arrastre: el mismo gesto que los puntos y las filas del recorrido, con su
+umbral, la posición escrita al DOM mientras el dedo se mueve y un solo guardado
+al soltar. Las coordenadas van **normalizadas a [0, 1]** y no en píxeles, para
+poder cambiar el plano por un escaneo mejor sin recolocar nada.
+
+En el visor, el botón del plano abre el **minimapa**: un alfiler por
+habitación, el de la actual con un cono de hacia dónde se está mirando, y tocar
+un alfiler cambia de cuarto. Está hecho como la brújula y por la misma razón: el
+cono lee el pulso del HUD y escribe al SVG, así que **con el plano abierto y la
+cámara quieta el visor sigue en cero dibujos por segundo** (`rendimiento.mjs` lo
+mide, y mide que el cono gira exactamente lo que gira la cámara). Va cerrado
+por omisión: en un teléfono tapa un cuarto de la foto. El plano es un `<img>`
+del DOM y no pasa por el caché de texturas ni ocupa memoria de video.
+
+**Hacia dónde mira cada foto.** El cono necesita `giro`: a qué ángulo del plano
+mira el frente de la panorámica, en el sentido del reloj desde "arriba" del
+plano. Es la orientación de la foto **sobre el plano**, no un rumbo geográfico:
+un plano no siempre tiene el norte arriba, y una foto importada no tiene
+rumbo. Sin `giro` no hay cono, solo el alfiler; la orientación no se inventa. Y
+aquí está el regalo del `rumbo` de la sección 14: dos habitaciones capturadas
+con el teléfono se orientan **entre sí** por la diferencia de sus rumbos (si la
+sala mira al rumbo 70 y en el plano apunta a 90°, un cuarto que mira al rumbo
+160 apunta a 180°), así que el agente orienta una con el control y las demás
+capturadas se orientan solas. La geometría vive en `src/lib/planta.ts`, con sus
+casos escritos como escenarios físicos en `planta.test.ts`.
+
+El plano viaja por los tres caminos: dentro del `.tour` (versión 3, como
+`plano/plano.jpg` más la posición de cada habitación), en el manifiesto
+publicado (`plano.jpg`, con los mismos filtros en el Worker y en el visor) y en
+el sitio autocontenido de `tools/sitio.mjs`.
 
 El contacto va en la portada y **no** dentro del visor, también a propósito: en
 el recorrido el dedo está mirando alrededor, y un botón de llamar ahí se toca sin
@@ -554,12 +609,16 @@ recorrido.json           formato, version, y el recorrido
 fotos/<escena>.jpg       la panorámica de cada habitación
 fotos/<escena>.min.jpg   su miniatura
 marca/logo.png           el logo de la inmobiliaria, si el recorrido trae
+plano/plano.jpg          la planta de la casa, si el recorrido trae (v3)
 ```
 
 El manifiesto lleva `version`, y el número **importa en las dos direcciones**:
 
 - **La v2 agregó `marca`, `ficha` y `rumbo`**, los tres opcionales, así que un
-  archivo v1 se abre sin tocar nada.
+  archivo v1 se abre sin tocar nada. **La v3 agregó `plano`** al recorrido y a
+  cada habitación, opcional otra vez; el número sube igual, a propósito: un
+  lector v2 que ignorara el plano en silencio dejaría al agente creyendo que el
+  archivo lo trae.
 - Y un lector **viejo** frente a un archivo nuevo hace lo correcto: rechaza
   `version > FORMAT_VERSION` con un "se hizo con una versión más nueva,
   actualiza la página" en vez de adivinar o quedarse en negro.
@@ -657,6 +716,7 @@ Casi todo sale del bloque `@theme`:
 @theme {
   --color-brand-500: #e19100;   /* acento: joystick, hotspots, activo */
   --color-ink-900:   #0c1016;   /* vidrio del HUD */
+  --color-hud:       var(--color-ink-50);  /* texto ENCIMA del vidrio; sigue a ink */
   --radius-hud:      1.25rem;
 }
 ```
@@ -706,6 +766,19 @@ que le toca (4.5:1 para letras por WCAG 1.4.3, 3:1 para formas grandes por
 con medio tema base da un resultado peor que cualquiera de los dos, y sin paleta
 el visor se ve como siempre, que es legible por construcción. Un tema claro
 coherente pasa entero.
+
+**El HUD tiene su propia tinta.** `ink50`/`ink200` colorean la página y, hasta
+hace poco, también el texto encima del vidrio: dos fondos que no tienen nada que
+ver con un solo token, así que un vidrio claro obligaba a oscurecer la app
+entera. Ahora `hudTinta` y `hudTintaSuave` (`--color-hud` y `--color-hud-2`;
+utilidades `text-hud`/`text-hud-2`) colorean solo lo que va sobre `hud-glass`, y
+sin ellas **siguen** a `ink50`/`ink200` —en el `@theme` son
+`var(--color-ink-50)`, no un hex—, así que sin marca no cambia ni un píxel y una
+marca que solo mueva `ink50` mueve las dos, como siempre. `revisarPaleta` mide
+cada tinta contra el fondo que le toca: la del HUD contra el vidrio, la de la app
+contra la página. Regla para el que agregue algo al HUD: encima de `hud-glass`
+va `text-hud`, nunca `text-ink-*`. La marca viste el visor y la portada, no el
+editor: las hojas del agente siguen con el tema del proyecto.
 
 La tipografía es una **lista blanca de tres pilas** y no una URL: una URL
 arbitraria haría que el visor de un comprador pidiera un archivo a un tercero
@@ -1117,7 +1190,7 @@ aparecía en dos sitios durante la mezcla. El orden de dibujo lo fija
 
 ## 12. Qué se verificó
 
-### Lo que corre solo: `npm test`, los doce arneses y el CI
+### Lo que corre solo: `npm test`, los catorce arneses y el CI
 
 ```bash
 npm test        # vitest run
@@ -1166,7 +1239,7 @@ dos trabajos: primero `npm ci`, `npm run lint` (con cero avisos permitidos),
 `npm run typecheck`, `npm run build`, `npm test`, los cinco arneses que no
 necesitan navegador, el peso del arranque (falla arriba de 400 kB), el
 `typecheck` del `worker/` y el gate de `docs/`; después, con un servidor de
-desarrollo levantado, los siete arneses de Playwright.
+desarrollo levantado, los ocho arneses de Playwright.
 
 El gate de `docs/` es el paso que menos se ve venir:
 
@@ -1183,7 +1256,7 @@ nuevo, que para git es un archivo sin seguir. `git diff` a secas no mira los
 archivos sin seguir, así que el paso pasaba en verde con `docs/` desactualizado,
 que es exactamente lo que se quería atrapar.
 
-### Los doce arneses, y por qué además de Vitest hay arneses
+### Los catorce arneses, y por qué además de Vitest hay arneses
 
 Vitest cubre la aritmética. Lo que este proyecto también necesita verificar
 —cuántos cuadros dibuja parado, cuántos megabytes de video ocupa, si un botón
@@ -1199,13 +1272,15 @@ código 1 si algo no cuadra. El mismo `revision.yml` los corre todos.
 | `contraste.mjs` | la cuenta WCAG contra razones **publicadas**, y qué paletas de marca entran | no |
 | `rumbo.mjs` | la brújula apunta al norte, con el signo correcto, en 2,860 combinaciones | no |
 | `nivel.mjs` | existe un nivel que endereza un ladeo conocido, y cada eje mueve lo que dice su etiqueta | no |
-| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, todo lo tocable responde, y el modo kiosco gira, se detiene al tocar y vuelve a cero | sí |
+| `rendimiento.mjs` | parado dibuja **0 cuadros/s**, abrir y cerrar una nota no dibuja, todo lo tocable responde, el modo kiosco gira, se detiene al tocar y vuelve a cero, y con el minimapa abierto sigue en cero mientras el cono gira lo mismo que la cámara | sí |
 | `memoria.mjs` | el pico de memoria de video y que no quede ni un contexto vivo | sí |
-| `tactil.mjs` | los 14 recorridos de pantalla, todo ≥ 44 px | sí |
+| `tactil.mjs` | los 19 recorridos de pantalla —el editor del plano y el visor con el plano abierto incluidos—, todo ≥ 44 px | sí |
 | `reordenar.mjs` | arrastrar reordena y el orden sobrevive a recargar; un roce no levanta la fila; cancelar revierte | sí |
 | `giroscopio.mjs` | con sensores sintéticos a 60 Hz: quieto **0 dibujos/s**, girar 90° gira 90°, encender y apagar no saltan, el dedo corrige, la pestaña oculta apaga | sí |
-| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero: 97 aserciones | sí |
+| `formato.mjs` | el `.tour` abre lo viejo y vuelve entero, el plano de la casa incluido (v3) | sí |
 | `marca.mjs` | la marca reviste el visor, medido en **píxeles** y no en CSS | sí |
+| `publicar.mjs` | publicar por link de punta a punta con el Worker real en local: la casa abre en un navegador con IndexedDB **vacío**, con portada y marca; la variante de 2048 según el aparato; resubir conserva el link; dar de baja; y `tools/sitio.mjs` baja la casa publicada como carpeta | sí |
+| `sitio.mjs` | el sitio autocontenido: `tools/sitio.mjs` arma la carpeta desde el `.tour`, un servidor de Node la sirve desde un **subdirectorio** y abre en un navegador limpio con portada, marca y la foto dibujada; **ninguna petición sale de la carpeta** y nada da 404; también con un `.tour` v1 | sí |
 
 **Tres reglas que este proyecto aprendió a golpes**, y que están escritas en el
 encabezado de los arneses que las incumplieron:
@@ -1403,28 +1478,107 @@ el visor (hoy, la URL de GitHub Pages). El Worker la necesita para rebotar a
 quien abra el link.
 
 Sin `VITE_PUBLICAR_BASE`, el botón de publicar **no aparece** y el visor se
-comporta como siempre.
+comporta como siempre. El sitio donde ponerla es `.env.production` (commiteado,
+con la línea comentada): `vite build` lo lee, y el CI construye `docs/` con ese
+mismo archivo, así que el gate de `docs/` ve lo mismo que tú.
 
 ### Cómo se usa
 
 En el editor de un recorrido, **Enseñar por link → Publicar**. La primera vez
-pide la clave; queda guardada en ese teléfono. Al terminar sale el link, listo
-para pegar en WhatsApp.
+pide el código de invitación de la inmobiliaria (o la clave maestra, si tú
+operas el servidor); queda guardado en ese teléfono. Al terminar sale el link,
+listo para pegar en WhatsApp, y debajo, plegado, el **código de rescate** de esa
+casa.
+
+Si después se edita la casa —otra foto, un punto, el precio— el editor avisa
+**"Hay cambios sin publicar"** con la fecha de lo que enseña el link. Publicar →
+editar → el link sigue mostrando lo viejo *en silencio* es la queja de soporte
+número uno de cualquier producto así, y por eso el aviso existe. **Volver a
+subir** publica SOBRE la misma llave: el link que ya se mandó sigue sirviendo y
+enseña la casa nueva (antes cada resubida creaba una llave y dejaba la anterior
+viva en el servidor, sin forma de borrarla). La comparación de fechas es
+honesta porque anotar la publicación se guarda **sin mover `updatedAt`**
+(`saveTour(…, { conservarFecha: true })`): publicar no es editar la casa.
 
 Cuando la casa se vende: **Quitar de internet**. El link deja de abrir y las
 fotos se borran del bucket.
 
+### Lo que viaja: el manifiesto, versión 2
+
+La v1 llevaba las habitaciones y sus puntos, y el link abría directo en la foto,
+sin marca. La v2 lleva lo que vuelve el link un **producto** y no una foto:
+
+- **La ficha** (precio, metros, recámaras, contacto). El comprador la ve como
+  **portada** antes del 3D —la misma `Portada` del recorrido local, por
+  `ConPortada`, que es la costura portada + marca + visor perezoso que comparten
+  el dueño y el comprador— y el Worker la usa para la tarjeta de WhatsApp.
+- **La marca**, con su logo como archivo (`logo.png|jpg|webp`, nunca SVG), igual
+  que en el `.tour`. El visor del comprador se viste con ella.
+- El modo kiosco, y por habitación el rumbo, el nivel y la cobertura.
+- **Una variante de 2048 px de cada foto** (`000.2k.jpg`), hecha al publicar
+  con `createImageBitmap`. `dispositivo.ts` ya decidía que un teléfono modesto
+  sube las texturas a 2048, pero se bajaba la foto completa —1.5 MB— para
+  encogerla: 1.1 MB de datos móviles tirados por cuarto, en el teléfono que
+  menos tiene. `manifiestoATour` elige la chica según `aparato().anchoTextura`.
+  Medido en el arnés: un aparato normal baja `000.jpg`; uno modesto, `000.2k.jpg`;
+  ninguno las dos.
+
+Todo es aditivo y opcional: un visor cacheado de la semana pasada que lea un
+manifiesto v2 ve menos, no ve mal. Y **los dos lados filtran**: el Worker acota
+formas y tamaños (hex, listas blancas, topes, la firma real de cada imagen), y
+el visor pasa lo que baja por `limpiarMarca`, `limpiarFicha` y `limpiarEscena`
+—las mismas funciones que filtran un `.tour` ajeno— porque un manifiesto
+publicado también es de una red que no se controla. El correo con un `?bcc=`
+escondido y la inyección de CSS caen igual por los dos caminos.
+
 ### Las tres decisiones, y por qué
 
-**Quién puede subir · una clave compartida.** Viaja en el encabezado
-`Authorization` y vive como secreto del Worker. **No está en el paquete de la
-app**, y eso no es un descuido: el JavaScript de un sitio estático lo lee
-cualquiera, así que una clave metida ahí sería pública el día uno. La escribe la
-persona una vez en su teléfono. Si se pierde un aparato, se cambia el secreto
-del Worker con `wrangler secret put` y listo.
+**Quién puede subir · un código de invitación por inmobiliaria, y una clave
+maestra.** Tres identificadores, y ninguno es un login:
 
-Sin esto, cualquiera que encuentre la dirección puede llenarte el bucket, y la
-cuenta la pagas tú.
+| | Qué es | Dónde vive |
+| --- | --- | --- |
+| **Clave maestra** (`CLAVE_PUBLICACION`) | La de quien opera el servicio. Crea códigos y puede tocar cualquier casa | Secreto del Worker |
+| **Código de invitación** | El de UNA inmobiliaria: con él se publica, y todo lo publicado cuenta contra sus cuotas | Hasheado en R2 (`c/<sha256>.json`); en claro solo en el teléfono del agente |
+| **Código de rescate** (`editToken`) | El secreto de UNA casa publicada, entregado una sola vez. Autoriza a volver a subir y a dar de baja esa llave | Hasheado en `t/<llave>/meta.json`; en claro solo en el teléfono que publicó |
+
+Ninguno está en el paquete de la app, y eso no es un descuido: el JavaScript de
+un sitio estático lo lee cualquiera, así que una clave metida ahí sería pública
+el día uno. El agente escribe su código una vez en su teléfono.
+
+**Por qué no basta una clave compartida, y no es por seguridad sino por
+factura**: un endpoint de publicación con una sola clave para todos es
+almacenamiento gratis para cualquiera que la tenga, y una clave compartida entre
+los teléfonos de un equipo acaba en más manos de las previstas. El código por
+inmobiliaria resuelve el abuso —cada código tiene tope de bytes y de casas por
+día (2 GB y 20 al día por omisión)— y de paso da la multi-inquilinato: es donde
+viven las cuotas.
+
+**Por qué además el código de rescate**: dos agentes de la misma inmobiliaria
+comparten código, y sin él cualquiera de los dos podría sobrescribir la casa del
+otro al "volver a subir". El token ata la llave al teléfono que la creó. Si ese
+teléfono se pierde, el código de la inmobiliaria sirve de llave maestra **para
+dar de baja** (no para republicar): bajar la casa es lo que hace falta en ese
+caso, y republicarla desde otro teléfono pide el código de rescate, que el
+editor enseña plegado bajo el link para que se guarde aparte.
+
+Crear un código, con la clave maestra:
+
+```bash
+curl -X POST https://visor-tours.TU-CUENTA.workers.dev/api/codigos \
+  -H "Authorization: Bearer LA-CLAVE-MAESTRA" -H "Content-Type: application/json" \
+  -d '{"nombre":"Inmobiliaria del Valle","cuotas":{"bytes":2147483648,"recorridosPorDia":20}}'
+# → {"codigo":"…26 letras…","hash":"…","nombre":"Inmobiliaria del Valle","cuotas":{…}}
+```
+
+El código se muestra una sola vez: pásaselo a la inmobiliaria. `GET /api/codigos`
+lista los que hay con su uso (nunca el código en claro); `DELETE
+/api/codigos/<hash>` revoca uno: sus casas siguen en línea, pero el código ya no
+publica ni baja nada. La clave maestra sigue publicando sin cuotas, así que un
+despliegue de una sola inmobiliaria no tiene que crear ningún código.
+
+Las llaves publicadas por la versión anterior del Worker (sin `meta.json`) solo
+las toca la clave maestra, que es lo que ya pasaba.
 
 **Quién puede ver · quien tenga el link.** La llave son 128 bits de azar (26
 letras de un alfabeto sin caracteres que se confundan): no se llega probando.
@@ -1449,6 +1603,118 @@ escritos en el HTML, y a una persona la rebota al visor.
 El rebote va en JavaScript y no con un 302 justamente porque un 302 se lo
 llevaría también el robot.
 
+Y la tarjeta es un **anuncio**, no un nombre de archivo: con ficha, el título es
+`Desde $1.9M · Casa de prueba`, la descripción es la dirección y `og:site_name`
+es la inmobiliaria. Sin ficha, el título del recorrido y "Recorrido virtual de N
+espacios", como antes.
+
+### Las visitas: sesiones, no personas
+
+En el editor, **Enseñar por link → Ver visitas** enseña cuántos abrieron el
+link, qué cuartos les importaron y cuánto se quedaron en cada uno, qué puntos
+tocaron, cuántos venían en un teléfono modesto y si a alguien no le cargó una
+foto. Es la gráfica que vende, y no necesita cuentas.
+
+Lo manda el visor del comprador (`src/lib/metricas/cliente.ts`) con
+`sendBeacon` en `visibilitychange → hidden` **y** en `pagehide` —`unload` no
+dispara en Safari de iOS, y usarlo perdería el 100 % de los datos de iPhone—,
+más un vaciado cada 30 s. El Worker lo guarda tal cual, saneado, como un objeto
+más en R2 (`m/<llave>/<día>/…json`, append-only, sin base de datos) y lo suma al
+leer con `src/lib/metricas/resumen.ts`, que también usa la hoja del editor y se
+prueba con Vitest. Solo la casa **publicada** reporta: el agente revisando su
+propia casa en `#/ver/<id>` no es una visita.
+
+**Privacidad por diseño, no por aviso.** Sin cookies, sin nada en
+`localStorage`, sin huella del navegador, y el Worker no guarda la IP ni ningún
+encabezado. El id de sesión es aleatorio y vive en `sessionStorage`: muere con la
+pestaña. Se miden **sesiones, no personas**, y nadie es seguible entre recorridos
+ni entre días. Con `navigator.doNotTrack` o `globalPrivacyControl` encendidos no
+se manda nada. Eso es lo que quita la necesidad de un banner de consentimiento:
+no hay identificador persistente ni retención de IP. Está escrito en el código
+del cliente y del Worker, no solo aquí.
+
+### El panel de la inmobiliaria: `#/panel`
+
+"Mis recorridos" es lo que vive en **este** teléfono. El panel (**Mis
+recorridos → Casas publicadas por link**, o `#/panel`) es lo que vive en el
+servidor a nombre del código: las casas que publicó cualquier teléfono de la
+inmobiliaria, con su link, su fecha, su peso, sus visitas y su baja. Pide el
+mismo código que publicar y lo guarda donde publicar lo guarda; con la clave
+maestra enseña todas las casas del servicio. Es el panel del inquilino que el
+plan colgaba del `tenantId`, y el `tenantId` es el código.
+
+No edita, a propósito: editar una casa es editar el recorrido que vive en el
+teléfono que la publicó. Desde aquí se comparte, se miran las visitas y se da de
+baja, que es lo que hace falta desde otro teléfono (o cuando ese teléfono se
+perdió: el código de la inmobiliaria da de baja sin el código de rescate).
+
+**Sobre las cuentas con correo.** El plan las deja para después y el panel no
+las necesita: una fase de cuentas solo le colgaría un correo verificado al mismo
+código, sin migrar datos. Hacerlo requiere un proveedor de correo (o de
+identidad) fuera de Cloudflare Workers, que es una decisión de proveedor y de
+costo, no de código, y por eso no está aquí.
+
+### La casa como sitio propio: `tools/sitio.mjs`
+
+La objeción de venta que toda inmobiliaria hace tarde o temprano: **"¿y si
+ustedes cierran?"**. La respuesta es una carpeta.
+
+```bash
+node tools/sitio.mjs casa-en-tlajomulco.tour ./sitio-casa --url https://inmobiliaria.mx/casas/tlajomulco/
+node tools/sitio.mjs https://visor-tours.TU-CUENTA.workers.dev/t/<llave> ./sitio-casa
+```
+
+Deja en `./sitio-casa` el visor compilado **y** el recorrido, juntos: el
+`index.html`, sus `assets/`, y `recorrido/tour.json` con `recorrido/fotos/`.
+Esa carpeta se sube a cualquier hosting estático —el de la inmobiliaria,
+Netlify, S3, una carpeta de un servidor viejo— y abre la casa sin Worker, sin
+nuestro dominio y sin nada que haya que mantener. Funciona bajo cualquier
+subcarpeta (`--base=./`, la misma razón por la que el sitio de Pages funciona
+bajo `/repositorio/`) y no manda **ni una petición** fuera de su carpeta: sin
+métricas, porque no hay a quién reportarlas, y esa es la idea.
+
+Por dentro es el mismo visor, compilado con `VITE_SITIO=1`. Con esa variable
+`App.tsx` enseña la casa para **cualquier** ruta —no hay "mis recorridos" que
+listar, y el link de un comprador no debe abrir la administración de nadie
+aunque le agreguen `#/inicio`— y `VisorSitio` lee `recorrido/tour.json` de su
+propia carpeta con el mismo `manifiestoATour` que lee lo que baja del Worker,
+con la base en relativo. La herramienta acepta las dos fuentes: el `.tour` que
+el agente exportó (lo abre con un lector de ZIP propio de Node y renumera las
+fotos exactamente como hace el publicador, así que el manifiesto que escribe es
+el mismo v2) o el link de una casa publicada (baja el manifiesto y cada archivo
+que nombra, la variante de 2048 incluida). Retoca el `index.html` —el título, la
+tarjeta de WhatsApp con precio, dirección e inmobiliaria, el `preload` a la
+primera foto de **esta** casa y no a la de la demo, el color de la barra del
+teléfono— y quita las panorámicas de ejemplo.
+
+Dos cosas que hay que saber. La tarjeta lleva imagen solo con `--url`: Open
+Graph exige direcciones absolutas y la herramienta no puede adivinar dónde va a
+vivir la carpeta. Y la carpeta se abre por http, no con doble clic —el navegador
+no carga módulos desde `file://`—; para verla en la computadora,
+`python3 -m http.server -d ./sitio-casa 8000`.
+
+### Cómo se prueba sin desplegar nada
+
+`tools/pruebas/publicar.mjs` levanta el Worker de verdad en local (`wrangler
+dev`, con R2 en disco) y un segundo servidor del visor compilado con
+`VITE_PUBLICAR_BASE` apuntando a ese Worker, publica una casa por la interfaz y
+la abre en un navegador con IndexedDB **vacío** — la única prueba de que la casa
+dejó de vivir en un solo teléfono. Mide la tarjeta de WhatsApp, la portada con la
+marca en píxeles, que la foto se dibuje (un CORS mal puesto es un cuarto negro
+sin ningún error), la variante de 2048 según el aparato, volver a subir sobre el
+mismo link, "hay cambios sin publicar", dar de baja, y lo que el Worker rechaza.
+Corre en el CI con los demás arneses. Y corre `tools/sitio.mjs` contra ese
+Worker vivo, para la fuente que solo ahí se puede probar: el link.
+
+`tools/pruebas/sitio.mjs` hace lo mismo con el sitio autocontenido, sin Worker:
+fabrica el `.tour` con el escritor de ZIP independiente, corre `tools/sitio.mjs`,
+sirve la carpeta desde un **subdirectorio** con un servidor estático de Node
+escrito ahí mismo —un sitio que solo abriera con el servidor del proyecto no
+sería autocontenido— y la abre en un navegador limpio: portada, marca, logo, la
+foto dibujada, y que ninguna petición salga de la carpeta ni nada dé 404.
+También con un `.tour` de la versión 1, que es el que tiene un agente que
+exportó hace tiempo.
+
 ### Qué cuesta
 
 El plan gratis de Cloudflare da 10 GB en R2 y 100 000 peticiones al día. Una
@@ -1459,8 +1725,6 @@ pagar nada.
 
 ## 15. Siguientes pasos naturales
 
-- Planta arquitectónica con la posición de cada escena, con el cono de hacia
-  dónde se está mirando. Depende de tener un plano por casa.
 - Compensar la exposición contra la mediana de todas las tomas y no contra la
   primera: hoy, si la primera foto apunta a la ventana, toda la panorámica
   queda sesgada. En Safari no se puede bloquear la exposición por hardware, así
@@ -1484,6 +1748,10 @@ pagar nada.
 
 ### Lo que se hizo desde que esto se escribió
 
+- ✅ **La planta arquitectónica con el cono de hacia dónde se mira** — el plano
+  de la casa (sección 5): un plano por recorrido, la posición de cada habitación
+  normalizada, el minimapa que sigue a la cámara sin gastar un dibujo, y el
+  `rumbo` orientando las habitaciones capturadas a partir de una.
 - ✅ **Corrección de nivel** — quedó fuera de esta lista porque su premisa estaba
   corrida: `stitcher.ts:337` ya mete el cuaternión COMPLETO de cada toma, ladeo
   incluido, en la proyección inversa, así que una panorámica capturada **ya sale
@@ -1494,6 +1762,19 @@ pagar nada.
   correcto es corregir **al ver** —rotando la esfera con un cuaternión, que es
   reversible y gratis— y no en la costura, que obligaría a remuestrear y
   recomprimir una 4096×2048.
+- ✅ **Un re-render del HUD ya no cuesta un dibujo.** Cualquier estado del visor
+  (abrir una nota, retirar la pista) re-renderizaba también a `<Canvas>`, y R3F
+  pide cuadro al reconfigurarse. `Escena360` va en `memo` con todas sus props
+  estables, y de paso `camera`/`gl` son constantes y los cuaterniones de nivel de
+  `PanoSphere` se memoizan por valor. `rendimiento.mjs` abre y cierra una nota y
+  exige cero dibujos; con solo las dos correcciones de props seguía costando dos.
+- ✅ **El editor de puntos dice cuándo la foto ya no existe** en vez de quedarse en
+  "Abriendo la habitación…": `useBlobUrlEstado` distingue "todavía no" de
+  "nunca", y la pantalla ofrece cambiar la foto o volver.
+- ✅ **Una foto exportada por esta app vuelve con brújula**: `leerGPano` lee
+  `PoseHeadingDegrees` y `SubirFoto` lo guarda como `rumbo`; y el norte del JPEG
+  y el de la escena salen de la misma función (`rumboDelCentro` delega en
+  `rumboDeEscena`).
 - ✅ **Giroscopio al ver** (`src/lib/useGyroLook.ts`): un botón en el visor para
   mirar moviendo el teléfono, reutilizando entero el seguidor de la captura. Lo
   delicado no era la conversión sino `invalidar()`: los sensores disparan ~60

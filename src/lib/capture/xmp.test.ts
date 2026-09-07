@@ -290,6 +290,9 @@ describe('conGPano', () => {
       alto: 2048,
       izquierda: 0,
       arriba: 0,
+      // Y el norte vuelve: es lo que hace que una foto exportada por esta app
+      // entre con brújula al importarla (ver SubirFoto).
+      rumbo: 137.5,
     })
   })
 
